@@ -88,13 +88,32 @@ Maintainers only. All packages ship in lockstep:
 
 ```bash
 pnpm version:set 0.2.0      # sets the version in every publishable package
-# update CHANGELOG.md, commit
-git tag v0.2.0
-git push origin v0.2.0      # push this tag only — `--tags` would publish every unpushed tag
+# move the CHANGELOG "Unreleased" entries under a 0.2.0 heading, then commit and push
 ```
 
-Pushing the tag runs the release workflow, which re-runs the full gate, verifies the tag matches
-the package version, and publishes all seven packages to npm with provenance.
+A pushed `v*` tag is what publishes:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0      # this tag only — `--tags` would push every unpushed tag
+```
+
+Cutting a GitHub Release works too, since creating one creates its tag:
+
+```bash
+gh release create v0.2.0 --title v0.2.0 --notes "$(sed -n '/^## 0.2.0/,/^## 0.1/p' CHANGELOG.md)"
+```
+
+Either way the release workflow re-runs the full gate, verifies the tag matches the package
+version, and publishes all seven packages to npm with provenance. A version carrying a prerelease
+suffix (`0.2.0-rc.1`) goes to the `next` dist-tag instead of `latest`.
+
+Prerequisites for publishing:
+
+- The repository must be **public**. npm refuses provenance from a private or internal repository.
+- First publish only: an `NPM_TOKEN` secret with write access to the `@polymind-inc` scope. A
+  trusted publisher cannot be configured before a package exists, so the first release needs a
+  token; afterwards, configure this workflow as a trusted publisher on npm and the secret can go.
 
 ## Code of conduct
 
