@@ -1,0 +1,8 @@
+packages:
+  - 'packages/*'
+  - 'examples/*'
+allowBuilds:
+  esbuild: true
+  # The optional OTLP/gRPC exporters pull protobufjs in; its postinstall only prints a banner
+  # and the library works without it, so it stays unapproved.
+  protobufjs: false

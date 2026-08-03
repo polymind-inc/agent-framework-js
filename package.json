@@ -1,0 +1,39 @@
+{
+  "name": "agent-framework-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Workspace root for the TypeScript implementation of the Microsoft Agent Framework programming model.",
+  "homepage": "https://github.com/polymind-inc/agent-framework#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/polymind-inc/agent-framework.git"
+  },
+  "license": "MIT",
+  "author": "shibayan <me@shibayan.jp>",
+  "type": "module",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "pack:check": "node scripts/pack-check.mjs",
+    "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm run pack:check",
+    "version:set": "node scripts/set-version.mjs",
+    "publish:packages": "pnpm -r --filter \"./packages/*\" publish --access public --provenance --no-git-checks"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

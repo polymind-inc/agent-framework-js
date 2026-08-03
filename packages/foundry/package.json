@@ -1,0 +1,80 @@
+{
+  "name": "@polymind-inc/agent-framework-foundry",
+  "version": "0.1.0",
+  "description": "Microsoft Foundry chat client and Hosted Agent hosting adapter for the Agent Framework.",
+  "keywords": [
+    "agent",
+    "ai",
+    "llm",
+    "agent-framework",
+    "foundry",
+    "azure",
+    "hosted-agent"
+  ],
+  "homepage": "https://github.com/polymind-inc/agent-framework/tree/master/packages/foundry#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/polymind-inc/agent-framework.git",
+    "directory": "packages/foundry"
+  },
+  "license": "MIT",
+  "author": "shibayan <me@shibayan.jp>",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hosting": {
+      "types": "./dist/hosting.d.ts",
+      "default": "./dist/hosting.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.config.json --noEmit"
+  },
+  "dependencies": {
+    "@polymind-inc/agent-framework-core": "workspace:^",
+    "@polymind-inc/agent-framework-mcp": "workspace:^",
+    "@polymind-inc/agent-framework-openai": "workspace:^",
+    "@azure/identity": "^4.13.1",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "openai": "^7.2.0"
+  },
+  "peerDependencies": {
+    "@polymind-inc/agent-framework-agentserver": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@polymind-inc/agent-framework-agentserver": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@polymind-inc/agent-framework-agentserver": "workspace:^",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-metrics": "^2.10.0",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

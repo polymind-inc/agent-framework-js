@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: release
+
+    permissions:
+      contents: read
+      # Required both for npm trusted publishing (OIDC) and for signed provenance.
+      id-token: write
+
+    steps:
+      # Actions are pinned to a commit SHA; the trailing comment is the tag that SHA was cut from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # v6 is the first release that supports pnpm 11, which `packageManager` pins us to.
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      # setup-node caches automatically only for npm, so pnpm needs `cache` set explicitly.
+      # It also has to run after pnpm is on PATH for the cache lookup to work.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # All packages ship in lockstep, so one version check covers the set.
+      - name: Verify the tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./packages/core/package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $version" >&2
+            exit 1
+          fi
+
+      - run: pnpm lint
+
+      # Build first: typecheck resolves workspace dependencies through their emitted declarations.
+      - run: pnpm build
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      # Publishes with trusted publishing when the npm packages have this workflow configured
+      # as a trusted publisher; falls back to NPM_TOKEN otherwise, which is what the very first
+      # publish of a package has to use since a trusted publisher cannot be configured before
+      # the package exists.
+      - name: Publish
+        run: pnpm run publish:packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

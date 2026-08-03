@@ -1,0 +1,89 @@
+{
+  "name": "@polymind-inc/agent-framework-agentserver",
+  "version": "0.1.0",
+  "description": "Microsoft Foundry Responses container protocol v2.0.0 server. Independent of the Agent Framework.",
+  "keywords": [
+    "agent",
+    "ai",
+    "agent-framework",
+    "foundry",
+    "responses-api",
+    "hosting"
+  ],
+  "homepage": "https://github.com/polymind-inc/agent-framework/tree/master/packages/agentserver#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/polymind-inc/agent-framework.git",
+    "directory": "packages/agentserver"
+  },
+  "license": "MIT",
+  "author": "shibayan <me@shibayan.jp>",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./observability": {
+      "types": "./dist/observability.d.ts",
+      "default": "./dist/observability.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.config.json --noEmit"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@azure/monitor-opentelemetry-exporter": "1.0.0-beta.44",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.221.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-metrics": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0"
+  },
+  "peerDependencies": {
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.221.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.221.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/exporter-metrics-otlp-grpc": {
+      "optional": true
+    },
+    "@opentelemetry/exporter-trace-otlp-grpc": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.221.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.221.0",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,5 @@
+# Normalize all text files to LF in both the index and the working tree.
+# Prettier (endOfLine: "lf" default) and the format:check gate depend on this being
+# deterministic across checkouts; without it, a core.autocrlf=true clone fails the gate
+# on every file. Binary detection is automatic via text=auto.
+* text=auto eol=lf

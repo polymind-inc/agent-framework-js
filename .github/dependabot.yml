@@ -1,0 +1,11 @@
+version: 2
+
+updates:
+  # Actions are pinned to commit SHAs, so every upstream release needs a bump to reach us.
+  # Dependabot rewrites both the SHA and the `# vX.Y.Z` comment next to it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: 'ci'

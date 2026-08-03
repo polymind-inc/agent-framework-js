@@ -1,0 +1,59 @@
+{
+  "name": "@polymind-inc/agent-framework-anthropic",
+  "version": "0.1.0",
+  "description": "Anthropic Messages API chat client for the Agent Framework, built on the official @anthropic-ai/sdk.",
+  "keywords": [
+    "agent",
+    "ai",
+    "llm",
+    "agent-framework",
+    "anthropic",
+    "claude"
+  ],
+  "homepage": "https://github.com/polymind-inc/agent-framework/tree/master/packages/anthropic#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/polymind-inc/agent-framework.git",
+    "directory": "packages/anthropic"
+  },
+  "license": "MIT",
+  "author": "shibayan <me@shibayan.jp>",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.src.json --noEmit && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.config.json --noEmit"
+  },
+  "dependencies": {
+    "@polymind-inc/agent-framework-core": "workspace:^",
+    "@anthropic-ai/sdk": "^0.115.0"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

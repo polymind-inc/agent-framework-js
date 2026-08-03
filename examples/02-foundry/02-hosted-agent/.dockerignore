@@ -1,0 +1,4 @@
+*
+!dist/
+!dist/main.mjs
+!dist/main.mjs.map

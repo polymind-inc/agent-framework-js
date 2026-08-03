@@ -1,0 +1,29 @@
+{
+  "name": "example-03-extensibility",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "middleware": "tsx 01-middleware.ts",
+    "context-provider": "tsx 02-context-provider.ts",
+    "anthropic": "tsx 03-anthropic.ts",
+    "mcp": "tsx 04-mcp.ts",
+    "hosted-tools": "tsx 05-openai-hosted-tools.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@polymind-inc/agent-framework-anthropic": "workspace:^",
+    "@polymind-inc/agent-framework-core": "workspace:^",
+    "@polymind-inc/agent-framework-mcp": "workspace:^",
+    "@polymind-inc/agent-framework-openai": "workspace:^",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}

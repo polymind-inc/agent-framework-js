@@ -1,0 +1,176 @@
+import type { TokenCredential } from '@azure/identity';
+import { DefaultAzureCredential } from '@azure/identity';
+import type { CallToolResult } from '@modelcontextprotocol/client';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { platformHeaders, projectEndpoint } from '@polymind-inc/agent-framework-agentserver';
+import type { Content, FunctionTool, ToolContext } from '@polymind-inc/agent-framework-core';
+import {
+  ConfigurationError,
+  ToolInvocationError,
+  textOfContents,
+  tool,
+} from '@polymind-inc/agent-framework-core';
+import { McpConnection } from '@polymind-inc/agent-framework-mcp';
+import { tokenProvider } from '../credential.js';
+import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
+import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
+import { reportConsent } from './consent-channel.js';
+
+/**
+ * Retypes a Foundry MCP gateway consent refusal; anything else passes through unchanged.
+ *
+ * The gateway answers `tools/list` / `tools/call` with JSON-RPC error `-32006` when a tool
+ * source needs the end user's OAuth consent (Python `consent_url_from_error`). A JSON-RPC error
+ * *answer* is a definitive response, not a lost connection, so the connection's
+ * reconnect-and-retry never replays it — it surfaces here to be retyped.
+ */
+function withConsentTyped(error: unknown): unknown {
+  const consents = consentRequestsOf(error);
+  return consents === undefined ? error : new ToolboxConsentRequiredError(consents);
+}
+
+/** Construction options for {@link FoundryToolbox}. */
+export interface FoundryToolboxConfig {
+  /** The toolbox registered in the project. */
+  name: string;
+  /** Defaults to `FOUNDRY_PROJECT_ENDPOINT`. */
+  projectEndpoint?: string;
+  /** Defaults to {@link DefaultAzureCredential}. */
+  credential?: TokenCredential;
+  /** Restricts which of the toolbox's tools are exposed to the model. */
+  allowedTools?: string[];
+  /**
+   * Replaces the transport's `fetch`, for proxies and tests.
+   *
+   * The per-call authorization wrapper is applied *around* whatever is supplied here, so a
+   * replacement cannot accidentally drop the token or the call id.
+   */
+  fetch?: typeof globalThis.fetch;
+}
+
+/**
+ * The tools Foundry hosts for a project, reached over MCP.
+ *
+ * Connection management — lazy connect, a single reconnect when the session has expired, close —
+ * is {@link McpConnection}'s, so every `tools/list` and `tools/call` is also traced the way any
+ * other MCP call in the framework is.
+ *
+ * ## Security considerations
+ *
+ * Authorization is per call, never baked into the session. The MCP connection is long-lived and
+ * serves **every user this container handles**, so a bearer token or an
+ * `x-agent-foundry-call-id` captured at connect time would be replayed on behalf of whoever came
+ * later. Both are attached at call time instead: the token from the credential, and the call id
+ * from the request context in flight.
+ */
+export class FoundryToolbox {
+  readonly #name: string;
+  readonly #endpoint: string;
+  readonly #allowedTools: ReadonlySet<string> | undefined;
+  readonly #connection: McpConnection;
+
+  constructor(options: FoundryToolboxConfig) {
+    const endpoint = options.projectEndpoint ?? projectEndpoint();
+    if (endpoint === undefined) {
+      throw new ConfigurationError(
+        'FoundryToolbox needs a project endpoint. Set FOUNDRY_PROJECT_ENDPOINT or pass `projectEndpoint`.',
+      );
+    }
+    this.#name = options.name;
+    this.#endpoint = normalizeProjectEndpoint(endpoint);
+    this.#allowedTools = options.allowedTools === undefined ? undefined : new Set(options.allowedTools);
+
+    const getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
+    const inner = options.fetch ?? globalThis.fetch;
+    this.#connection = new McpConnection({
+      url: this.url,
+      transport: () =>
+        new StreamableHTTPClientTransport(new URL(this.url), {
+          // Per-request rather than per-connection: see the class note on why this cannot be a
+          // static header set.
+          fetch: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+            const headers = new Headers(init?.headers);
+            headers.set('authorization', `Bearer ${await getToken()}`);
+            for (const [name, value] of Object.entries(platformHeaders())) {
+              headers.set(name, value);
+            }
+            return inner(input, { ...init, headers });
+          },
+        }),
+    });
+  }
+
+  /** Whether the MCP connection has been opened. Exposed so tests can assert it stays lazy. */
+  get connected(): boolean {
+    return this.#connection.connected;
+  }
+
+  /** The MCP endpoint for this toolbox. */
+  get url(): string {
+    return `${this.#endpoint}/toolboxes/${encodeURIComponent(this.#name)}/mcp?api-version=${FOUNDRY_API_VERSION}`;
+  }
+
+  /**
+   * Lists the toolbox's tools as framework tools.
+   *
+   * Called on the first request rather than at startup: a toolbox that is briefly unreachable
+   * would otherwise keep `/readiness` red and fail every invocation with `session_not_ready`,
+   * instead of failing the one request that needed it.
+   */
+  async getTools(): Promise<Array<FunctionTool<Record<string, unknown>, unknown>>> {
+    // The gateway signals "consent required" on `tools/list` (Python hits it on lazy agent
+    // entry); retyped so the hosting handler can surface an `oauth_consent_request` item
+    // instead of failing the turn.
+    const { tools } = await this.#connection.listTools().catch((error: unknown) => {
+      throw withConsentTyped(error);
+    });
+
+    return tools
+      .filter((declared) => this.#allowedTools?.has(declared.name) ?? true)
+      .map((declared) =>
+        tool({
+          name: declared.name,
+          // A tool declared without a description gets an empty one — the name is not reused as a
+          // stand-in (Python parity: `tool.description or ""`).
+          description: declared.description ?? '',
+          parameters: (declared.inputSchema ?? { type: 'object' }) as Record<string, unknown>,
+          execute: async (input: unknown, ctx: ToolContext) => {
+            let result: CallToolResult;
+            try {
+              // Tools resolve the live connection on every call rather than closing over the one
+              // that existed when they were enumerated, so a reconnect swaps it underneath them.
+              // The caller's signal rides along so an abandoned turn — a client disconnect, or
+              // SIGTERM draining the container — stops the *remote* tool too; the consent path
+              // below runs off this same call, so it is cancellable as well.
+              result = await this.#connection.callTool(
+                declared.name,
+                (input ?? {}) as Record<string, unknown>,
+                ctx.signal === undefined ? undefined : { signal: ctx.signal },
+              );
+            } catch (error) {
+              // A `-32006` answer becomes the typed consent error. The loop will reduce it to
+              // `function_result.exception` text, which the handler must not trust, so the refusal
+              // is reported out of band against this call id (see `consent-channel.ts`).
+              const typed = withConsentTyped(error);
+              if (typed instanceof ToolboxConsentRequiredError) {
+                reportConsent(ctx.callId, typed.consents);
+              }
+              throw typed;
+            }
+            if (result.isError === true) {
+              // MCP reports a tool failure in the payload, not by rejecting. Returning it as a
+              // success would tell the model the call worked and hand it the error text as the
+              // answer; throwing routes it through the loop's error handling instead.
+              throw new ToolInvocationError(declared.name, textOfContents(result.content as Content[]));
+            }
+            return result.content;
+          },
+        }),
+      );
+  }
+
+  /** Closes the MCP connection. */
+  async close(): Promise<void> {
+    await this.#connection.close();
+  }
+}

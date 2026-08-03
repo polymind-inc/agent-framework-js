@@ -1,0 +1,2 @@
+# The session store once had raw NUL bytes committed; force text diffs for sources.
+*.ts diff

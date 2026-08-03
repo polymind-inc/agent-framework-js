@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Runtime-agnostic check: no Node type surface. Web-standard globals come from the DOM lib;
+    // `process` / `Buffer` do not exist here, so an accidental Node API use fails to compile
+    // (the package builds with tsdown `platform: 'neutral'`).
+    "lib": ["es2024", "dom"],
+    "types": [],
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "example-02-foundry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsdown --config 02-hosted-agent/tsdown.config.ts",
+    "chat": "tsx 01-foundry-chat.ts",
+    "host": "node 02-hosted-agent/dist/main.mjs",
+    "host:dev": "tsx 02-hosted-agent/main.ts",
+    "approval": "tsx 03-tool-approval.ts",
+    "toolbox": "tsx 04-toolbox.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@polymind-inc/agent-framework-agentserver": "workspace:^",
+    "@polymind-inc/agent-framework-core": "workspace:^",
+    "@polymind-inc/agent-framework-foundry": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.22.14",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}
