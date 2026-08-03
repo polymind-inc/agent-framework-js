@@ -3,11 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "description": "Workspace root for the TypeScript implementation of the Microsoft Agent Framework programming model.",
-  "homepage": "https://github.com/polymind-inc/agent-framework#readme",
-  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "homepage": "https://github.com/polymind-inc/agent-framework-js#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework-js/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/polymind-inc/agent-framework.git"
+    "url": "git+https://github.com/polymind-inc/agent-framework-js.git"
   },
   "license": "MIT",
   "author": "shibayan <me@shibayan.jp>",

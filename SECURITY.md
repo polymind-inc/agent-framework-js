@@ -5,7 +5,7 @@
 Please **do not** open a public issue for security problems.
 
 Report vulnerabilities privately, either through GitHub's
-[private vulnerability reporting](https://github.com/polymind-inc/agent-framework/security/advisories/new)
+[private vulnerability reporting](https://github.com/polymind-inc/agent-framework-js/security/advisories/new)
 or by email to **me@shibayan.jp**. Include a description of the issue, a proof of concept if you
 have one, and the package name and version. You should receive an acknowledgement within a few
 days; please allow a reasonable disclosure window before publishing.

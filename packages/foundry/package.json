@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-foundry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Microsoft Foundry chat client and Hosted Agent hosting adapter for the Agent Framework.",
   "keywords": [
     "agent",
@@ -11,11 +11,11 @@
     "azure",
     "hosted-agent"
   ],
-  "homepage": "https://github.com/polymind-inc/agent-framework/tree/master/packages/foundry#readme",
-  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "homepage": "https://github.com/polymind-inc/agent-framework-js/tree/master/packages/foundry#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework-js/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/polymind-inc/agent-framework.git",
+    "url": "git+https://github.com/polymind-inc/agent-framework-js.git",
     "directory": "packages/foundry"
   },
   "license": "MIT",

@@ -2,7 +2,7 @@ blank_issues_enabled: true
 
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/polymind-inc/agent-framework/security/policy
+    url: https://github.com/polymind-inc/agent-framework-js/security/policy
     about: Do not open a public issue. Report vulnerabilities privately — see SECURITY.md.
   - name: Microsoft Agent Framework (.NET / Python)
     url: https://github.com/microsoft/agent-framework

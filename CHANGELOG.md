@@ -5,6 +5,16 @@ set. During 0.x, **minor releases may contain breaking changes**; patch releases
 
 ## Unreleased
 
+## 0.1.1
+
+Metadata only — no code changes, and no change to any published API.
+
+- The repository moved to `polymind-inc/agent-framework-js`, matching how the Agent Framework
+  names a language implementation that lives outside the .NET/Python monorepo (compare
+  `microsoft/agent-framework-go`). The `repository`, `homepage` and `bugs` fields of all seven
+  packages point at the new location; 0.1.0 shipped with the previous one, which now only works
+  through a redirect.
+
 ## 0.1.0 — Baseline v0.1
 
 Initial public release of the TypeScript implementation of the Microsoft Agent Framework

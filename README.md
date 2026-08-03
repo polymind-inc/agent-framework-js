@@ -1,6 +1,6 @@
 # Agent Framework for TypeScript
 
-[![CI](https://github.com/polymind-inc/agent-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/polymind-inc/agent-framework/actions/workflows/ci.yml)
+[![CI](https://github.com/polymind-inc/agent-framework-js/actions/workflows/ci.yml/badge.svg)](https://github.com/polymind-inc/agent-framework-js/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@polymind-inc/agent-framework-core.svg)](https://www.npmjs.com/package/@polymind-inc/agent-framework-core)
 [![Node.js](https://img.shields.io/node/v/@polymind-inc/agent-framework-core.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -16,9 +16,10 @@ The Agent Framework has first-party implementations for .NET, Python and Go. The
 TypeScript one. This project fills that gap on the framework's own terms rather than inventing a
 parallel programming model: the same concepts, the same names, the same wire format, and the same
 observable behaviour — expressed in TypeScript idioms. The explicit goal is for this code to be in
-a shape that could be **contributed upstream to [`microsoft/agent-framework`][agent-framework]** as
-a `typescript/` sibling to `dotnet/` and `python/`. Everything from the package layout to the
-naming generation to the release cadence is chosen with that in mind.
+a shape that could be **adopted upstream**, the way [`microsoft/agent-framework-go`][agent-framework-go]
+sits alongside the .NET and Python implementations in [`microsoft/agent-framework`][agent-framework].
+Everything from the repository name to the package layout to the naming generation to the release
+cadence is chosen with that in mind.
 
 ## Contents
 

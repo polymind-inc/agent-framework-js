@@ -186,6 +186,6 @@ to the SDK client you construct — this package reads none from the environment
 
 ---
 
-Part of [Agent Framework for TypeScript](https://github.com/polymind-inc/agent-framework) — an
+Part of [Agent Framework for TypeScript](https://github.com/polymind-inc/agent-framework-js) — an
 independent community implementation of the Microsoft Agent Framework programming model. Not an
 official Microsoft product, and not affiliated with or endorsed by Microsoft. MIT licensed.

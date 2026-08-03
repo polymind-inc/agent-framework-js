@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Core abstractions for the Agent Framework (TypeScript): Agent, AgentSession, Message/Content, tools, and the ChatClient seam.",
   "keywords": [
     "agent",
@@ -12,11 +12,11 @@
     "mcp",
     "typescript"
   ],
-  "homepage": "https://github.com/polymind-inc/agent-framework/tree/master/packages/core#readme",
-  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "homepage": "https://github.com/polymind-inc/agent-framework-js/tree/master/packages/core#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework-js/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/polymind-inc/agent-framework.git",
+    "url": "git+https://github.com/polymind-inc/agent-framework-js.git",
     "directory": "packages/core"
   },
   "license": "MIT",

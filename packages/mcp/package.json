@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Model Context Protocol client integration for the Agent Framework: MCP server tools as framework tools.",
   "keywords": [
     "agent",
@@ -10,11 +10,11 @@
     "mcp",
     "model-context-protocol"
   ],
-  "homepage": "https://github.com/polymind-inc/agent-framework/tree/master/packages/mcp#readme",
-  "bugs": "https://github.com/polymind-inc/agent-framework/issues",
+  "homepage": "https://github.com/polymind-inc/agent-framework-js/tree/master/packages/mcp#readme",
+  "bugs": "https://github.com/polymind-inc/agent-framework-js/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/polymind-inc/agent-framework.git",
+    "url": "git+https://github.com/polymind-inc/agent-framework-js.git",
     "directory": "packages/mcp"
   },
   "license": "MIT",
