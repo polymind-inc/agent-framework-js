@@ -5,6 +5,18 @@ set. During 0.x, **minor releases may contain breaking changes**; patch releases
 
 ## Unreleased
 
+Fixes only — no change to any published API.
+
+- **`@polymind-inc/agent-framework-agentserver`** — routing no longer trims the trailing slash of a
+  request path with a backtracking regular expression. The old pattern cost time quadratic in the
+  length of a run of slashes, so an unauthenticated `GET` on a path such as `/////…/a` could hold
+  the event loop for seconds.
+- **`@polymind-inc/agent-framework-core`** — generated ids (`Agent.id`, `AgentSession.sessionId`,
+  the `messageId` of framework-emitted messages) always come from `crypto.randomUUID`. They
+  previously fell back to `Math.random` on a runtime without it, which is not a suitable source for
+  an identifier. A runtime that does not provide `crypto.randomUUID` — a browser on a page served
+  over plain HTTP — now throws instead of producing a guessable id.
+
 ## 0.1.1
 
 Metadata only — no code changes, and no change to any published API.

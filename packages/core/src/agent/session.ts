@@ -1,5 +1,4 @@
 import { ConfigurationError } from '../errors.js';
-import { randomId } from '../random-id.js';
 
 /** Names a rejected value in an error message without ever printing its contents. */
 function describe(value: unknown): string {
@@ -73,7 +72,7 @@ export class AgentSession {
   readonly state: Record<string, unknown>;
 
   constructor(options?: { sessionId?: string; serviceSessionId?: string; state?: Record<string, unknown> }) {
-    this.sessionId = options?.sessionId ?? randomId('session');
+    this.sessionId = options?.sessionId ?? crypto.randomUUID();
     if (options?.serviceSessionId !== undefined) {
       this.serviceSessionId = options.serviceSessionId;
     }

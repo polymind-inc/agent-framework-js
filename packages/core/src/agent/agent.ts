@@ -35,7 +35,6 @@ import {
   startSpan,
   withActiveSpan,
 } from '../observability/tracing.js';
-import { randomId } from '../random-id.js';
 import type { ResponseStream } from '../streaming/response-stream.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
@@ -234,7 +233,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
   readonly #agentMiddleware: readonly AgentMiddleware[];
 
   constructor(config: AgentConfig<TOptions>) {
-    this.id = config.id ?? randomId('agent');
+    this.id = config.id ?? crypto.randomUUID();
     if (config.name !== undefined) this.name = config.name;
     if (config.description !== undefined) this.description = config.description;
     if (config.instructions !== undefined) this.instructions = config.instructions;
