@@ -237,6 +237,16 @@ describe('coalesceContents', () => {
     ]);
   });
 
+  it('gives the merged reasoning item the first non-empty id, treating an empty one as absent', () => {
+    // Python folds ids with `self.id or other.id`, so an empty string never wins over a real id;
+    // an empty-id fragment followed by an identified one must not strip the id the replay needs.
+    const merged = coalesceContents([
+      { type: 'text_reasoning', id: '', text: 'thin' },
+      { type: 'text_reasoning', id: 'r1', text: 'king' },
+    ]);
+    expect(merged).toEqual([{ type: 'text_reasoning', id: 'r1', text: 'thinking' }]);
+  });
+
   it('carries the trailing protected payload onto the merged reasoning item', () => {
     const merged = coalesceContents([
       { type: 'text_reasoning', id: 'r1', text: 'a' },

@@ -106,6 +106,28 @@ describe('FoundryChatClient', () => {
     expect(deployment.metadata).toEqual({ providerName: 'azure.ai.foundry', modelId: 'gpt-4o' });
   });
 
+  it('exposes the SDK client and the hosted tool declarations of the inner client', () => {
+    const client = new FoundryChatClient({
+      projectEndpoint: PROJECT,
+      target: { modelDeployment: 'gpt-4o' },
+      credential: fakeCredential(),
+    });
+
+    // Thin delegations, but public API: each must reach the inner OpenAI client rather than
+    // throw or return a Foundry-shaped stub.
+    expect(client.client).toBeDefined();
+    expect(client.getWebSearchTool().spec).toMatchObject({ type: 'web_search' });
+    expect(client.getFileSearchTool({ vectorStoreIds: ['vs_1'] }).spec).toMatchObject({
+      type: 'file_search',
+      vector_store_ids: ['vs_1'],
+    });
+    expect(client.getCodeInterpreterTool().spec).toMatchObject({ type: 'code_interpreter' });
+    expect(client.getMCPTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example' }).spec).toMatchObject({
+      type: 'mcp',
+      server_label: 'docs',
+    });
+  });
+
   it('does not invent a model for a server agent', () => {
     // A server agent's model is a service-side detail chosen by the agent definition. .NET removes
     // `$.model` from the request and Go leaves it unset; reporting a made-up name here would put

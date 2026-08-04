@@ -668,7 +668,7 @@ export function toResponsesTools(tools: readonly Tool[] | undefined): ResponsesI
       strict: false,
     });
   }
-  return mapped.length === 0 ? undefined : mapped;
+  return mapped;
 }
 
 /** Converts a {@link ToolChoice} into the Responses API `tool_choice` value. */

@@ -200,6 +200,15 @@ describe('the message a turn sends', () => {
 });
 
 describe('payloads to response updates', () => {
+  it('rejects a payload kind this protocol version does not define', () => {
+    expect(() =>
+      updatesFromPayload(
+        { $case: 'hologram', value: {} } as unknown as Parameters<typeof updatesFromPayload>[0],
+        {},
+      ),
+    ).toThrow(/unsupported payload: 'hologram'/);
+  });
+
   it('turns a message payload into one finished assistant update', () => {
     const observed: ObservedTaskState = {};
 
