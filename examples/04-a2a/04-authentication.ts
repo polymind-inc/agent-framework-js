@@ -82,7 +82,7 @@ const handler: AuthenticationHandler = {
     response.status === 401 ? { authorization: `Bearer ${await fetchToken()}` } : undefined,
   // The retry worked, so keep what worked instead of refreshing again on the next call.
   onSuccessfulRetry: async (headers) => {
-    cached = headers['authorization']?.replace('Bearer ', '') ?? cached;
+    cached = headers.authorization?.replace('Bearer ', '') ?? cached;
   },
 };
 
