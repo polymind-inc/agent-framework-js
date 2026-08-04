@@ -42,7 +42,9 @@ export interface AgentAsToolOptions {
  */
 function sanitizeAgentName(agentName: string): string {
   const collapsed = agentName.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_');
-  const trimmed = collapsed.replace(/^_+/, '').replace(/_+$/, '');
+  // Runs are already collapsed, so at most one `_` can sit at either end. Matching a single
+  // character keeps the trim linear; `/_+$/` would rescan the tail from every position.
+  const trimmed = collapsed.replace(/^_/, '').replace(/_$/, '');
   if (trimmed === '') {
     return 'agent';
   }

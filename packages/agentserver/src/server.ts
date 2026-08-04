@@ -461,6 +461,21 @@ function decodeSegment(segment: string): string {
 }
 
 /**
+ * Drops trailing `/` characters, scanning once from the end.
+ *
+ * Deliberately not `/\/+$/`: that pattern retries the run from every start position, so a request
+ * path made of slashes that does not end in one costs time quadratic in its length. The path comes
+ * off the wire, which makes the difference a denial-of-service lever rather than a micro-optimization.
+ */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
+/**
  * A Foundry Responses container protocol v2.0.0 server.
  *
  * The public surface is one `fetch` handler, so it runs behind `node:http` (see `./node`), a
@@ -496,7 +511,7 @@ export class ResponsesServer {
   constructor(options: ResponsesServerConfig) {
     this.#handler = options.handler;
     this.#store = options.store ?? new InMemoryResponseProvider();
-    this.#prefix = (options.prefix ?? '').replace(/\/+$/, '');
+    this.#prefix = trimTrailingSlashes(options.prefix ?? '');
     this.#onViolation = options.onViolation;
     this.#hosted = options.hosted ?? isHosted();
     this.#limits = {
@@ -596,7 +611,7 @@ export class ResponsesServer {
 
   async #route(request: Request, context: RequestContext, telemetry: TurnTelemetry): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/\/+$/, '') || '/';
+    const path = trimTrailingSlashes(url.pathname) || '/';
 
     if (path === '/readiness') {
       // Answered even while draining: the platform needs the probe to keep working so it can see

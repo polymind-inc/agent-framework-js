@@ -11,7 +11,6 @@ import { readRunScope, stripRunScope } from '../middleware/run-scope.js';
 import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
 import { captureMessageContent } from '../observability/settings.js';
 import { recordSpanError, setAttr, spanName, withSpan } from '../observability/tracing.js';
-import { randomId } from '../random-id.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import {
   approvalReason,
@@ -887,7 +886,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
     const callMessage: Message = {
       role: 'assistant',
       contents: decisions.map((decision) => decision.call),
-      messageId: randomId('af'),
+      messageId: crypto.randomUUID(),
     };
 
     const contents: Content[] = decisions
@@ -910,12 +909,12 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       contents.push(...outcome.contents);
     }
 
-    const resultMessage: Message = { role: 'tool', contents, messageId: randomId('af') };
+    const resultMessage: Message = { role: 'tool', contents, messageId: crypto.randomUUID() };
     const emitted: Message[] = [callMessage, resultMessage];
     // A middleware can defer an already-approved call a second time (a policy check that only the
     // arguments reveal); the new request goes back to the caller instead of to the model.
     if (outcome !== undefined && outcome.approvals.length > 0) {
-      emitted.push({ role: 'assistant', contents: outcome.approvals, messageId: randomId('af') });
+      emitted.push({ role: 'assistant', contents: outcome.approvals, messageId: crypto.randomUUID() });
     }
     return {
       history: [...history, callMessage, resultMessage],
@@ -1066,7 +1065,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       const contents = outcome.contents;
       errorCount = outcome.errorCount;
 
-      const toolMessageId = randomId('af');
+      const toolMessageId = crypto.randomUUID();
       const toolMessage: Message = { role: 'tool', contents, messageId: toolMessageId };
       if (contents.length > 0) {
         yield chatResponseUpdate({ contents, role: 'tool', messageId: toolMessageId });
@@ -1075,7 +1074,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
         yield chatResponseUpdate({
           contents: outcome.approvals,
           role: 'assistant',
-          messageId: randomId('af'),
+          messageId: crypto.randomUUID(),
         });
       }
       if (outcome.terminated === true) {

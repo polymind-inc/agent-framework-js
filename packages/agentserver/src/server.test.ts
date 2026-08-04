@@ -338,6 +338,20 @@ describe('route-level errors', () => {
     ).toBeDefined();
   });
 
+  it('routes a slash-heavy path in linear time', async () => {
+    // Trimming the trailing slash with `/\/+$/` rescans the run from every start position, so a
+    // path made of slashes that does *not* end in one costs O(n²). At 100k characters the
+    // backtracking alone runs for seconds, and an unauthenticated GET is enough to buy it.
+    const request = new Request(`http://localhost:8088/${'/'.repeat(100_000)}a`);
+
+    const started = performance.now();
+    const response = await makeServer().handle(request);
+    const elapsed = performance.now() - started;
+
+    expect(response.status).toBe(404);
+    expect(elapsed).toBeLessThan(500);
+  });
+
   it('does not claim a path that merely starts with the prefix', async () => {
     const server = new ResponsesServer({ handler: echoHandler(), prefix: '/api' });
 
