@@ -109,14 +109,14 @@ function incrementalUsage(cumulative: UsageDetails, emitted: Record<string, numb
   return delta;
 }
 
-function usageContent(usage: unknown, emitted: Record<string, number> | undefined): Content | undefined {
+function usageContent(usage: unknown, emitted: Record<string, number>): Content | undefined {
   const details = parseUsage(usage);
   if (details === undefined) {
     return undefined;
   }
   return {
     type: 'usage',
-    usageDetails: emitted === undefined ? details : incrementalUsage(details, emitted),
+    usageDetails: incrementalUsage(details, emitted),
     rawRepresentation: usage,
   };
 }

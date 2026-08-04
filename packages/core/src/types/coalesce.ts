@@ -162,12 +162,13 @@ function mergeTextRun(run: TextContent[]): TextContent {
 function mergeTextReasoningRun(run: TextReasoningContent[]): TextReasoningContent {
   const first = run[0] as TextReasoningContent;
   let text = '';
-  let id = first.id;
+  // The first *non-empty* id wins (Python folds ids with `self.id or other.id`, where an empty
+  // string is falsy). An id-less run keeps the first fragment's spelling of "no id".
+  const id = run.find((item) => item.id !== undefined && item.id !== '')?.id ?? first.id;
   let protectedData: string | undefined;
   let props = first.additionalProperties;
   for (const item of run) {
     text += item.text ?? '';
-    id ??= item.id;
     if (item.protectedData !== undefined) {
       protectedData = item.protectedData;
     }
