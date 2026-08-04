@@ -19,6 +19,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "test:coverage": "vitest run --coverage --testTimeout=30000",
     "typecheck": "pnpm -r typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
     "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "4.1.10",
     "tsdown": "^0.22.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

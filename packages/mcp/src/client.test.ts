@@ -116,6 +116,13 @@ describe('tool enumeration', () => {
     await mcp.close();
   });
 
+  it('applies a constant approval mode to every tool', async () => {
+    const mcp = new MCPClient({ transport: server(), approvalMode: 'always_require' });
+    const tools = await mcp.getTools();
+    expect(new Set(tools.map((t) => t.approvalMode))).toEqual(new Set(['always_require']));
+    await mcp.close();
+  });
+
   it('refuses a configuration without exactly one connection source', () => {
     expect(() => new MCPClient({})).toThrow(ConfigurationError);
     expect(() => new MCPClient({ url: 'https://example.com/mcp', transport: server() })).toThrow(
@@ -146,6 +153,20 @@ describe('tool invocation', () => {
     const explode = tools.find((t) => t.name === 'explode');
 
     await expect(explode?.execute?.({}, { callId: 'call_1' })).rejects.toThrow('the tool is broken');
+    await mcp.close();
+  });
+
+  it('supplies a generic message when an error result carries no text', async () => {
+    const mcp = new MCPClient({
+      transport: new TestMcpServer([
+        { name: 'mute-failure', description: 'fails silently', call: () => ({ content: [], isError: true }) },
+      ]),
+    });
+    const [muteFailure] = await mcp.getTools();
+
+    await expect(muteFailure?.execute?.({}, { callId: 'call_1' })).rejects.toThrow(
+      'MCP tool "mute-failure" reported an error.',
+    );
     await mcp.close();
   });
 

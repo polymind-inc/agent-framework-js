@@ -5,9 +5,14 @@ import { createResponseStream } from '../streaming/response-stream.js';
 import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { ChatResponse, ChatResponseUpdate, ContinuationToken } from '../types/response.js';
-import { chatResponse, chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
+import {
+  agentResponseUpdate,
+  chatResponse,
+  chatResponseUpdate,
+  mergeChatUpdates,
+} from '../types/response.js';
 import { Agent } from './agent.js';
-import { isAgentContinuationToken } from './continuation.js';
+import { isAgentContinuationToken, parseContinuationToken, wrapContinuationToken } from './continuation.js';
 
 /** Narrows away undefined; a missing value fails the test with a clear error. */
 function must<T>(value: T | null | undefined): T {
@@ -67,6 +72,64 @@ function plain(text: string): ChatClient<ChatOptions> {
       }),
   };
 }
+
+describe('token payload round trip', () => {
+  it('carries every update field across the serialization boundary', () => {
+    const update = agentResponseUpdate({
+      contents: [textContent('partial')],
+      role: 'assistant',
+      authorName: 'writer',
+      responseId: 'resp_1',
+      messageId: 'msg_1',
+      createdAt: '2026-08-04T00:00:00Z',
+      finishReason: 'stop',
+      agentId: 'agent_1',
+      additionalProperties: { turn: 1 },
+    });
+    const token = wrapContinuationToken(
+      { responseId: 'resp_1' },
+      [{ role: 'user', contents: [textContent('question')] }],
+      [update],
+    );
+
+    const state = parseContinuationToken(token);
+    expect(state.innerToken).toEqual({ responseId: 'resp_1' });
+    expect(state.inputMessages).toEqual([
+      expect.objectContaining({ role: 'user', contents: [expect.objectContaining({ text: 'question' })] }),
+    ]);
+    const restored = must(state.updates[0]);
+    expect(restored.text).toBe('partial');
+    expect(restored.role).toBe('assistant');
+    expect(restored.authorName).toBe('writer');
+    expect(restored.responseId).toBe('resp_1');
+    expect(restored.messageId).toBe('msg_1');
+    expect(restored.createdAt).toBe('2026-08-04T00:00:00Z');
+    expect(restored.finishReason).toBe('stop');
+    expect(restored.agentId).toBe('agent_1');
+    expect(restored.additionalProperties).toEqual({ turn: 1 });
+  });
+
+  it('round-trips a bare update without inventing fields', () => {
+    const token = wrapContinuationToken(
+      { responseId: 'resp_1' },
+      [],
+      [agentResponseUpdate({ contents: [] })],
+    );
+    expect(token.inputMessages).toBeUndefined();
+
+    const restored = must(parseContinuationToken(token).updates[0]);
+    expect(restored.contents).toEqual([]);
+    expect(restored.authorName).toBeUndefined();
+    expect(restored.responseId).toBeUndefined();
+    expect(restored.finishReason).toBeUndefined();
+    expect(restored.additionalProperties).toBeUndefined();
+  });
+
+  it('parses an absent token to empty state and rejects a foreign one', () => {
+    expect(parseContinuationToken(undefined)).toEqual({ inputMessages: [], updates: [] });
+    expect(() => parseContinuationToken({ responseId: 'raw' })).toThrow(ConfigurationError);
+  });
+});
 
 describe('continuation tokens', () => {
   it('wraps the provider token so a resumed run can persist the whole exchange', async () => {
