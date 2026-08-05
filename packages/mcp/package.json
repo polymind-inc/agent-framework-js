@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Model Context Protocol client integration for the Agent Framework: MCP server tools as framework tools.",
   "keywords": [
     "agent",
