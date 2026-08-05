@@ -12,7 +12,7 @@
   "license": "MIT",
   "author": "shibayan <me@shibayan.jp>",
   "type": "module",
-  "packageManager": "pnpm@11.18.0",
+  "packageManager": "pnpm@11.20.0",
   "engines": {
     "node": ">=24"
   },
@@ -20,7 +20,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:coverage": "vitest run --coverage --testTimeout=30000",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && pnpm run typecheck:resolution",
+    "typecheck:resolution": "tsc -p scripts/type-resolution/tsconfig.json --module nodenext --moduleResolution nodenext",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -32,10 +33,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
-    "@types/node": "^24.0.0",
-    "@vitest/coverage-v8": "4.1.10",
-    "tsdown": "^0.22.14",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

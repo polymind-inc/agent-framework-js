@@ -114,30 +114,43 @@ export async function serve(app: ResponsesServer, options: ServeOptions = {}): P
       const address = server.address();
       const boundPort = typeof address === 'object' && address !== null ? address.port : port;
 
-      const close = async (): Promise<void> => {
-        const deadline = Date.now() + gracefulShutdownSeconds() * 1000;
-        const drained = app.drain();
-        await new Promise<void>((done) => {
-          const timer = setTimeout(() => {
-            server.closeAllConnections?.();
-            done();
-          }, gracefulShutdownSeconds() * 1000);
-          timer.unref?.();
-          server.close(() => {
-            clearTimeout(timer);
-            done();
+      let stop: (() => void) | undefined;
+      let closePromise: Promise<void> | undefined;
+      const close = (): Promise<void> => {
+        if (closePromise !== undefined) {
+          return closePromise;
+        }
+        if (stop !== undefined) {
+          process.removeListener('SIGTERM', stop);
+          process.removeListener('SIGINT', stop);
+          stop = undefined;
+        }
+        closePromise = (async (): Promise<void> => {
+          const deadline = Date.now() + gracefulShutdownSeconds() * 1000;
+          const drained = app.drain();
+          await new Promise<void>((done) => {
+            const timer = setTimeout(() => {
+              server.closeAllConnections?.();
+              done();
+            }, gracefulShutdownSeconds() * 1000);
+            timer.unref?.();
+            server.close(() => {
+              clearTimeout(timer);
+              done();
+            });
           });
-        });
-        // Detached background runs are not connections, so `server.close` never waits for them.
-        // Give them what is left of the grace period to persist their terminal state — the
-        // Python shutdown handler holds the process for its background records the same way.
-        await raceTimeout(drained, Math.max(0, deadline - Date.now()));
-        // Whatever the drained turns recorded leaves with the process, not with the batch timer.
-        await flushTelemetry();
+          // Detached background runs are not connections, so `server.close` never waits for them.
+          // Give them what is left of the grace period to persist their terminal state — the
+          // Python shutdown handler holds the process for its background records the same way.
+          await raceTimeout(drained, Math.max(0, deadline - Date.now()));
+          // Whatever the drained turns recorded leaves with the process, not with the batch timer.
+          await flushTelemetry();
+        })();
+        return closePromise;
       };
 
       if (options.handleSignals !== false) {
-        const stop = (): void => {
+        stop = (): void => {
           void close().then(() => process.exit(0));
         };
         process.once('SIGTERM', stop);

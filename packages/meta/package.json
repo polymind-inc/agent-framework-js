@@ -101,9 +101,9 @@
     "@polymind-inc/agent-framework-openai": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "tsdown": "^0.22.14",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

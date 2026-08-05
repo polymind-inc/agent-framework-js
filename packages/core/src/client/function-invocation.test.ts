@@ -4,6 +4,7 @@ import { functionMiddleware } from '../middleware/middleware.js';
 import { invocationCountOf, resetInvocationCount, tool } from '../tools/tool.js';
 import type {
   Content,
+  FunctionApprovalRequestContent,
   FunctionCallContent,
   FunctionResultContent,
   UserInputRequestContent,
@@ -300,6 +301,24 @@ describe('withFunctionInvocation', () => {
     expect(inner.calls[2]?.options?.tools).toBeUndefined();
     expect(inner.calls[2]?.options?.toolChoice).toBe('auto');
   });
+
+  it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid maxIterations value %s',
+    (maxIterations) => {
+      expect(() => withFunctionInvocation(new MockChatClient([]), { maxIterations })).toThrow(
+        ConfigurationError,
+      );
+    },
+  );
+
+  it.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid maxConsecutiveErrors value %s',
+    (maxConsecutiveErrors) => {
+      expect(() => withFunctionInvocation(new MockChatClient([]), { maxConsecutiveErrors })).toThrow(
+        ConfigurationError,
+      );
+    },
+  );
 
   it('defaults to 40 iterations and 3 consecutive errors', async () => {
     const looping = tool({
@@ -833,6 +852,48 @@ describe('toolChoice across the approval boundary (Go parity)', () => {
     );
 
     expect(mock.calls[0]?.options?.toolChoice).toBe('auto');
+  });
+});
+
+describe('replayed unanswered approval requests', () => {
+  it('re-surfaces them and pauses instead of calling the model', async () => {
+    // A transcript-replaying caller can send a turn that still contains an approval request the
+    // human never answered. Silently stripping it and letting the model run would answer a
+    // conversation in which the gated call simply vanished.
+    const gated = tool({
+      name: 'gated',
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: {} },
+      approvalMode: 'always_require',
+      execute: (() => 'ran') as never,
+    });
+    const mock = new MockChatClient([{ contents: [textContent('unreachable')], finishReason: 'stop' }]);
+    const client = withFunctionInvocation(mock);
+
+    const response = await client.getResponse(
+      [
+        { role: 'user', contents: [textContent('do it')] },
+        {
+          role: 'assistant',
+          contents: [
+            {
+              type: 'function_approval_request',
+              id: 'a1',
+              userInputRequest: true,
+              functionCall: call('c1', 'gated'),
+            },
+          ],
+        },
+      ],
+      { tools: [gated] } as ChatOptions,
+    );
+
+    expect(mock.callCount).toBe(0);
+    const requests = response.messages
+      .flatMap((msg) => msg.contents)
+      .filter((c): c is FunctionApprovalRequestContent => c.type === 'function_approval_request');
+    expect(requests.map((request) => request.id)).toEqual(['a1']);
+    expect(requests.map((request) => request.functionCall.callId)).toEqual(['c1']);
   });
 });
 

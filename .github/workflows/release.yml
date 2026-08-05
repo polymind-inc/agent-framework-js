@@ -30,12 +30,11 @@ jobs:
       # v6 is the first release that supports pnpm 11, which `packageManager` pins us to.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
-      # setup-node caches automatically only for npm, so pnpm needs `cache` set explicitly.
-      # It also has to run after pnpm is on PATH for the cache lookup to work.
+      # Release installs deliberately skip the package-manager cache, keeping the publish job's
+      # dependency inputs limited to the signed lockfile and registry responses for this run.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: pnpm
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile

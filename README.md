@@ -181,8 +181,8 @@ Deliberate divergences, and the reason for each:
 ## Requirements
 
 - **Node.js >= 24** (active LTS). ESM only — there is no CommonJS build.
-- **TypeScript**: type resolution is verified with TypeScript 7 under `moduleResolution: bundler`,
-  `node16` and `nodenext`. Declarations are emitted with `isolatedDeclarations`.
+- **TypeScript**: type resolution is verified with TypeScript 7 under `moduleResolution: bundler`
+  and `nodenext`. Declarations are emitted with `isolatedDeclarations`.
 
 ## Examples
 

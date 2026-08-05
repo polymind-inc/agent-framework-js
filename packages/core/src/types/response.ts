@@ -372,12 +372,7 @@ function responseToUpdates(
 
   // Go gates the trailing update on a non-zero usage record (`!isZeroUsage`), not mere presence.
   const hasUsage = !isEmptyUsage(response.usageDetails);
-  if (
-    hasUsage ||
-    response.additionalProperties !== undefined ||
-    response.continuationToken !== undefined ||
-    inits.length === 0
-  ) {
+  if (hasUsage || response.additionalProperties !== undefined || response.continuationToken !== undefined) {
     const init: ResponseUpdateInitBase = {
       contents: hasUsage ? [{ type: 'usage', usageDetails: response.usageDetails as UsageDetails }] : [],
     };

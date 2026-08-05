@@ -21,9 +21,9 @@
     "@polymind-inc/agent-framework-foundry": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "tsdown": "^0.22.14",
-    "tsx": "^4.23.1",
-    "typescript": "^7.0.2"
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
   }
 }
