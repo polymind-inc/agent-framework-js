@@ -12,8 +12,9 @@ days; please allow a reasonable disclosure window before publishing.
 
 ## Supported versions
 
-Only the latest published 0.x release line receives security fixes. All
-`@polymind-inc/agent-framework*` packages are released in lockstep — a fix bumps them together.
+Only the latest published 0.x release line receives security fixes. The umbrella
+`@polymind-inc/agent-framework` package and all `@polymind-inc/agent-framework-*` packages are
+released in lockstep — a fix bumps them together.
 
 ## Deployment notes
 

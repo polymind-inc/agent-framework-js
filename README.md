@@ -82,7 +82,7 @@ All packages are published under the `@polymind-inc/` scope and released in lock
 
 | Package                                     | Purpose                                                                                                                                               |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@polymind-inc/agent-framework`             | Umbrella package — installs every package below and re-exports each under a subpath (`/openai`, `/anthropic`, `/mcp`, `/a2a`, `/foundry`, `/agentserver`) |
+| `@polymind-inc/agent-framework`             | Umbrella package — installs every package below and re-exports each of their entry points under a subpath (the full mapping is in [its README](packages/meta/README.md)) |
 | `@polymind-inc/agent-framework-core`        | `Agent`, `AgentSession`, the `Message`/`Content` model, `tool()`, middleware, and the `ChatClient` seam. Sole runtime dependency: `@opentelemetry/api` |
 | `@polymind-inc/agent-framework-openai`      | OpenAI and Azure OpenAI chat client (Responses API)                                                                                                   |
 | `@polymind-inc/agent-framework-anthropic`   | Anthropic chat client (Messages API)                                                                                                                  |
