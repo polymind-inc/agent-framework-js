@@ -1,0 +1,22 @@
+{
+  "name": "agent-framework-type-resolution-smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@polymind-inc/agent-framework": "workspace:*",
+    "@polymind-inc/agent-framework-a2a": "workspace:*",
+    "@polymind-inc/agent-framework-agentserver": "workspace:*",
+    "@polymind-inc/agent-framework-anthropic": "workspace:*",
+    "@polymind-inc/agent-framework-core": "workspace:*",
+    "@polymind-inc/agent-framework-foundry": "workspace:*",
+    "@polymind-inc/agent-framework-mcp": "workspace:*",
+    "@polymind-inc/agent-framework-openai": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}
