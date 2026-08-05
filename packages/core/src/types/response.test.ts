@@ -183,12 +183,12 @@ describe('chatResponseToUpdates', () => {
     expect(restored.additionalProperties).toEqual({ metadata: { tenant: 'contoso' } });
   });
 
-  it('emits a metadata-only update for a response with no messages', () => {
+  it('emits no updates for an empty response', () => {
     const updates: ChatResponseUpdate[] = chatResponseToUpdates(
       chatResponse<undefined>({ messages: [], responseId: 'resp_2' }),
     );
-    expect(updates).toHaveLength(1);
-    expect(updates[0]?.responseId).toBe('resp_2');
+    expect(updates).toEqual([]);
+    expect(mergeChatUpdates(updates).messages).toEqual([]);
   });
 });
 
