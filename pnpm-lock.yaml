@@ -316,6 +316,43 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.1))
 
+  packages/meta:
+    dependencies:
+      '@polymind-inc/agent-framework-a2a':
+        specifier: workspace:*
+        version: link:../a2a
+      '@polymind-inc/agent-framework-agentserver':
+        specifier: workspace:*
+        version: link:../agentserver
+      '@polymind-inc/agent-framework-anthropic':
+        specifier: workspace:*
+        version: link:../anthropic
+      '@polymind-inc/agent-framework-core':
+        specifier: workspace:*
+        version: link:../core
+      '@polymind-inc/agent-framework-foundry':
+        specifier: workspace:*
+        version: link:../foundry
+      '@polymind-inc/agent-framework-mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@polymind-inc/agent-framework-openai':
+        specifier: workspace:*
+        version: link:../openai
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      tsdown:
+        specifier: ^0.22.14
+        version: 0.22.14(tsx@4.23.1)(typescript@7.0.2)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.1))
+
   packages/openai:
     dependencies:
       '@polymind-inc/agent-framework-core':

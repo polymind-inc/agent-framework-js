@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Sets the version of every publishable package. All packages ship in lockstep, so they always
-// carry the same version; internal dependencies use `workspace:^` and are rewritten at publish
-// time by pnpm, so those need no edit.
+// carry the same version; internal dependencies use the `workspace:` protocol (`workspace:^`, or
+// `workspace:*` where a package pins its siblings exactly) and are rewritten to the real version
+// at publish time by pnpm, so those need no edit.
 //
 // Three packages also carry the version as a source constant, because they report it at runtime
 // (OpenTelemetry instrumentation scope, the hosting server identity, the MCP handshake) and the

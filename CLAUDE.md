@@ -31,8 +31,9 @@ The points below are the ones most often gotten wrong.
 Node.js 24+ · TypeScript 7 · pnpm · ESM only · target ES2024 with `isolatedDeclarations` · Biome
 for lint and format · tsdown for builds · Vitest for tests.
 
-Seven packages under `packages/`, published as `@polymind-inc/agent-framework-*` and versioned in
-lockstep. `pnpm check` runs the same gate as CI.
+The packages under `packages/` are published as `@polymind-inc/agent-framework-*`, plus the
+umbrella `@polymind-inc/agent-framework`, which depends on all of them and re-exports each under a
+subpath. All are versioned in lockstep. `pnpm check` runs the same gate as CI.
 
 ## Status
 
