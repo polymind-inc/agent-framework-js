@@ -50,11 +50,11 @@
   },
   "dependencies": {
     "@polymind-inc/agent-framework-core": "workspace:^",
-    "openai": "^7.2.0"
+    "openai": "catalog:"
   },
   "devDependencies": {
-    "tsdown": "^0.22.14",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
