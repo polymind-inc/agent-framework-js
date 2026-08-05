@@ -104,6 +104,30 @@ describe('node adapter', () => {
     });
     expect(response.headers.get('x-platform-error-source')).toBe('user');
   });
+
+  it('removes its process signal handlers when closed', async () => {
+    const before = {
+      sigterm: process.listenerCount('SIGTERM'),
+      sigint: process.listenerCount('SIGINT'),
+    };
+    const signalled = await serve(new ResponsesServer({ handler: echo }), {
+      port: 0,
+      host: '127.0.0.1',
+      observability: false,
+    });
+    try {
+      expect(process.listenerCount('SIGTERM')).toBe(before.sigterm + 1);
+      expect(process.listenerCount('SIGINT')).toBe(before.sigint + 1);
+    } finally {
+      await signalled.close();
+    }
+    expect(process.listenerCount('SIGTERM')).toBe(before.sigterm);
+    expect(process.listenerCount('SIGINT')).toBe(before.sigint);
+    // Closing is idempotent and does not re-register anything.
+    await signalled.close();
+    expect(process.listenerCount('SIGTERM')).toBe(before.sigterm);
+    expect(process.listenerCount('SIGINT')).toBe(before.sigint);
+  });
 });
 
 describe('backpressure', () => {

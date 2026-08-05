@@ -210,7 +210,7 @@ class BackgroundRun {
 
   readonly #maxEvents: number;
   #waiters: Array<() => void> = [];
-  #firstEventSeen!: () => void;
+  readonly #firstEventSeen: () => void;
   /** Resolves once the first event was folded (or the run ended): the non-stream 200 boundary. */
   readonly firstEvent: Promise<void>;
 
@@ -239,9 +239,9 @@ class BackgroundRun {
     this.abort = options.abort;
     this.persistSnapshot = options.persistSnapshot;
     this.#maxEvents = options.maxEvents;
-    this.firstEvent = new Promise<void>((resolve) => {
-      this.#firstEventSeen = resolve;
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.firstEvent = promise;
+    this.#firstEventSeen = resolve;
   }
 
   /**
@@ -397,12 +397,10 @@ interface IdClaim {
 
 /** A claim and its wait, in the one place both are created. */
 function newClaim(owner: ResponseOwner, generation: ResponseGeneration): IdClaim {
-  let settle!: (work?: Promise<void>) => void;
-  const done = new Promise<void>((resolve) => {
-    // A failure is still a completion as far as a shutdown is concerned: `drain()` waits for the
-    // turn to be *over*, not to have succeeded.
-    settle = (work) => resolve(work?.then(undefined, () => undefined));
-  });
+  const { promise: done, resolve } = Promise.withResolvers<void>();
+  // A failure is still a completion as far as a shutdown is concerned: `drain()` waits for the
+  // turn to be *over*, not to have succeeded.
+  const settle = (work?: Promise<void>): void => resolve(work?.then(undefined, () => undefined));
   return { owner, generation, run: undefined, done, settle };
 }
 
