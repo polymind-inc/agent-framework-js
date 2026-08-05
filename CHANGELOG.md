@@ -5,8 +5,14 @@ set. During 0.x, **minor releases may contain breaking changes**; patch releases
 
 ## Unreleased
 
-Fixes only — no change to any published API.
+One new package; no change to any existing published API.
 
+- **`@polymind-inc/agent-framework`** — new umbrella package, mirroring the Python
+  `agent-framework` distribution. It depends on every granular package and re-exports each
+  under a subpath: the root entry is the core, and `/testing`, `/openai`, `/anthropic`, `/mcp`,
+  `/a2a`, `/foundry`, `/foundry/hosting`, `/agentserver`, `/agentserver/node` and
+  `/agentserver/observability` map one-to-one onto the packages they re-export. The granular
+  packages are unchanged and remain the smaller install.
 - **`@polymind-inc/agent-framework-agentserver`** — routing no longer trims the trailing slash of a
   request path with a backtracking regular expression. The old pattern cost time quadratic in the
   length of a run of slashes, so an unauthenticated `GET` on a path such as `/////…/a` could hold

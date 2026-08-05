@@ -82,6 +82,7 @@ All packages are published under the `@polymind-inc/` scope and released in lock
 
 | Package                                     | Purpose                                                                                                                                               |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@polymind-inc/agent-framework`             | Umbrella package — installs every package below and re-exports each under a subpath (`/openai`, `/anthropic`, `/mcp`, `/a2a`, `/foundry`, `/agentserver`) |
 | `@polymind-inc/agent-framework-core`        | `Agent`, `AgentSession`, the `Message`/`Content` model, `tool()`, middleware, and the `ChatClient` seam. Sole runtime dependency: `@opentelemetry/api` |
 | `@polymind-inc/agent-framework-openai`      | OpenAI and Azure OpenAI chat client (Responses API)                                                                                                   |
 | `@polymind-inc/agent-framework-anthropic`   | Anthropic chat client (Messages API)                                                                                                                  |
@@ -90,8 +91,10 @@ All packages are published under the `@polymind-inc/` scope and released in lock
 | `@polymind-inc/agent-framework-foundry`     | Microsoft Foundry chat client and Hosted Agent hosting adapter                                                                                        |
 | `@polymind-inc/agent-framework-agentserver` | Foundry Responses container protocol v2.0.0 server, independent of the rest of the framework                                                          |
 
-The names mirror the Python distribution layout (`agent-framework-core`, `agent-framework-openai`,
-…) so that a move to a first-party scope is a mechanical rename.
+The names mirror the Python distribution layout (`agent-framework` as the everything-included
+umbrella, `agent-framework-core`, `agent-framework-openai`, …) so that a move to a first-party
+scope is a mechanical rename. The granular packages remain the recommended install when size
+matters; the umbrella pulls in every provider SDK.
 
 ## Parity with the reference implementations
 
@@ -211,7 +214,7 @@ environment variables each one needs.
 ## Stability and versioning
 
 The public API is frozen as **Baseline v0.1**. During `0.x`, **minor releases may contain breaking
-changes**; patch releases are fixes only. All seven packages are versioned and released in
+changes**; patch releases are fixes only. All packages are versioned and released in
 lockstep, so a single [`CHANGELOG.md`](CHANGELOG.md) entry covers the set. Releases are published
 from CI with [npm provenance][provenance].
 

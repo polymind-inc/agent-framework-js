@@ -105,7 +105,7 @@ gh release create v0.2.0 --title v0.2.0 --notes "$(sed -n '/^## 0.2.0/,/^## 0.1/
 ```
 
 Either way the release workflow re-runs the full gate, verifies the tag matches the package
-version, and publishes all seven packages to npm with provenance. A version carrying a prerelease
+version, and publishes every package to npm with provenance. A version carrying a prerelease
 suffix (`0.2.0-rc.1`) goes to the `next` dist-tag instead of `latest`.
 
 Prerequisites for publishing:
