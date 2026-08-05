@@ -7,7 +7,7 @@ import { GEN_AI, MCP, setMcpSpanError, withMcpClientSpan } from '@polymind-inc/a
  *
  * Kept in sync with `version` in this package's package.json; a unit test enforces the match.
  */
-export const MCP_CLIENT_VERSION = '0.1.1';
+export const MCP_CLIENT_VERSION = '0.2.0';
 
 /** The identity reported to servers when the consumer supplies no `clientInfo` of its own. */
 const DEFAULT_CLIENT_INFO = { name: 'agent-framework-js', version: MCP_CLIENT_VERSION };

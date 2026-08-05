@@ -1,9 +1,10 @@
 # Changelog
 
-All `@polymind-inc/agent-framework-*` packages are versioned in lockstep; one entry here covers the
-set. During 0.x, **minor releases may contain breaking changes**; patch releases are fixes only.
+The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agent-framework-*`
+packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
+contain breaking changes**; patch releases are fixes only.
 
-## Unreleased
+## 0.2.0
 
 One new package; no change to any existing published API.
 

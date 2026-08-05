@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Umbrella package for the Agent Framework (TypeScript): one install for the core, the OpenAI / Anthropic / Foundry providers, MCP, A2A and hosting, each re-exported under a subpath.",
   "keywords": [
     "agent",
