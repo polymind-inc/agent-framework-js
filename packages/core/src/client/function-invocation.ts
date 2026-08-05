@@ -1,5 +1,6 @@
 import type { AgentSession } from '../agent/session.js';
 import {
+  ConfigurationError,
   MiddlewareTerminated,
   ToolInvocationError,
   throwIfAborted,
@@ -39,7 +40,8 @@ export interface FunctionInvocationConfig {
   /** Set to `false` to pass calls straight through to the caller. Default `true`. */
   enabled?: boolean;
   /**
-   * Maximum number of tool rounds per run. Default `40`, matching .NET and Go.
+   * Maximum number of tool rounds per run. Must be a positive safe integer. Default `40`,
+   * matching .NET and Go.
    *
    * On hitting the limit the loop makes one final model call with the function tools removed, so
    * the run always ends with an assistant message rather than an unanswered tool call.
@@ -47,8 +49,9 @@ export interface FunctionInvocationConfig {
   maxIterations?: number;
   /**
    * Consecutive failing rounds tolerated before the aggregated error is thrown to the caller.
-   * Default `3`. A round without failures resets the counter; unknown-tool ("not found") results
-   * are reported to the model but do not count as failures.
+   * Must be a non-negative safe integer. Default `3`. A round without failures resets the
+   * counter; unknown-tool ("not found") results are reported to the model but do not count as
+   * failures.
    */
   maxConsecutiveErrors?: number;
   /** Stop the loop when the model calls an unknown tool instead of returning an error result. Default `false`. */
@@ -81,6 +84,14 @@ const REJECTED_RESULT_TEXT = 'Error: Tool call invocation was rejected by user.'
  * `Content.from_function_result(result=…, exception="UserInputRequiredException")`.
  */
 const USER_INPUT_UNAVAILABLE_RESULT_TEXT = 'Tool requires user input but no request details were provided.';
+
+/** Validates a numeric loop limit at the configuration boundary. */
+function loopLimit(name: 'maxIterations' | 'maxConsecutiveErrors', value: number, minimum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new ConfigurationError(`${name} must be a safe integer greater than or equal to ${minimum}.`);
+  }
+  return value;
+}
 
 /** A `function_call` this layer is expected to act on, rather than one the provider already ran. */
 function isPendingCall(content: Content): content is FunctionCallContent {
@@ -697,8 +708,12 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
   config: FunctionInvocationConfig = {},
 ): ChatClient<TOptions> {
   const enabled = config.enabled ?? true;
-  const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const maxConsecutiveErrors = config.maxConsecutiveErrors ?? DEFAULT_MAX_CONSECUTIVE_ERRORS;
+  const maxIterations = loopLimit('maxIterations', config.maxIterations ?? DEFAULT_MAX_ITERATIONS, 1);
+  const maxConsecutiveErrors = loopLimit(
+    'maxConsecutiveErrors',
+    config.maxConsecutiveErrors ?? DEFAULT_MAX_CONSECUTIVE_ERRORS,
+    0,
+  );
   const terminateOnUnknownCalls = config.terminateOnUnknownCalls ?? false;
   const includeDetailedErrors = config.includeDetailedErrors ?? false;
   const allowConcurrentInvocations = config.allowConcurrentInvocations ?? false;
@@ -812,6 +827,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
   > {
     const answered = new Set<string>();
     const respondedCallIds = new Set<string>();
+    const requested = new Map<string, FunctionApprovalRequestContent>();
     let hasApprovalContent = false;
     for (const msg of messages) {
       for (const content of msg.contents) {
@@ -822,7 +838,9 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
           !isHostedApproval(content)
         ) {
           hasApprovalContent = true;
-          if (isApprovalResponse(content)) {
+          if (isApprovalRequest(content)) {
+            requested.set(content.functionCall.callId, content);
+          } else {
             respondedCallIds.add(content.functionCall.callId);
           }
         }
@@ -832,8 +850,13 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       return undefined;
     }
 
-    // Strip every local approval control item. Anything still pending is re-materialized below as
-    // a synthesized assistant tool-call message, which is where the model expects it.
+    const pending = [...requested.entries()]
+      .filter(([callId]) => !answered.has(callId) && !respondedCallIds.has(callId))
+      .map(([, request]) => request);
+
+    // Strip every local approval control item from provider-visible history. Answered calls are
+    // re-materialized below as assistant tool calls; unanswered requests are returned to the
+    // caller again and keep the loop paused.
     const history: Message[] = [];
     const decided = new Map<string, { approved: boolean; call: FunctionCallContent; reason?: string }>();
     for (const msg of messages) {
@@ -879,7 +902,19 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
     }
 
     if (decided.size === 0) {
-      return { history, emitted: [], terminated: false, errorCount: 0, invoked: false };
+      if (pending.length === 0) {
+        return { history, emitted: [], terminated: false, errorCount: 0, invoked: false };
+      }
+      // No decision arrived, but unanswered requests did (a replayed transcript). Running the
+      // model against a history the gated calls were stripped from would answer a conversation
+      // in which they never happened, so the requests go back to the caller instead.
+      return {
+        history,
+        emitted: [{ role: 'assistant', contents: pending, messageId: crypto.randomUUID() }],
+        terminated: true,
+        errorCount: 0,
+        invoked: false,
+      };
     }
 
     const decisions = [...decided.values()];
@@ -916,10 +951,13 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
     if (outcome !== undefined && outcome.approvals.length > 0) {
       emitted.push({ role: 'assistant', contents: outcome.approvals, messageId: crypto.randomUUID() });
     }
+    if (pending.length > 0) {
+      emitted.push({ role: 'assistant', contents: pending, messageId: crypto.randomUUID() });
+    }
     return {
       history: [...history, callMessage, resultMessage],
       emitted,
-      terminated: outcome?.terminated === true,
+      terminated: outcome?.terminated === true || pending.length > 0,
       invoked: outcome !== undefined,
       // The error budget is shared across the whole run, resumed calls included: restarting at
       // zero here would let a tool that fails on every turn be retried forever by re-approving it.

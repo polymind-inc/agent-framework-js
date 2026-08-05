@@ -12,6 +12,7 @@ import type {
   Content,
   FunctionApprovalRequestContent,
   FunctionApprovalResponseContent,
+  FunctionCallContent,
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
@@ -32,7 +33,7 @@ const readOnly = tool({
   execute: async () => 'read',
 });
 
-function call(callId: string, name: string): Content {
+function call(callId: string, name: string): FunctionCallContent {
   return { type: 'function_call', callId, name, arguments: '{}' };
 }
 
@@ -115,6 +116,46 @@ describe('tool approval', () => {
       ['c1', 'Error: Tool call invocation was rejected by user. too risky'],
     ]);
     expect(resumed.text).toBe('understood');
+  });
+
+  it('keeps unanswered requests pending when only part of an approval batch is answered', async () => {
+    const executed: string[] = [];
+    const gated = tool({
+      name: 'gated',
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: { value: { type: 'string' } } },
+      approvalMode: 'always_require',
+      execute: async (input) => {
+        const value = String(input.value);
+        executed.push(value);
+        return value;
+      },
+    });
+    const mock = new MockChatClient([
+      {
+        contents: [
+          { ...call('c1', 'gated'), arguments: '{"value":"first"}' },
+          { ...call('c2', 'gated'), arguments: '{"value":"second"}' },
+        ],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const agent = new Agent({ client: mock, tools: [gated] });
+    const session = agent.createSession();
+
+    const first = await agent.run('do both', { session });
+    const [firstRequest, secondRequest] = approvals(first);
+    const partial = await agent.run(approvalResponse(must(firstRequest), true), { session });
+
+    expect(executed).toEqual(['first']);
+    expect(mock.callCount).toBe(1);
+    expect(approvals(partial).map((request) => request.functionCall.callId)).toEqual(['c2']);
+
+    const resumed = await agent.run(approvalResponse(must(secondRequest), true), { session });
+    expect(executed).toEqual(['first', 'second']);
+    expect(resumed.text).toBe('done');
+    expect(session.state._toolApproval).toBeUndefined();
   });
 
   it('treats malformed approval content as inert instead of crashing', async () => {

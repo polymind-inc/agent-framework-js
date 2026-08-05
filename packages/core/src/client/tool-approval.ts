@@ -150,6 +150,7 @@ function sameCall(a: FunctionCallContent, b: FunctionCallContent): boolean {
 function bindInboundDecisions(messages: readonly Message[], store: ApprovalStateStore): Message[] {
   const known = new Map<string, FunctionApprovalRequestContent>();
   const fromStore = new Set<string>();
+  const answeredCallIds = new Set<string>();
   for (const request of store.takePending()) {
     known.set(request.id, request);
     fromStore.add(request.id);
@@ -158,6 +159,9 @@ function bindInboundDecisions(messages: readonly Message[], store: ApprovalState
   let hasDecision = false;
   for (const msg of messages) {
     for (const content of msg.contents) {
+      if (content.type === 'function_result') {
+        answeredCallIds.add(content.callId);
+      }
       if (isHostedApproval(content)) {
         // Not ours to bind: the provider issued it and the provider checks it.
         continue;
@@ -171,7 +175,15 @@ function bindInboundDecisions(messages: readonly Message[], store: ApprovalState
       }
     }
   }
+  for (const [id, request] of known) {
+    if (answeredCallIds.has(request.functionCall.callId)) {
+      known.delete(id);
+    }
+  }
   if (!hasDecision) {
+    // `takePending` is destructive, but an unrelated turn must not consume approvals that the
+    // caller has not answered yet.
+    store.addPending([...known.values()]);
     return [...messages];
   }
 
@@ -204,6 +216,15 @@ function bindInboundDecisions(messages: readonly Message[], store: ApprovalState
     } else if (kept.length > 0) {
       out.push({ ...msg, contents: kept });
     }
+  }
+
+  // A caller may answer only part of a batch. Keep the remaining requests durable and inject
+  // them into this turn so the invocation loop can surface them again instead of silently
+  // consuming them when `takePending` cleared the store.
+  const pending = [...known.values()];
+  store.addPending(pending);
+  if (pending.length > 0) {
+    out.push({ role: 'assistant', contents: pending, messageId: crypto.randomUUID() });
   }
   return out;
 }
