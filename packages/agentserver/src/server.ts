@@ -1395,7 +1395,16 @@ export class ResponsesServer {
     const run = this.#runFor(id, owner);
     if (run !== undefined) {
       if (!streamReplay) {
-        return jsonResponse(run.tracker.response, 200);
+        // A cancel that is still inside its winddown grace has already promised `cancelled`, and
+        // the reference refreshes the record's status from the cancel signal before answering any
+        // GET (`_refresh_background_status`). Only the status is refreshed — the rest of the
+        // snapshot, accumulated output included, stays the handler's until the cancel route
+        // applies the actual cancelled terminal.
+        const snapshot = run.tracker.response;
+        if (run.cancelRequested && !TERMINAL_STATUSES.has(String(snapshot.status))) {
+          return jsonResponse({ ...snapshot, status: 'cancelled' }, 200);
+        }
+        return jsonResponse(snapshot, 200);
       }
       if (!run.streamed) {
         throw invalidMode('This response cannot be streamed because it was not created with stream=true.');
