@@ -12,6 +12,7 @@ import type {
 import {
   ChatClientError,
   isFunctionTool,
+  isHostedApproval,
   MESSAGE_SOURCE_KEY,
   resolveResponseFormat,
   topLevelMediaType,
@@ -566,6 +567,11 @@ export function toResponsesInput(
           break;
         }
         case 'function_approval_request': {
+          // A local tool's approval is resolved in-process: the provider never issued a matching
+          // approval item, so serializing one would orphan it on the wire.
+          if (!isHostedApproval(content)) {
+            break;
+          }
           // The framework models a hosted MCP approval as an approval request; the Responses API
           // models it as an output item that has to be replayed to keep the pairing.
           items.push({
@@ -578,6 +584,11 @@ export function toResponsesInput(
           break;
         }
         case 'function_approval_response': {
+          // Only a hosted decision has a matching approval request on the provider; a local
+          // decision replayed as `mcp_approval_response` would reference an id the API never saw.
+          if (!isHostedApproval(content)) {
+            break;
+          }
           items.push({
             type: 'mcp_approval_response',
             approval_request_id: content.id,

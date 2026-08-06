@@ -281,7 +281,15 @@ describe('hosted tool input mapping', () => {
             type: 'function_approval_response',
             id: 'mcpr_1',
             approved: true,
-            functionCall: { type: 'function_call', callId: 'mcpr_1', name: 'delete', arguments: '{}' },
+            // `approvalResponse()` copies the request's call verbatim, so a hosted decision
+            // carries the `server_label` that marks it as the provider's to settle.
+            functionCall: {
+              type: 'function_call',
+              callId: 'mcpr_1',
+              name: 'delete',
+              arguments: '{}',
+              additionalProperties: { server_label: 'docs' },
+            },
           },
         ],
       },

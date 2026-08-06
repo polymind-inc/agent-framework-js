@@ -282,6 +282,64 @@ describe('stateless replay validation', () => {
   });
 });
 
+describe('approval serialization boundaries', () => {
+  const localCall = {
+    type: 'function_call',
+    callId: 'local_1',
+    name: 'ask_user',
+    arguments: '{}',
+  } as const;
+  const localApprovalMessages: Message[] = [
+    {
+      role: 'assistant',
+      contents: [{ type: 'function_approval_request', id: 'local_approval_1', functionCall: localCall }],
+    },
+    {
+      role: 'user',
+      contents: [
+        {
+          type: 'function_approval_response',
+          id: 'local_approval_1',
+          approved: true,
+          functionCall: localCall,
+        },
+      ],
+    },
+  ];
+
+  it.each([
+    ['stateless', false],
+    ['storage', true],
+  ])('drops local approval controls from the input (%s)', (_mode, serviceStorage) => {
+    // A local tool's approval is resolved in-process; the provider never issued a matching
+    // MCP approval request, so serializing either half would create an orphaned item.
+    expect(toResponsesInput(localApprovalMessages, { serviceStorage })).toEqual([]);
+  });
+
+  it('keeps a hosted approval pair on the wire', () => {
+    const hostedCall = {
+      type: 'function_call',
+      callId: 'mcpr_1',
+      name: 'sensitive_action',
+      arguments: '{}',
+      additionalProperties: { server_label: 'hosted_server' },
+    } as const;
+    const items = toResponsesInput([
+      {
+        role: 'assistant',
+        contents: [{ type: 'function_approval_request', id: 'mcpr_1', functionCall: hostedCall }],
+      },
+      {
+        role: 'user',
+        contents: [
+          { type: 'function_approval_response', id: 'mcpr_1', approved: true, functionCall: hostedCall },
+        ],
+      },
+    ]);
+    expect(items.map((item) => item.type)).toEqual(['mcp_approval_request', 'mcp_approval_response']);
+  });
+});
+
 describe('tool declarations and choices', () => {
   it('passes a non-function tool without a spec through as itself', () => {
     const opaque = { type: 'web_search' } as unknown as Tool;
