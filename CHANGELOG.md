@@ -4,7 +4,7 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
-## Unreleased
+## 0.2.1
 
 Documentation and positioning only — no change to any published API.
 
