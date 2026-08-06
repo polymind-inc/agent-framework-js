@@ -26,7 +26,7 @@ import {
   JsonRpcTransportFactory,
   RestTransportFactory,
 } from '@a2a-js/sdk/client';
-import { A2AAgent } from '@polymind-inc/agent-framework-a2a';
+import { A2AAgent } from '@polymind-inc/agent-framework/a2a';
 
 const url = process.env.A2A_AGENT_URL ?? 'http://localhost:4100';
 const token = process.env.A2A_TOKEN ?? 'invoice-secret';

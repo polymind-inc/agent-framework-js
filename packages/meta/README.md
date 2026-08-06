@@ -1,9 +1,9 @@
 # @polymind-inc/agent-framework
 
-Umbrella package for the Agent Framework for TypeScript. One install brings in the whole family —
-the runtime-agnostic core, the OpenAI / Azure OpenAI, Anthropic and Microsoft Foundry providers,
-the MCP and A2A clients, and the Foundry hosting pieces — mirroring what `pip install
-agent-framework` gives you in the Python implementation. ESM only.
+The Agent Framework for TypeScript in a single package — the runtime-agnostic core, the OpenAI /
+Azure OpenAI, Anthropic and Microsoft Foundry providers, the MCP and A2A clients, and the Foundry
+hosting pieces — mirroring what `pip install agent-framework` gives you in the Python
+implementation. ESM only.
 
 ```sh
 npm install @polymind-inc/agent-framework
@@ -31,8 +31,9 @@ import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 ```
 
 The subpaths are plain static re-exports, so a bundler tree-shakes whatever you do not import.
-If install size matters more than convenience — this package pulls in every provider SDK and the
-hosting server's OpenTelemetry dependencies — install the individual packages instead; they are
-the same code, and the two styles can be mixed freely.
+The constituent `@polymind-inc/agent-framework-*` packages are published as implementation detail
+— this package pins them to its own exact version — and importing one directly resolves to the
+same modules as the subpath above it. The supported, documented surface is this package; the
+examples and every code sample in the repository import through it.
 
 Requirements: Node.js >= 24, ESM only (no CommonJS build).

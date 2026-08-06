@@ -18,8 +18,8 @@ import {
   textContent,
   tool,
   toolApprovalMiddleware,
-} from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+} from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import { z } from 'zod';
 
 /** Observes a run from the outside: what went in, what came out, how long it took. */

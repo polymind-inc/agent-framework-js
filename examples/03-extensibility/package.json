@@ -15,10 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@polymind-inc/agent-framework-anthropic": "workspace:^",
-    "@polymind-inc/agent-framework-core": "workspace:^",
-    "@polymind-inc/agent-framework-mcp": "workspace:^",
-    "@polymind-inc/agent-framework-openai": "workspace:^",
+    "@polymind-inc/agent-framework": "workspace:^",
     "zod": "^4.4.3"
   },
   "devDependencies": {

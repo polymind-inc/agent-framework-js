@@ -8,8 +8,8 @@
  */
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
-import { Agent, dataContent } from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+import { Agent, dataContent } from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 
 const imagePath = process.argv[2];
 if (imagePath === undefined) {

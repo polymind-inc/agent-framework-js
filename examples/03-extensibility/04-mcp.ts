@@ -7,9 +7,9 @@
  *
  * Run: `OPENAI_API_KEY=... MCP_SERVER_URL=https://… pnpm --filter example-03-extensibility mcp`
  */
-import { Agent, approvalResponse } from '@polymind-inc/agent-framework-core';
-import { MCPClient } from '@polymind-inc/agent-framework-mcp';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+import { Agent, approvalResponse } from '@polymind-inc/agent-framework';
+import { MCPClient } from '@polymind-inc/agent-framework/mcp';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 
 const url = process.env.MCP_SERVER_URL;
 if (url === undefined) {

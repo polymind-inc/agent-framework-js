@@ -5,15 +5,15 @@
  * is `JSON.stringify(session)` and resuming it is `agent.deserializeSession(...)`.
  *
  * `node:fs` is used here on purpose: it belongs in the application, not in
- * `@polymind-inc/agent-framework-core`, which stays runtime-agnostic.
+ * `@polymind-inc/agent-framework`, which stays runtime-agnostic.
  *
  * Run: `OPENAI_API_KEY=... pnpm --filter example-01-get-started session`
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Agent } from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+import { Agent } from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 
 const agent = new Agent({
   client: new OpenAIChatClient({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini' }),

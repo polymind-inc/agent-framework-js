@@ -8,9 +8,9 @@
  * Run: `ANTHROPIC_API_KEY=... pnpm --filter example-03-extensibility anthropic`
  */
 
-import type { AnthropicChatOptions } from '@polymind-inc/agent-framework-anthropic';
-import { AnthropicChatClient } from '@polymind-inc/agent-framework-anthropic';
-import { Agent, tool } from '@polymind-inc/agent-framework-core';
+import { Agent, tool } from '@polymind-inc/agent-framework';
+import type { AnthropicChatOptions } from '@polymind-inc/agent-framework/anthropic';
+import { AnthropicChatClient } from '@polymind-inc/agent-framework/anthropic';
 import { z } from 'zod';
 
 const getWeather = tool({

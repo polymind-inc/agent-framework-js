@@ -15,9 +15,9 @@
  *   FOUNDRY_TOOLBOX_NAME=<toolbox> \
  *   pnpm --filter example-02-foundry toolbox
  */
-import { Agent } from '@polymind-inc/agent-framework-core';
-import { FoundryChatClient } from '@polymind-inc/agent-framework-foundry';
-import { FoundryToolbox } from '@polymind-inc/agent-framework-foundry/hosting';
+import { Agent } from '@polymind-inc/agent-framework';
+import { FoundryChatClient } from '@polymind-inc/agent-framework/foundry';
+import { FoundryToolbox } from '@polymind-inc/agent-framework/foundry/hosting';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
 const toolboxName = process.env.FOUNDRY_TOOLBOX_NAME;

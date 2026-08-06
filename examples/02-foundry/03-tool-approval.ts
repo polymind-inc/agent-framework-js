@@ -16,7 +16,7 @@ import type {
   ChatResponseStream,
   ChatResponseUpdate,
   Message,
-} from '@polymind-inc/agent-framework-core';
+} from '@polymind-inc/agent-framework';
 import {
   Agent,
   AgentSession,
@@ -26,7 +26,7 @@ import {
   mergeChatUpdates,
   textContent,
   tool,
-} from '@polymind-inc/agent-framework-core';
+} from '@polymind-inc/agent-framework';
 
 const deleteEverything = tool({
   name: 'delete_everything',

@@ -1,5 +1,11 @@
 # @polymind-inc/agent-framework-mcp
 
+> **Constituent package.** The supported way to use the Agent Framework is the main
+> [`@polymind-inc/agent-framework`](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+> package, which re-exports everything here under `@polymind-inc/agent-framework/mcp` and pins
+> this package to its exact version. Installing this package directly works and resolves to the
+> same modules, but examples and documentation import through the main package.
+
 Model Context Protocol client integration for the Agent Framework: `MCPClient` connects to an MCP
 server and exposes its tools as framework `FunctionTool`s, so an agent calls them like any other
 tool. Built on `@modelcontextprotocol/client` v2. Each `tools/call` is traced as an MCP client span

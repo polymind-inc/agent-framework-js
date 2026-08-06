@@ -6,8 +6,8 @@
  *
  * Run: `OPENAI_API_KEY=... OPENAI_MODEL=... pnpm --filter example-03-extensibility hosted-tools`
  */
-import { Agent } from '@polymind-inc/agent-framework-core';
-import { codeInterpreterTool, OpenAIChatClient, webSearchTool } from '@polymind-inc/agent-framework-openai';
+import { Agent } from '@polymind-inc/agent-framework';
+import { codeInterpreterTool, OpenAIChatClient, webSearchTool } from '@polymind-inc/agent-framework/openai';
 
 const model = process.env.OPENAI_MODEL;
 if (model === undefined) {

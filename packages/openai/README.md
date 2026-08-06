@@ -1,5 +1,11 @@
 # @polymind-inc/agent-framework-openai
 
+> **Constituent package.** The supported way to use the Agent Framework is the main
+> [`@polymind-inc/agent-framework`](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+> package, which re-exports everything here under `@polymind-inc/agent-framework/openai` and pins
+> this package to its exact version. Installing this package directly works and resolves to the
+> same modules, but examples and documentation import through the main package.
+
 OpenAI (and Azure OpenAI) provider for the Agent Framework: `OpenAIChatClient` implements the
 `ChatClient` interface from `@polymind-inc/agent-framework-core` on top of the official `openai` SDK's
 Responses API, including streaming, structured output, and the provider-hosted tools

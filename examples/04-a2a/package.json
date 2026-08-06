@@ -16,8 +16,7 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.0.1",
-    "@polymind-inc/agent-framework-a2a": "workspace:^",
-    "@polymind-inc/agent-framework-core": "workspace:^"
+    "@polymind-inc/agent-framework": "workspace:^"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",

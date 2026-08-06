@@ -6,8 +6,8 @@
  *
  * Run: `OPENAI_API_KEY=... pnpm --filter example-01-get-started basic`
  */
-import { Agent } from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+import { Agent } from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 
 const agent = new Agent({
   client: new OpenAIChatClient({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini' }),

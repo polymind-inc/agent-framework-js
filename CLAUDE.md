@@ -31,9 +31,12 @@ The points below are the ones most often gotten wrong.
 Node.js 24+ · TypeScript 7 · pnpm · ESM only · target ES2024 with `isolatedDeclarations` · Biome
 for lint and format · tsdown for builds · Vitest for tests.
 
-The packages under `packages/` are published as `@polymind-inc/agent-framework-*`, plus the
-umbrella `@polymind-inc/agent-framework`, which depends on all of them and re-exports each under a
-subpath. All are versioned in lockstep. `pnpm check` runs the same gate as CI.
+The public surface is the single package `@polymind-inc/agent-framework`: its root entry is the
+core and every other capability is a subpath (`/openai`, `/anthropic`, `/mcp`, `/a2a`, `/foundry`,
+`/agentserver`, `/testing`). It is built from `@polymind-inc/agent-framework-*` constituent
+packages under `packages/`, which stay published (the main package depends on them, pinned
+exactly) but are not the documented way in — examples and docs always import through the main
+package. All are versioned in lockstep. `pnpm check` runs the same gate as CI.
 
 ## Status
 

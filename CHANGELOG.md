@@ -4,6 +4,18 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
+## Unreleased
+
+Documentation and positioning only — no change to any published API.
+
+- **`@polymind-inc/agent-framework` is now the single supported surface.** All examples, the
+  repository README and every code sample import through the main package
+  (`@polymind-inc/agent-framework`, `…/openai`, `…/foundry/hosting`, …). The
+  `@polymind-inc/agent-framework-*` constituent packages remain published — the main package
+  depends on them at exact versions, and importing one directly still resolves to the same
+  modules — but their READMEs now state that the main package is the documented way in. This
+  removes the awkwardness of two equivalent import styles for the same code.
+
 ## 0.2.0
 
 One new package; no change to any existing published API.

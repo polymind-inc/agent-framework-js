@@ -1,5 +1,12 @@
 # @polymind-inc/agent-framework-foundry
 
+> **Constituent package.** The supported way to use the Agent Framework is the main
+> [`@polymind-inc/agent-framework`](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+> package, which re-exports everything here under `@polymind-inc/agent-framework/foundry` (and
+> `/foundry/hosting`) and pins this package to its exact version. Installing this package directly
+> works and resolves to the same modules, but examples and documentation import through the main
+> package.
+
 Microsoft Foundry provider for the Agent Framework: `FoundryChatClient` talks to a Foundry
 project (model deployments or server agents) with Microsoft Entra authentication, and the
 `@polymind-inc/agent-framework-foundry/hosting` subpath publishes an `Agent` as a Foundry Hosted Agent over
