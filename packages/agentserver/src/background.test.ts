@@ -888,6 +888,44 @@ describe('cancellation always wins over the handler', () => {
     expect(terminal.output).toEqual([]);
   });
 
+  it('reports cancelled to GET while the winddown is still inside its grace', async () => {
+    // Long enough that every GET below happens while the cancel route is still waiting.
+    vi.stubEnv('AGENTSERVER_CANCEL_GRACE_MS', '60000');
+    const gate = deferred();
+    const server = makeServer(stubbornHandler(gate.promise));
+    const id = newResponseId();
+
+    const created = await server.handle(post({ input: 'hi', background: true, response_id: id }));
+    expect(created.status).toBe(200);
+    // The handler has produced its output and is now held on the gate: the winddown view below
+    // is judged against a snapshot that is known to carry something.
+    await pollUntil(server, id, (r) => (r.output?.length ?? 0) > 0);
+
+    let cancelSettled = false;
+    const cancelling = server.handle(cancelRequest(id)).then((res) => {
+      cancelSettled = true;
+      return res;
+    });
+
+    // The reference refreshes the record's status from the cancel signal on every GET, so the
+    // flip to `cancelled` is visible as soon as the cancel was accepted — not only once the
+    // route's grace has run out.
+    const during = await pollUntil(server, id, (r) => r.status === 'cancelled');
+    expect(cancelSettled).toBe(false);
+    // Only the status is refreshed. The rest of the snapshot is still the handler's — clearing
+    // the accumulated output is the cancelled *terminal*'s job, and that is the cancel route's
+    // to apply once the winddown ends.
+    expect(during.output).toHaveLength(1);
+
+    gate.resolve();
+    const cancelled = await cancelling;
+    expect(cancelled.status).toBe(200);
+    expect(((await cancelled.json()) as ResponseObject).status).toBe('cancelled');
+    const final = (await (await server.handle(get(`/responses/${id}`))).json()) as ResponseObject;
+    expect(final.status).toBe('cancelled');
+    expect(final.output).toEqual([]);
+  });
+
   it('does not write its terminal into the turn that reused its id', async () => {
     shortGrace();
     const gate = deferred();
