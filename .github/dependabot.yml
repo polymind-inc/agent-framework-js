@@ -14,6 +14,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # @types/node tracks the minimum supported Node.js runtime, not the newest
+      # release, so its major version is only raised together with the runtime
+      # requirement — never through an automated bump.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
       production-dependencies:
         dependency-type: production
