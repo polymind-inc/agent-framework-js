@@ -16,9 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@polymind-inc/agent-framework-agentserver": "workspace:^",
-    "@polymind-inc/agent-framework-core": "workspace:^",
-    "@polymind-inc/agent-framework-foundry": "workspace:^"
+    "@polymind-inc/agent-framework": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",

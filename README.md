@@ -1,8 +1,8 @@
 # Agent Framework for TypeScript
 
 [![CI](https://github.com/polymind-inc/agent-framework-js/actions/workflows/ci.yml/badge.svg)](https://github.com/polymind-inc/agent-framework-js/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@polymind-inc/agent-framework-core.svg)](https://www.npmjs.com/package/@polymind-inc/agent-framework-core)
-[![Node.js](https://img.shields.io/node/v/@polymind-inc/agent-framework-core.svg)](https://nodejs.org/)
+[![npm](https://img.shields.io/npm/v/@polymind-inc/agent-framework.svg)](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+[![Node.js](https://img.shields.io/node/v/@polymind-inc/agent-framework.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A TypeScript implementation of the **Microsoft Agent Framework** programming model, designed for
@@ -38,12 +38,12 @@ cadence is chosen with that in mind.
 ## Quickstart
 
 ```bash
-npm install @polymind-inc/agent-framework-core @polymind-inc/agent-framework-openai zod
+npm install @polymind-inc/agent-framework zod
 ```
 
 ```ts
-import { Agent, tool } from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+import { Agent, tool } from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import { z } from 'zod';
 
 const weather = tool({
@@ -78,23 +78,28 @@ the Go implementation uses.
 
 ## Packages
 
-All packages are published under the `@polymind-inc/` scope and released in lockstep.
+One package to install: **`@polymind-inc/agent-framework`**. The root entry is the agent core;
+every other capability lives under a subpath. The subpaths are plain static re-exports, so a
+bundler tree-shakes whatever you do not import.
 
-| Package                                     | Purpose                                                                                                                                               |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@polymind-inc/agent-framework`             | Umbrella package — installs every package below and re-exports each of their entry points under a subpath (the full mapping is in [its README](packages/meta/README.md)) |
-| `@polymind-inc/agent-framework-core`        | `Agent`, `AgentSession`, the `Message`/`Content` model, `tool()`, middleware, and the `ChatClient` seam. Sole runtime dependency: `@opentelemetry/api` |
-| `@polymind-inc/agent-framework-openai`      | OpenAI and Azure OpenAI chat client (Responses API)                                                                                                   |
-| `@polymind-inc/agent-framework-anthropic`   | Anthropic chat client (Messages API)                                                                                                                  |
-| `@polymind-inc/agent-framework-mcp`         | Model Context Protocol client integration — MCP server tools as framework tools                                                                       |
-| `@polymind-inc/agent-framework-a2a`         | Agent2Agent (A2A) protocol client — a remote A2A agent used as an agent                                                                               |
-| `@polymind-inc/agent-framework-foundry`     | Microsoft Foundry chat client and Hosted Agent hosting adapter                                                                                        |
-| `@polymind-inc/agent-framework-agentserver` | Foundry Responses container protocol v2.0.0 server, independent of the rest of the framework                                                          |
+| Import                                            | Provides                                                                                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `@polymind-inc/agent-framework`                   | `Agent`, `AgentSession`, the `Message`/`Content` model, `tool()`, middleware, and the `ChatClient` seam                              |
+| `@polymind-inc/agent-framework/openai`            | OpenAI and Azure OpenAI chat client (Responses API)                                                                                  |
+| `@polymind-inc/agent-framework/anthropic`         | Anthropic chat client (Messages API)                                                                                                 |
+| `@polymind-inc/agent-framework/mcp`               | Model Context Protocol client integration — MCP server tools as framework tools                                                      |
+| `@polymind-inc/agent-framework/a2a`               | Agent2Agent (A2A) protocol client — a remote A2A agent used as an agent                                                              |
+| `@polymind-inc/agent-framework/foundry`           | Microsoft Foundry chat client, with the Hosted Agent adapter under `/foundry/hosting`                                                |
+| `@polymind-inc/agent-framework/agentserver`       | Foundry Responses container protocol v2.0.0 server, with `/agentserver/node` and `/agentserver/observability` companions             |
+| `@polymind-inc/agent-framework/testing`           | `MockChatClient` and friends for testing agents without a live provider                                                              |
 
-The names mirror the Python distribution layout (`agent-framework` as the everything-included
-umbrella, `agent-framework-core`, `agent-framework-openai`, …) so that a move to a first-party
-scope is a mechanical rename. The granular packages remain the recommended install when size
-matters; the umbrella pulls in every provider SDK.
+Under the hood the framework is developed and published as a family of
+`@polymind-inc/agent-framework-*` constituent packages, released in lockstep and pinned to exact
+versions by the main package. They exist to keep the codebase modular and the upstream story
+flexible; importing them directly works — every subpath above is a static re-export of one of
+them — but the supported, documented surface is `@polymind-inc/agent-framework`. The names mirror
+the Python distribution layout (`agent-framework`, `agent-framework-core`, `agent-framework-openai`,
+…) so that a move to a first-party scope is a mechanical rename.
 
 ## Parity with the reference implementations
 

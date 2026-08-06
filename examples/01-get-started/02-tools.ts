@@ -6,8 +6,8 @@
  *
  * Run: `OPENAI_API_KEY=... pnpm --filter example-01-get-started tools`
  */
-import { Agent, tool } from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+import { Agent, tool } from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import { z } from 'zod';
 
 const getWeather = tool({

@@ -1,5 +1,12 @@
 # @polymind-inc/agent-framework-agentserver
 
+> **Constituent package.** The supported way to use the Agent Framework is the main
+> [`@polymind-inc/agent-framework`](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+> package, which re-exports everything here under `@polymind-inc/agent-framework/agentserver`
+> (plus `/agentserver/node` and `/agentserver/observability`) and pins this package to its exact
+> version. Installing this package directly works and resolves to the same modules, but examples
+> and documentation import through the main package.
+
 The Microsoft Foundry Responses container protocol v2.0.0, as a server. Independent of the
 Agent Framework: routing, SSE framing and sequence numbers, the lifecycle contract, id
 generation, the header contract, storage abstractions, and error shapes, exposed as a

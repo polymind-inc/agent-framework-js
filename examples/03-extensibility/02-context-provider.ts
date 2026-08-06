@@ -12,9 +12,9 @@ import type {
   ContextProvider,
   ProviderAfterRunContext,
   ProviderRunContext,
-} from '@polymind-inc/agent-framework-core';
-import { Agent, textContent, tool } from '@polymind-inc/agent-framework-core';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
+} from '@polymind-inc/agent-framework';
+import { Agent, textContent, tool } from '@polymind-inc/agent-framework';
+import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import { z } from 'zod';
 
 /**

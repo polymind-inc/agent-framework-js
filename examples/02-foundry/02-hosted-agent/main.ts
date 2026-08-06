@@ -11,10 +11,11 @@
  *
  * On Foundry: see README.md.
  */
-import { serve } from '@polymind-inc/agent-framework-agentserver/node';
-import { Agent, tool } from '@polymind-inc/agent-framework-core';
-import { FoundryChatClient } from '@polymind-inc/agent-framework-foundry';
-import { ResponsesHostServer } from '@polymind-inc/agent-framework-foundry/hosting';
+
+import { Agent, tool } from '@polymind-inc/agent-framework';
+import { serve } from '@polymind-inc/agent-framework/agentserver/node';
+import { FoundryChatClient } from '@polymind-inc/agent-framework/foundry';
+import { ResponsesHostServer } from '@polymind-inc/agent-framework/foundry/hosting';
 
 const getWeather = tool({
   name: 'get_weather',

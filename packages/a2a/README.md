@@ -1,5 +1,11 @@
 # @polymind-inc/agent-framework-a2a
 
+> **Constituent package.** The supported way to use the Agent Framework is the main
+> [`@polymind-inc/agent-framework`](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+> package, which re-exports everything here under `@polymind-inc/agent-framework/a2a` and pins
+> this package to its exact version. Installing this package directly works and resolves to the
+> same modules, but examples and documentation import through the main package.
+
 Agent2Agent (A2A) protocol client for the Agent Framework: `A2AAgent` makes a remote A2A agent
 usable wherever the framework expects an agent — awaited or streamed, with sessions, as a tool of
 another agent. Built on the official [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js) client

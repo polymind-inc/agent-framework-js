@@ -1,5 +1,11 @@
 # @polymind-inc/agent-framework-core
 
+> **Constituent package.** The supported way to use the Agent Framework is the main
+> [`@polymind-inc/agent-framework`](https://www.npmjs.com/package/@polymind-inc/agent-framework)
+> package, whose root entry (and `/testing` subpath) re-exports everything here and pins this
+> package to its exact version. Installing this package directly works and resolves to the same
+> modules, but examples and documentation import through the main package.
+
 Runtime-agnostic core of the Agent Framework for TypeScript: `Agent`, `AgentSession`, the
 `Message` / `Content` model, `tool()` with Standard Schema support, the function-calling loop,
 and the `ChatClient` seam that providers implement. ESM only; the sole runtime dependency is

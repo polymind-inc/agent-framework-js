@@ -8,7 +8,7 @@
  * Start the local agent first, then run:
  * `pnpm --filter example-04-a2a multi-turn`
  */
-import { A2AAgent } from '@polymind-inc/agent-framework-a2a';
+import { A2AAgent } from '@polymind-inc/agent-framework/a2a';
 
 const agent = await A2AAgent.fromUrl(process.env.A2A_AGENT_URL ?? 'http://localhost:4100');
 const session = agent.createSession();

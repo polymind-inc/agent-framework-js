@@ -11,8 +11,8 @@
  *   AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o-mini \
  *   pnpm --filter example-02-foundry chat
  */
-import { Agent, tool } from '@polymind-inc/agent-framework-core';
-import { FoundryChatClient } from '@polymind-inc/agent-framework-foundry';
+import { Agent, tool } from '@polymind-inc/agent-framework';
+import { FoundryChatClient } from '@polymind-inc/agent-framework/foundry';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
 if (projectEndpoint === undefined) {

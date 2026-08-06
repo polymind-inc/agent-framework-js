@@ -8,7 +8,7 @@
  * Start the local agent first (`pnpm --filter example-04-a2a server`), then run:
  * `pnpm --filter example-04-a2a remote-agent`
  */
-import { A2AAgent } from '@polymind-inc/agent-framework-a2a';
+import { A2AAgent } from '@polymind-inc/agent-framework/a2a';
 
 const url = process.env.A2A_AGENT_URL ?? 'http://localhost:4100';
 
