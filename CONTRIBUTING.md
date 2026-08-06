@@ -76,6 +76,11 @@ also carries an explicit **"Security considerations"** note, as the .NET impleme
 ## Pull requests
 
 - One concern per pull request.
+- Commit subjects and pull request titles are plain English imperative sentences with no
+  `type:` prefix — "Add the umbrella package", not "feat: add umbrella package". Pull requests
+  are squash-merged, so the title becomes the commit subject on the default branch. The
+  conventional-commit prefixes configured in `dependabot.yml` apply only to Dependabot's own
+  commits.
 - `pnpm check` passes.
 - Behaviour changes come with a test that fails without the change.
 - Public API changes update the package README and `CHANGELOG.md`.
