@@ -1,0 +1,100 @@
+# Package labels are based on implementation and package documentation files. Package manifests
+# and build configuration are intentionally excluded so lockstep release PRs do not receive every
+# package label.
+core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/core/src/**"
+          - "packages/core/README.md"
+
+agentserver:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/agentserver/src/**"
+          - "packages/agentserver/README.md"
+
+anthropic:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/anthropic/src/**"
+          - "packages/anthropic/README.md"
+
+openai:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/openai/src/**"
+          - "packages/openai/README.md"
+
+meta:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/meta/src/**"
+          - "packages/meta/README.md"
+
+# Feature labels follow the terminology used by the official .NET/Python repository.
+agents:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/core/src/agent/**"
+
+workflows:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/**/workflow*/**"
+          - "examples/**/workflow*/**"
+
+hosting:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/agentserver/src/**"
+          - "packages/agentserver/README.md"
+          - "packages/foundry/src/hosting/**"
+          - "examples/02-foundry/02-hosted-agent/**"
+
+foundry:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/foundry/src/**"
+          - "packages/foundry/README.md"
+          - "examples/02-foundry/**"
+
+memory:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/**/memory/**"
+          - "packages/**/*memory*.ts"
+          - "examples/**/*memory*.ts"
+
+skills:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/**/skills/**"
+          - "packages/**/*skill*.ts"
+          - "examples/**/*skill*.ts"
+
+mcp:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/mcp/src/**"
+          - "packages/mcp/README.md"
+          - "examples/**/*mcp*.ts"
+          - "examples/02-foundry/04-toolbox.ts"
+
+a2a:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/a2a/src/**"
+          - "packages/a2a/README.md"
+          - "examples/04-a2a/**"
+
+observability:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/core/src/observability/**"
+          - "packages/agentserver/src/**/*observability*.ts"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"

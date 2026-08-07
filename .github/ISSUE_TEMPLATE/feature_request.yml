@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose new functionality or an improvement to an existing API.
+labels: [enhancement]
+
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem or missing capability, not only the proposed API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior and API shape you would like to see.
+    validations:
+      required: true
+
+  - type: input
+    id: packages
+    attributes:
+      label: Affected packages
+      placeholder: "@polymind-inc/agent-framework-core, @polymind-inc/agent-framework-foundry"
+    validations:
+      required: false
+
+  - type: textarea
+    id: parity
+    attributes:
+      label: Reference behavior
+      description: If .NET, Python, or Go already supports this, link the implementation or sample.
+    validations:
+      required: false
