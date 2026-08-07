@@ -88,6 +88,10 @@ also carries an explicit **"Security considerations"** note, as the .NET impleme
 - Say which reference implementation you checked against, and whether the wire format is affected.
   The pull request template asks for both.
 
+Issues use the organization-level `Bug`, `Feature` and `Task` issue types for classification;
+labels describe feature areas and triage state. Pull requests do not have an issue type, so use
+`bug`, `enhancement`, `maintenance` or `release` to describe their change kind.
+
 Changed package and feature paths are labeled automatically. Maintainers add `parity-approved`
 only after comparing the current pull request commit with the relevant .NET, Python or Go
 implementation; pushing another commit removes that approval. `public-api-change` flags exported
