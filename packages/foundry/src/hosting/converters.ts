@@ -5,7 +5,7 @@ import type {
   ResponseUsage,
 } from '@polymind-inc/agent-framework-agentserver';
 import type { ChatOptions, Content, Message, UsageDetails } from '@polymind-inc/agent-framework-core';
-import { uriContent } from '@polymind-inc/agent-framework-core';
+import { unknownContent, uriContent } from '@polymind-inc/agent-framework-core';
 
 /**
  * The label the framework declares itself under when it surfaces an approval as MCP's.
@@ -171,8 +171,12 @@ function parseArguments(raw: unknown): Record<string, unknown> | string {
 /**
  * Converts one Responses input or output item into a framework message.
  *
- * Returns `undefined` for items with no framework representation (item references, hosted-tool
- * bookkeeping), which are simply not replayed.
+ * Returns `undefined` only for items that are deliberately not replayed because another mechanism
+ * already carries their meaning: this container's own approval requests (`ApprovalStorage`),
+ * approval decisions (`approvalResponseTarget`), and item references (which point at service-held
+ * items this container cannot dereference). Every other item is converted — an item type this
+ * build does not model is preserved as unknown content rather than deleted from the transcript,
+ * so replaying a stored response never silently loses what the model said or did.
  */
 export function itemToMessage(item: OutputItem): Message | undefined {
   switch (item.type) {
@@ -180,6 +184,16 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       const role = typeof item.role === 'string' ? item.role : 'user';
       const contents = contentsOfMessage(item.content, item);
       return { role, contents, ...(typeof item.id === 'string' ? { messageId: item.id } : {}) };
+    }
+
+    case 'output_message': {
+      // An assistant turn under its dedicated wire type; the parts are the same message shapes.
+      const contents = contentsOfMessage(item.content, item);
+      return {
+        role: typeof item.role === 'string' ? item.role : 'assistant',
+        contents,
+        ...(typeof item.id === 'string' ? { messageId: item.id } : {}),
+      };
     }
 
     case 'function_call':
@@ -387,8 +401,210 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       };
     }
 
-    default:
+    case 'web_search_call':
+    case 'file_search_call': {
+      // Both halves of a provider-run search live on one item; the shapes mirror the openai
+      // package's conversion of the same item types, so the provider-bound re-send path treats
+      // a replayed search and a live one identically.
+      const callId =
+        typeof item.id === 'string' ? item.id : typeof item.call_id === 'string' ? item.call_id : '';
+      const isWeb = item.type === 'web_search_call';
+      const toolName = isWeb ? 'web_search' : 'file_search';
+      const action =
+        typeof item.action === 'object' && item.action !== null
+          ? (item.action as Record<string, unknown>)
+          : {};
+      const status = typeof item.status === 'string' ? { additionalProperties: { status: item.status } } : {};
+      return {
+        role: 'assistant',
+        contents: [
+          {
+            type: 'search_tool_call',
+            callId,
+            toolName,
+            arguments: isWeb ? action : { queries: Array.isArray(item.queries) ? item.queries : [] },
+            ...status,
+            rawRepresentation: item,
+          },
+          {
+            type: 'search_tool_result',
+            callId,
+            toolName,
+            result: isWeb ? { action: item.action } : { results: item.results },
+            ...status,
+            rawRepresentation: item,
+          },
+        ],
+      };
+    }
+
+    case 'code_interpreter_call': {
+      const callId =
+        typeof item.id === 'string' ? item.id : typeof item.call_id === 'string' ? item.call_id : '';
+      const contents: Content[] = [];
+      if (typeof item.code === 'string' && item.code !== '') {
+        contents.push({
+          type: 'code_interpreter_tool_call',
+          callId,
+          inputs: [{ type: 'text', text: item.code, rawRepresentation: item }],
+          rawRepresentation: item,
+        });
+      }
+      const outputs: Content[] = [];
+      for (const output of Array.isArray(item.outputs) ? (item.outputs as JsonObject[]) : []) {
+        if (output?.type === 'logs') {
+          outputs.push({
+            type: 'text',
+            text: typeof output.logs === 'string' ? output.logs : '',
+            rawRepresentation: output,
+          });
+        } else if (output?.type === 'image' && typeof output.url === 'string') {
+          outputs.push({ type: 'uri', uri: output.url, mediaType: 'image', rawRepresentation: output });
+        }
+      }
+      contents.push({ type: 'code_interpreter_tool_result', callId, outputs, rawRepresentation: item });
+      return { role: 'assistant', contents };
+    }
+
+    case 'local_shell_call': {
+      // The exec action's field is `command` (a list), unlike `shell_call`'s `commands`.
+      const action = item.action as { command?: unknown } | undefined;
+      const commands = Array.isArray(action?.command)
+        ? action.command.filter((command): command is string => typeof command === 'string')
+        : [];
+      return {
+        role: 'assistant',
+        contents: [
+          {
+            type: 'shell_tool_call',
+            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
+            commands,
+            ...(typeof item.status === 'string' ? { status: item.status } : {}),
+            rawRepresentation: item,
+          },
+        ],
+      };
+    }
+
+    case 'local_shell_call_output':
+      // The wire item carries no `call_id`; its own id is the correlation key (Python replays
+      // `call_id=lsco.id` the same way).
+      return {
+        role: 'tool',
+        contents: [
+          {
+            type: 'shell_tool_result',
+            callId: typeof item.id === 'string' ? item.id : '',
+            outputs: [
+              {
+                type: 'shell_command_output',
+                stdout: typeof item.output === 'string' ? item.output : '',
+                stderr: '',
+                rawRepresentation: item,
+              },
+            ],
+            rawRepresentation: item,
+          },
+        ],
+      };
+
+    case 'computer_call':
+      // Reported for information only, under a well-known name — this container cannot re-drive
+      // a computer-use session, but the model must keep seeing what it did. The action stays a
+      // structured object: stringifying it would make the arguments unparseable on the next hop.
+      return {
+        role: 'assistant',
+        contents: [
+          {
+            type: 'function_call',
+            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
+            name: 'computer_use',
+            arguments: parseArguments(item.action),
+            informationalOnly: true,
+            rawRepresentation: item,
+          },
+        ],
+      };
+
+    case 'computer_call_output':
+      return {
+        role: 'tool',
+        contents: [
+          {
+            type: 'function_result',
+            callId: typeof item.call_id === 'string' ? item.call_id : '',
+            // The screenshot payload stays structured for the same reason the call's action does.
+            result: item.output ?? '',
+            rawRepresentation: item,
+          },
+        ],
+      };
+
+    case 'custom_tool_call':
+      return {
+        role: 'assistant',
+        contents: [
+          {
+            type: 'function_call',
+            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
+            name: typeof item.name === 'string' ? item.name : '',
+            arguments: parseArguments(item.input),
+            informationalOnly: true,
+            rawRepresentation: item,
+          },
+        ],
+      };
+
+    case 'apply_patch_call':
+      return {
+        role: 'assistant',
+        contents: [
+          {
+            type: 'function_call',
+            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
+            name: 'apply_patch',
+            arguments: parseArguments(item.operation),
+            informationalOnly: true,
+            rawRepresentation: item,
+          },
+        ],
+      };
+
+    case 'apply_patch_call_output':
+      return {
+        role: 'tool',
+        contents: [
+          {
+            type: 'function_result',
+            callId: typeof item.call_id === 'string' ? item.call_id : '',
+            result: typeof item.output === 'string' ? item.output : '',
+            rawRepresentation: item,
+          },
+        ],
+      };
+
+    case 'structured_outputs': {
+      // Replayed as its JSON text, which is exactly what the model produced.
+      const output = item.output;
+      const text = typeof output === 'string' ? output : (JSON.stringify(output) ?? '');
+      return { role: 'assistant', contents: [{ type: 'text', text, rawRepresentation: item }] };
+    }
+
+    case 'mcp_approval_response':
+      // Consumed out of band: `approvalResponseTarget` binds the decision to the stored request.
+      // Replaying it as content too would answer the same approval twice.
       return undefined;
+
+    case 'item_reference':
+      // A pointer to a service-held item this container cannot dereference (.NET drops it the
+      // same way).
+      return undefined;
+
+    default:
+      // An item type this build does not model is preserved verbatim rather than dropped — the
+      // transcript survives a round trip through a newer producer, and the model keeps whatever
+      // the framework can represent of it.
+      return { role: 'assistant', contents: [unknownContent(item)] };
   }
 }
 
