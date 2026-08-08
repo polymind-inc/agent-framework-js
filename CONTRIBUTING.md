@@ -80,12 +80,23 @@ also carries an explicit **"Security considerations"** note, as the .NET impleme
   `type:` prefix — "Add the umbrella package", not "feat: add umbrella package". Pull requests
   are squash-merged, so the title becomes the commit subject on the default branch. The
   conventional-commit prefixes configured in `dependabot.yml` apply only to Dependabot's own
-  commits.
+  commits. Prefix a backward-incompatible change with `[BREAKING]`; automation keeps the
+  `breaking change` label synchronized with the title and pull request template.
 - `pnpm check` passes.
 - Behaviour changes come with a test that fails without the change.
 - Public API changes update the package README and `CHANGELOG.md`.
 - Say which reference implementation you checked against, and whether the wire format is affected.
   The pull request template asks for both.
+
+Issues use the organization-level `Bug`, `Feature` and `Task` issue types for classification;
+labels describe feature areas and triage state. Pull requests do not have an issue type, so use
+`bug`, `enhancement`, `maintenance` or `release` to describe their change kind.
+
+Changed package and feature paths are labeled automatically. Maintainers add `parity-approved`
+only after comparing the current pull request commit with the relevant .NET, Python or Go
+implementation; pushing another commit removes that approval. `public-api-change` flags exported
+API changes for additional review, while `dependencies`, `javascript` and `github_actions` are
+reserved for Dependabot.
 
 ## Releasing
 

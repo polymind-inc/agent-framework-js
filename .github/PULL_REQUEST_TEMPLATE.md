@@ -14,6 +14,8 @@ reference implementation you checked and where. If it deliberately diverges, say
 
 - Reference checked:
 - Wire format affected: yes / no
+- Public API affected: yes / no
+- Breaking change: yes / no
 
 ## Checklist
 

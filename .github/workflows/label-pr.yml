@@ -1,0 +1,73 @@
+name: Label pull request
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  paths:
+    name: Add path labels
+    runs-on: ubuntu-latest
+    steps:
+      # This action reads the changed-file list through the API and never checks out PR code.
+      - uses: actions/labeler@f27b608878404679385c85cfa523b85ccb86e213 # v6
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  metadata:
+    name: Synchronize review labels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pullRequest = context.payload.pull_request;
+            const current = new Set((pullRequest.labels ?? []).map((label) => label.name));
+
+            async function addLabel(name) {
+              if (current.has(name)) return;
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: pullRequest.number,
+                labels: [name],
+              });
+              current.add(name);
+            }
+
+            async function removeLabel(name) {
+              if (!current.has(name)) return;
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number: pullRequest.number,
+                name,
+              });
+              current.delete(name);
+            }
+
+            const title = pullRequest.title ?? "";
+            const body = pullRequest.body ?? "";
+            const breakingTitle = /^(?:\[BREAKING\]|BREAKING(?: CHANGE)?[: ])\s*/i.test(title);
+            const breakingYes = /^\s*-\s*Breaking change:\s*yes\s*$/im.test(body);
+            const publicApiYes = /^\s*-\s*Public API affected:\s*yes\s*$/im.test(body);
+
+            if (breakingTitle || breakingYes) {
+              await addLabel("breaking change");
+            } else {
+              await removeLabel("breaking change");
+            }
+
+            if (publicApiYes) {
+              await addLabel("public-api-change");
+            } else {
+              await removeLabel("public-api-change");
+            }
+
+            // A parity review is tied to the reviewed commit. New commits always invalidate it.
+            if (context.payload.action === "synchronize") {
+              await removeLabel("parity-approved");
+            }
