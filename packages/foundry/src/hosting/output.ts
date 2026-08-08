@@ -49,7 +49,11 @@ function kindOf(content: Content): ItemKind | undefined {
     case 'function_approval_request':
       return 'mcp_approval_request';
     case 'search_tool_call':
-      return 'search_call';
+      // Only the two searches with a wire item; an unknown search tool must not be guessed
+      // into `web_search_call` semantics it never had.
+      return content.toolName === 'web_search' || content.toolName === 'file_search'
+        ? 'search_call'
+        : undefined;
     case 'code_interpreter_tool_call':
       return 'code_interpreter_call';
     default:
@@ -130,6 +134,30 @@ function shellOutputEntry(content: {
     stderr: content.stderr ?? '',
     outcome: { type: 'exit', exit_code: content.exitCode ?? 0 },
   };
+}
+
+/**
+ * A tool call's arguments as a structured object.
+ *
+ * While streaming, arguments commonly arrive as the concatenated JSON string rather than a parsed
+ * object; both forms must produce the same wire item. A string that is not a JSON object (still
+ * partial, or not JSON at all) yields an empty object rather than a crash or a dropped field.
+ */
+function argumentsRecord(args: Record<string, unknown> | string | undefined): Record<string, unknown> {
+  if (typeof args === 'object' && args !== null) {
+    return args;
+  }
+  if (typeof args === 'string' && args !== '') {
+    try {
+      const parsed: unknown = JSON.parse(args);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Fall through to the empty object.
+    }
+  }
+  return {};
 }
 
 /** The code a `code_interpreter_tool_call` ran: the concatenated text of its inputs. */
@@ -473,7 +501,7 @@ export class OutputBuilder {
         id = isValidId(call.callId)
           ? (call.callId as string)
           : newId(isWeb ? ID_PREFIX.webSearchCall : ID_PREFIX.fileSearchCall, this.#partitionHint);
-        const args = typeof call.arguments === 'object' && call.arguments !== null ? call.arguments : {};
+        const args = argumentsRecord(call.arguments);
         item = isWeb
           ? { type: 'web_search_call', id, status: 'in_progress', action: args }
           : {

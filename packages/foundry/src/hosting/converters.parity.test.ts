@@ -404,6 +404,63 @@ describe('search and code interpreter output round trip', () => {
     expect(String(done.item.id)).toMatch(/^ws_/);
   });
 
+  it('parses arguments streamed as a JSON string instead of dropping them', () => {
+    // While streaming, tool-call arguments commonly arrive as the concatenated JSON string
+    // rather than a parsed object; the emitted item must carry the same action either way.
+    const builder = new OutputBuilder('caresp_hint');
+    const events = [
+      ...builder.push({
+        type: 'search_tool_call',
+        callId: WEB_SEARCH_CALL.id,
+        toolName: 'web_search',
+        arguments: '{"type":"search","query":"best pizza in tokyo"}',
+      } as Content),
+      ...builder.close(),
+    ];
+    const done = events.at(-1) as unknown as { item: OutputItem };
+    expect(done.item).toMatchObject({
+      type: 'web_search_call',
+      action: { type: 'search', query: 'best pizza in tokyo' },
+    });
+
+    const fileBuilder = new OutputBuilder('caresp_hint');
+    const fileEvents = [
+      ...fileBuilder.push({
+        type: 'search_tool_call',
+        callId: FILE_SEARCH_CALL.id,
+        toolName: 'file_search',
+        arguments: '{"queries":["quarterly revenue"]}',
+      } as Content),
+      ...fileBuilder.close(),
+    ];
+    const fileDone = fileEvents.at(-1) as unknown as { item: OutputItem };
+    expect(fileDone.item).toMatchObject({
+      type: 'file_search_call',
+      queries: ['quarterly revenue'],
+    });
+  });
+
+  it('reports a search call whose tool it does not recognize instead of guessing a wire type', () => {
+    // A `search_tool_call` carrying an unknown `toolName` (or none) has no defined wire item;
+    // emitting it as `web_search_call` would invent semantics the content never had.
+    const dropped: Content[] = [];
+    const builder = new OutputBuilder('caresp_hint', {
+      onUnsupportedContent: (content) => dropped.push(content),
+    });
+    const events = [
+      ...builder.push({
+        type: 'search_tool_call',
+        callId: 'ms_1',
+        toolName: 'memory_search',
+        arguments: {},
+      } as Content),
+      ...builder.push({ type: 'search_tool_call', callId: 'anon_1', arguments: {} } as Content),
+      ...builder.close(),
+    ];
+    expect(events).toHaveLength(0);
+    expect(dropped).toHaveLength(2);
+  });
+
   it('emits a code interpreter call item with code and outputs and replays it', () => {
     const builder = new OutputBuilder('caresp_hint');
     const events = [
