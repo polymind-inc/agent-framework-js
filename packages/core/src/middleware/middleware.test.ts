@@ -261,7 +261,9 @@ describe('agent middleware', () => {
       // drain
     }
 
-    expect((await stream.finalResponse()).text).toBe('hey!');
+    // The middleware appended a separate assistant message, so the joined text keeps the
+    // message boundary visible as a newline.
+    expect((await stream.finalResponse()).text).toBe('hey\n!');
   });
 
   it('streams the updates of a response a middleware supplied', async () => {
