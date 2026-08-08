@@ -206,8 +206,9 @@ environment variables each one needs.
 - The MCP integration covers **tools only** — no sampling, elicitation or prompts.
 - The A2A package is a **client**. Serving a framework agent over A2A, push notifications, task
   listing and cancellation are not covered; use [`@a2a-js/sdk`][a2a-sdk] directly for those.
-- Hosted background responses backed by Foundry storage are fail-closed (HTTP 501) until event
-  persistence lands.
+- A hosted container persists responses in the Foundry storage service by default (matching the
+  reference implementations); the background replay log lives beside the sandbox state, so stream
+  replay after a sandbox recycle fails closed rather than resuming.
 - The core runs in browsers, but calling a model provider directly from a browser exposes your API
   key — **run agents server-side**.
 - Because `agent.run()` returns a hybrid thenable, type-aware lint rules such as

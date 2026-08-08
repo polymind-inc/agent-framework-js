@@ -25,6 +25,17 @@ export interface StoredResponse {
    * it, exactly like {@link userId}.
    */
   generation?: ResponseGeneration;
+  /**
+   * The ids within {@link inputItems} that a service-side store is already holding — replayed
+   * history, as opposed to what this turn newly said.
+   *
+   * A service-side store must send these as **references** and only the remaining items as new:
+   * re-sending an already-stored item under its own id makes the create fail (measured against
+   * the live Foundry service, which resolves references back into the transcript on read — the
+   * same split the reference implementations' `history_item_ids` field carries). A local store
+   * holds the whole list itself and may ignore this.
+   */
+  historyItemIds?: string[];
 }
 
 /**
@@ -55,6 +66,14 @@ export type ResponseOwner = string | undefined;
  * id exists, which is itself the other user's business.
  */
 export interface ResponseProvider {
+  /**
+   * `true` when the backing service links a response to its conversation itself (from the
+   * `conversation` field on the resource), so the server must NOT write the conversation-id
+   * alias record it writes for local stores. The alias create would re-send the turn's items
+   * under ids the service already holds, which it rejects. Implies {@link history} can resolve
+   * a conversation id.
+   */
+  readonly linksConversationsServiceSide?: boolean;
   get(id: string, owner: ResponseOwner): Promise<StoredResponse | undefined>;
   /**
    * Stores a response under `stored.response.id`, owned by `stored.userId`.

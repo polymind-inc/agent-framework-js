@@ -10,7 +10,7 @@
  * The Node adapter is in the `./node` subpath, so the protocol itself stays on Web standards.
  */
 
-export { isHosted, projectEndpoint } from './config.js';
+export { isHosted, projectEndpoint, stateRoot } from './config.js';
 export type { RequestContext } from './context.js';
 export {
   createRequestContext,
@@ -69,7 +69,7 @@ export type {
 } from './server.js';
 export { ResponsesServer } from './server.js';
 export type { AgentSessionIdOptions } from './session-id.js';
-export { resolveAgentSessionId } from './session-id.js';
+export { resolveAgentReference, resolveAgentSessionId } from './session-id.js';
 export { FileResponseProvider } from './store/file.js';
 export type { InMemoryResponseProviderConfig } from './store/memory.js';
 export { InMemoryResponseProvider } from './store/memory.js';

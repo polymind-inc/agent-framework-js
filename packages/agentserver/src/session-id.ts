@@ -1,7 +1,7 @@
 import { agentName, agentSessionId, agentVersion } from './config.js';
 import { partitionKeyOf, toHex } from './ids.js';
 import { conversationIdOf } from './validation.js';
-import type { CreateResponseRequest } from './wire.js';
+import type { AgentReference, CreateResponseRequest } from './wire.js';
 
 /** Session ids are 63 lowercase hex characters, whether derived or random, matching the Python reference. */
 const SESSION_ID_LENGTH = 63;
@@ -36,6 +36,28 @@ function randomHex(length: number): string {
   const bytes = new Uint8Array(Math.ceil(length / 2));
   crypto.getRandomValues(bytes);
   return toHex(bytes).slice(0, length);
+}
+
+/**
+ * Resolves the agent identity a response resource is stamped with.
+ *
+ * The Foundry storage service validates that every persisted response carries an
+ * `agent_reference` with a non-empty name and rejects a write without one — as an opaque `500`,
+ * measured against a live project from inside a hosted container. The reference is therefore
+ * resolved once, here, from the same chain the session id uses: the request's own reference when
+ * it names an agent, else the platform-injected `FOUNDRY_AGENT_NAME` / `FOUNDRY_AGENT_VERSION`,
+ * else the default name (the service accepts any non-empty name without checking it exists).
+ */
+export function resolveAgentReference(requested?: AgentReference): AgentReference {
+  // Rebuilt rather than passed through: validation only checks `name` and `version`, so the
+  // caller's object may omit the discriminator or carry a wrong one, and whatever is returned
+  // here goes onto the resource and into storage payloads verbatim.
+  const requestedName = trimmed(requested?.name);
+  const [name, version] =
+    requestedName !== undefined
+      ? [requestedName, trimmed(requested?.version)]
+      : [trimmed(agentName()) ?? DEFAULT_AGENT_NAME, trimmed(agentVersion())];
+  return { type: 'agent_reference', name, ...(version === undefined ? {} : { version }) };
 }
 
 /**

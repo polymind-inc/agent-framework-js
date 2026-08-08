@@ -24,11 +24,9 @@ needs it, so consumers using just `FoundryChatClient` can leave it uninstalled.
 
 Known limitations:
 
-- **Hosted background responses against Foundry storage are fail-closed (501)** until
-  `FoundryResponseStore` implements event persistence; foreground turns and the file-backed
-  store are unaffected.
-- The default hosted response store is file-backed: writes to the Foundry storage service were
-  observed to fail server-side, so `FoundryResponseStore` is opt-in.
+- `FoundryResponseStore` (the hosted default) keeps the response resource in the Foundry storage
+  service and the background replay log beside the sandbox state — the storage service has no
+  events API — so stream replay after a sandbox recycle fails closed rather than resuming.
 
 ---
 

@@ -127,15 +127,21 @@ Notes from doing this against a live project (extension `azure.ai.agents` 1.0.0-
 
 ### Where the transcript is stored
 
-A deployed container stores responses on its **sandbox filesystem** (`FileResponseProvider`), not
-in the Foundry storage service. `POST /storage/responses` answers an opaque `500` even from inside
-a deployed container (verified against the live service), so making it the default would fail every turn.
-The sandbox is keyed by `x-agent-session-id`, which is derived to be stable for a conversation, so
-a follow-up turn lands on the same filesystem. To opt back in once the service side is resolved:
+A deployed container persists responses in the **Foundry storage service**
+(`FoundryResponseStore`) by default, the same activation the reference implementations make —
+responses then survive sandbox recycling and a conversation can continue from any sandbox. To
+keep a deployment on its sandbox filesystem instead, pass the store explicitly:
 
 ```ts
-new ResponsesHostServer({ agent, store: new FoundryResponseStore() });
+new ResponsesHostServer({ agent, store: new FileResponseProvider() });
 ```
+
+Two service behaviours worth knowing, both measured against a live project: storage writes are
+gated on the **hosted-agent credential**, so `FoundryResponseStore` works from inside a deployed
+container and answers an opaque `500` from a workstation login; and every write must carry an
+`agent_reference` with a non-empty name, which the server stamps onto each response
+automatically. The storage service has no events API, so a background response's replay log stays
+beside the sandbox state.
 
 Afterwards the agent answers at
 `{projectEndpoint}/agents/weather-agent/endpoint/protocols/openai`, which is exactly what

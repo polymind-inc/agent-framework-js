@@ -3,10 +3,12 @@ import {
   FileResponseProvider,
   InMemoryResponseProvider,
   isHosted,
+  projectEndpoint,
   ResponsesServer,
 } from '@polymind-inc/agent-framework-agentserver';
 import type { FoundryHandlerConfig } from './handler.js';
 import { createFoundryHandler } from './handler.js';
+import { FoundryResponseStore } from './response-store.js';
 
 /** Construction options for {@link ResponsesHostServer}. */
 export interface ResponsesHostServerConfig
@@ -24,35 +26,27 @@ export interface ResponsesHostServerConfig
 /**
  * Picks the response store the environment calls for.
  *
- * In a container: the sandbox filesystem. Locally: memory, so nothing outlives the process.
+ * In a container: the Foundry storage service, the way Python's `ResponsesHostServer` activates
+ * its provider when hosted — responses then survive sandbox recycling and conversations can move
+ * between sandboxes. Locally: memory, so nothing outlives the process. A hosted container that
+ * somehow lacks the platform-injected project endpoint falls back to the sandbox filesystem
+ * rather than refusing to start.
  *
- * @remarks
- * **This is not what the reference implementations do, and the reason is measured rather than
- * argued.** Both of them switch a hosted container to Foundry storage automatically (Python
- * `_routing.py`, .NET `ResponsesServerServiceCollectionExtensions`), and this package originally
- * followed them. A real deployment showed that `POST /storage/responses` answers an opaque `500`
- * — from *inside* a
- * container the platform provisioned, with its managed identity and the platform's own
- * `x-agent-foundry-call-id`. Every turn then fails, because a response that cannot be stored is a
- * conversation that cannot be continued. A default that makes the container unusable is the wrong
- * default whatever the reference does, so `FoundryResponseStore` became opt-in:
+ * The storage service requires the hosted-agent credential and the platform call id on every
+ * write, and an `agent_reference` on every persisted response (all measured against the live
+ * service) — the store and the protocol layer supply all three. To keep a deployed container off
+ * the storage service, pass the store explicitly:
  *
  * ```ts
- * new ResponsesHostServer({ agent, store: new FoundryResponseStore() })
+ * new ResponsesHostServer({ agent, store: new FileResponseProvider() })
  * ```
- *
- * The file store works because the platform keeps a conversation on one sandbox: it stamps
- * `agent_session_id` on every request and holds it constant across the turns of a conversation, so
- * a follow-up turn lands on the same filesystem and resolves its `previous_response_id` — verified
- * end to end on a real deployment. What it does not survive is a conversation moving between
- * sandboxes, or a sandbox being recycled.
  */
 export function defaultStore(hosted: boolean): ResponseProvider {
   if (!hosted) {
     // A local run is self-contained; nothing should outlive the process.
     return new InMemoryResponseProvider();
   }
-  return new FileResponseProvider();
+  return projectEndpoint() === undefined ? new FileResponseProvider() : new FoundryResponseStore();
 }
 
 /**

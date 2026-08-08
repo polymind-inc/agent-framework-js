@@ -49,8 +49,8 @@ const agent = new Agent({
   defaultOptions: { store: false },
 });
 
-// The store defaults to the sandbox filesystem in a container. `new FoundryResponseStore()`
-// switches to the platform's storage service — see README.md for why that is not the default.
+// In a container the store defaults to the Foundry storage service, so responses survive sandbox
+// recycling; pass `store: new FileResponseProvider()` to keep a deployment off it — see README.md.
 const server = new ResponsesHostServer({ agent });
 
 const { port } = await serve(server);

@@ -30,7 +30,7 @@ import type { LifecycleViolation } from './lifecycle.js';
 import { applyCancelledTerminal, enforceLifecycle, ResponseTracker } from './lifecycle.js';
 import { flushTelemetry } from './observability/flush.js';
 import { bindIterable, extractTraceContext, withResponseBaggage } from './observability/trace-context.js';
-import { resolveAgentSessionId } from './session-id.js';
+import { resolveAgentReference, resolveAgentSessionId } from './session-id.js';
 import { SequenceNumberWriter, SSE_HEADERS, toSseStream } from './sse.js';
 import { InMemoryResponseProvider } from './store/memory.js';
 import type { ResponseGeneration, ResponseOwner, ResponseProvider } from './store/provider.js';
@@ -913,6 +913,9 @@ export class ResponsesServer {
       created_at: Math.floor(Date.now() / 1000),
       status: 'queued',
       output: [],
+      // Which agent produced this response. Always resolved to a non-empty name: a service-side
+      // store validates its presence on every write, and rejects one without it opaquely.
+      agent_reference: resolveAgentReference(created.agent_reference),
       // Persisted on the resource because the replay and cancel routes decide their answers by
       // it long after the run itself is gone.
       ...(background ? { background: true } : {}),
@@ -991,9 +994,13 @@ export class ResponsesServer {
       }
       // An SSE body (and a background run's tail) is pulled after this request scope has closed,
       // and an async generator resumes in its *consumer's* context — which would drop the
-      // handler's later spans out of the caller's trace, and the baggage stamped just above with
-      // them. Pinning this context to every pull keeps the whole turn under one trace.
-      events = bindIterable(events, otelContext.active());
+      // handler's later spans out of the caller's trace (and the baggage stamped just above with
+      // them), and lose the platform headers a service-side store requires. Pinning both ambient
+      // scopes to every pull keeps the whole turn under one trace and one request context.
+      const turnContext = otelContext.active();
+      events = bindIterable(events, (fn) =>
+        otelContext.with(turnContext, () => runWithRequestContext(context, fn)),
+      );
 
       // A string `input` is shorthand for one user message. Normalizing it here is what keeps it
       // in the stored transcript: left as-is it would simply vanish, and the next turn would
@@ -1014,28 +1021,47 @@ export class ResponsesServer {
             ? (created.input as OutputItem[])
             : [];
       const storedInputItems = [...history, ...inputItems];
-      const persistSnapshot = async (response: ResponseObject): Promise<void> => {
-        if (!this.#holds(responseId, claim)) {
-          // The id this turn was claiming now belongs to somebody else — `DELETE` frees a terminal
-          // run's id while it is still winding down, and the next create takes it. A detached run
-          // (or the cancel route's post-grace write) must not land its snapshot on that turn.
-          return;
-        }
-        const stored = {
-          response,
-          inputItems: storedInputItems,
-          // The turn's stamp travels with the record, so a later write addressed by this id can be
-          // told apart from one made by whoever holds the id now.
-          generation,
-          ...(context.userId === undefined ? {} : { userId: context.userId }),
-        };
-        await this.#store.put(stored);
-        if (conversationId !== undefined && conversationId !== response.id) {
-          // A conversation-addressed turn is also reachable by the conversation id, so the next
-          // request can resolve it without knowing the response id.
-          await this.#store.put({ ...stored, response: { ...response, id: conversationId } });
-        }
-      };
+      // The replayed history is already held by a service-side store under these very ids, so it
+      // travels as references; only this turn's own items are new. A local store ignores the
+      // split and keeps the merged list.
+      const historyItemIds = history
+        .map((item) => item.id)
+        .filter((id): id is string => typeof id === 'string' && id !== '');
+      // Bound to this turn's request context however it is reached: a foreground stream persists
+      // from the SSE consumer's pull and a detached run from its winddown — both outside the
+      // request's AsyncLocalStorage scope — and a service-side store needs the turn's platform
+      // headers on every one of those writes.
+      const persistSnapshot = (response: ResponseObject): Promise<void> =>
+        runWithRequestContext(context, async (): Promise<void> => {
+          if (!this.#holds(responseId, claim)) {
+            // The id this turn was claiming now belongs to somebody else — `DELETE` frees a
+            // terminal run's id while it is still winding down, and the next create takes it. A
+            // detached run (or the cancel route's post-grace write) must not land its snapshot on
+            // that turn.
+            return;
+          }
+          const stored = {
+            response,
+            inputItems: storedInputItems,
+            historyItemIds,
+            // The turn's stamp travels with the record, so a later write addressed by this id
+            // can be told apart from one made by whoever holds the id now.
+            generation,
+            ...(context.userId === undefined ? {} : { userId: context.userId }),
+          };
+          await this.#store.put(stored);
+          if (
+            conversationId !== undefined &&
+            conversationId !== response.id &&
+            this.#store.linksConversationsServiceSide !== true
+          ) {
+            // A conversation-addressed turn is also reachable by the conversation id, so the next
+            // request can resolve it without knowing the response id. Local stores get that from
+            // this alias record; a service-linked store resolves the conversation itself (and its
+            // alias create would collide with the item ids the service already holds).
+            await this.#store.put({ ...stored, response: { ...response, id: conversationId } });
+          }
+        });
       const persist = async (): Promise<void> => {
         if (created.store === false) {
           return;

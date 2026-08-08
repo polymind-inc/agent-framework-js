@@ -100,6 +100,60 @@ describe('routes', () => {
     expect(JSON.stringify(body.output[0])).toContain('Echo: Hi');
   });
 
+  it('stamps the agent identity onto every response resource', async () => {
+    // A service-side store validates that every persisted response names its agent — without the
+    // stamp, the write dies as an opaque 500. Resolved once at resource construction so every
+    // store sees it: the request's own reference first, else the environment, else the default.
+    const saved = { name: process.env.FOUNDRY_AGENT_NAME, version: process.env.FOUNDRY_AGENT_VERSION };
+    try {
+      process.env.FOUNDRY_AGENT_NAME = 'weather-agent';
+      process.env.FOUNDRY_AGENT_VERSION = '2';
+      const server = makeServer();
+
+      const fromEnv = (await (await server.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
+      expect(fromEnv.agent_reference).toEqual({
+        type: 'agent_reference',
+        name: 'weather-agent',
+        version: '2',
+      });
+
+      const requested = (await (
+        await server.handle(
+          post({ input: 'Hi', agent_reference: { type: 'agent_reference', name: 'router', version: '9' } }),
+        )
+      ).json()) as ResponseObject;
+      expect(requested.agent_reference).toEqual({
+        type: 'agent_reference',
+        name: 'router',
+        version: '9',
+      });
+
+      delete process.env.FOUNDRY_AGENT_NAME;
+      delete process.env.FOUNDRY_AGENT_VERSION;
+      const fallback = (await (await server.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
+      expect(fallback.agent_reference).toEqual({ type: 'agent_reference', name: 'server-default-agent' });
+
+      // Validation only checks name and version, so a caller can omit the discriminator or send
+      // a wrong one — the resolved reference normalizes it to the literal the wire type declares.
+      const untyped = (await (
+        await server.handle(post({ input: 'Hi', agent_reference: { name: 'router' } }))
+      ).json()) as ResponseObject;
+      expect(untyped.agent_reference).toEqual({ type: 'agent_reference', name: 'router' });
+
+      const mistyped = (await (
+        await server.handle(
+          post({ input: 'Hi', agent_reference: { type: 'other', name: 'router', version: '3' } }),
+        )
+      ).json()) as ResponseObject;
+      expect(mistyped.agent_reference).toEqual({ type: 'agent_reference', name: 'router', version: '3' });
+    } finally {
+      if (saved.name !== undefined) process.env.FOUNDRY_AGENT_NAME = saved.name;
+      else delete process.env.FOUNDRY_AGENT_NAME;
+      if (saved.version !== undefined) process.env.FOUNDRY_AGENT_VERSION = saved.version;
+      else delete process.env.FOUNDRY_AGENT_VERSION;
+    }
+  });
+
   it('gets, lists input items for, and deletes a response', async () => {
     const server = makeServer();
     const created = (await (
