@@ -77,16 +77,30 @@ export function normalizeInput(input?: AgentRunInput): Message[] {
   return result;
 }
 
-/** Concatenates the text of every message. */
+/**
+ * Joins the text of every message, separating non-empty messages with a newline.
+ *
+ * Message boundaries stay visible in the combined text, so two assistant messages `foo` and `Bar`
+ * read as `foo\nBar`, not `fooBar` (.NET `AgentResponse.Text` joins with a newline the same way,
+ * as does Go `Response.String()`). A message with no text contributes nothing — not a separator —
+ * and the contents *inside* one message still concatenate without a separator.
+ */
 export function textOfMessages(messages: readonly Message[]): string {
   let out = '';
   for (const msg of messages) {
-    out += textOfContents(msg.contents);
+    const text = textOfContents(msg.contents);
+    if (text === '') {
+      continue;
+    }
+    if (out !== '') {
+      out += '\n';
+    }
+    out += text;
   }
   return out;
 }
 
-/** Concatenates the text of a single message, or of every message in an agent response. */
+/** Concatenates the text of a single message, or joins every message's text in an agent response. */
 export function textOf(value: Message | AgentResponse<unknown>): string {
   return 'messages' in value ? value.text : textOfContents(value.contents);
 }

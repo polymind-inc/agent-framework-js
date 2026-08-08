@@ -62,21 +62,41 @@ describe('textOf', () => {
   it('accepts an AgentResponse too', () => {
     const response = agentResponse({
       messages: [
-        { role: 'assistant', contents: [textContent('hello ')] },
+        { role: 'assistant', contents: [textContent('hello')] },
         { role: 'assistant', contents: [textContent('world')] },
       ],
     });
-    expect(textOf(response)).toBe('hello world');
+    expect(textOf(response)).toBe('hello\nworld');
   });
 });
 
 describe('textOfMessages', () => {
-  it('concatenates across messages', () => {
+  it('joins message texts with a newline', () => {
     expect(
       textOfMessages([
         { role: 'user', contents: [textContent('a')] },
         { role: 'assistant', contents: [textContent('b')] },
       ]),
-    ).toBe('ab');
+    ).toBe('a\nb');
+  });
+
+  it('skips empty messages instead of separating them', () => {
+    expect(
+      textOfMessages([
+        { role: 'assistant', contents: [textContent('foo')] },
+        { role: 'assistant', contents: [] },
+        {
+          role: 'assistant',
+          contents: [{ type: 'function_call', callId: 'c1', name: 'f', arguments: '{}' }],
+        },
+        { role: 'assistant', contents: [textContent('Bar')] },
+      ]),
+    ).toBe('foo\nBar');
+  });
+
+  it('concatenates contents inside one message without a separator', () => {
+    expect(textOfMessages([{ role: 'assistant', contents: [textContent('foo'), textContent('Bar')] }])).toBe(
+      'fooBar',
+    );
   });
 });
