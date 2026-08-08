@@ -4,6 +4,7 @@ import type {
   ChatResponseUpdate,
   ChatResponseUpdateInit,
   Content,
+  ErrorContent,
   FinishReason,
   UsageDetails,
 } from '@polymind-inc/agent-framework-core';
@@ -125,6 +126,33 @@ export function parseFinishReason(response: unknown): FinishReason | undefined {
   if (raw?.status !== 'completed') return undefined;
   const output = raw.output ?? [];
   return output.some((item) => item?.type === 'function_call') ? 'tool_calls' : 'stop';
+}
+
+/** The substitute diagnostic for a failure the wire does not describe. */
+const DEFAULT_FAILURE_MESSAGE = 'The agent run failed.';
+const DEFAULT_FAILURE_CODE = 'failed';
+
+/**
+ * The `error` content a failed response reports, or `undefined` when the response did not fail.
+ *
+ * The Responses API marks failure with `status: "failed"` and describes it in `response.error`;
+ * either signal alone counts, so a failure is surfaced to the caller rather than dropped (.NET's
+ * MEAI Responses client and Go `responsesFailureContent` report the same content). When the wire
+ * carries no usable message or code, generic substitutes keep the failure from being silent.
+ */
+function failureContent(response: Partial<Response> | null | undefined, rawEvent: unknown): ErrorContent | undefined {
+  const error = response?.error;
+  const message = typeof error?.message === 'string' ? error.message : '';
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (response?.status !== 'failed' && message === '' && code === '') {
+    return undefined;
+  }
+  return {
+    type: 'error',
+    message: message.trim() === '' ? DEFAULT_FAILURE_MESSAGE : message,
+    errorCode: code === '' ? DEFAULT_FAILURE_CODE : code,
+    rawRepresentation: rawEvent,
+  };
 }
 
 /**
@@ -544,6 +572,10 @@ export function parseResponse(response: unknown, ctx: ParseContext = {}): ChatRe
       }
     }
   }
+  const failure = failureContent(raw, response);
+  if (failure !== undefined) {
+    contents.push(failure);
+  }
 
   const init: Parameters<typeof chatResponse<undefined>>[0] = {
     messages: [{ role: 'assistant', contents }],
@@ -812,6 +844,12 @@ export function parseStreamEvent(
       const usage = parseUsage(response?.usage);
       if (usage !== undefined) {
         contents.push({ type: 'usage', usageDetails: usage, rawRepresentation: event });
+      }
+      if (raw.type === 'response.failed') {
+        const failure = failureContent(response, event);
+        if (failure !== undefined) {
+          contents.push(failure);
+        }
       }
       break;
     }

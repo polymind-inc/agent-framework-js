@@ -179,6 +179,69 @@ describe('logprobs', () => {
   });
 });
 
+// A failed response reports why: the API's `response.error` becomes an `error` content on the
+// parsed response, so the failure diagnostic reaches the caller instead of being dropped. This
+// mirrors .NET (MEAI `OpenAIResponsesChatClient`) and Go `responsesFailureContent`, which also
+// substitute a generic message/code when the wire carries none.
+describe('failed responses surface their error', () => {
+  it('adds an error content to an awaited failed response', () => {
+    const response = parseResponse({
+      id: 'resp_1',
+      status: 'failed',
+      error: { code: 'server_error', message: 'The model blew up.' },
+      output: [],
+    });
+    expect(contentsOf(response)).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'The model blew up.', errorCode: 'server_error' }),
+    );
+  });
+
+  it('falls back to a generic message and code when the failure carries none', () => {
+    const response = parseResponse({ id: 'resp_1', status: 'failed', error: { message: '  ' }, output: [] });
+    expect(contentsOf(response)).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'The agent run failed.', errorCode: 'failed' }),
+    );
+  });
+
+  it('surfaces a reported error even without the failed status', () => {
+    const response = parseResponse({
+      id: 'resp_1',
+      status: 'completed',
+      error: { code: 'rate_limit_exceeded', message: 'Rate limited.' },
+      output: [],
+    });
+    expect(contentsOf(response)).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'Rate limited.', errorCode: 'rate_limit_exceeded' }),
+    );
+  });
+
+  it('adds the error to the response.failed stream event', () => {
+    const updates = fold([
+      {
+        type: 'response.failed',
+        response: {
+          id: 'resp_1',
+          status: 'failed',
+          error: { code: 'server_error', message: 'The model blew up.' },
+          output: [],
+        },
+      },
+    ]);
+    expect(updates.flatMap((update) => update.contents)).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'The model blew up.', errorCode: 'server_error' }),
+    );
+  });
+
+  it('adds nothing to a successful response', () => {
+    const awaited = parseResponse({ id: 'resp_1', status: 'completed', output: [] });
+    expect(contentsOf(awaited).some((content) => content.type === 'error')).toBe(false);
+    const updates = fold([
+      { type: 'response.completed', response: { id: 'resp_1', status: 'completed', output: [] } },
+    ]);
+    expect(updates.flatMap((update) => update.contents).some((content) => content.type === 'error')).toBe(false);
+  });
+});
+
 // Python maps `response.image_generation_call.partial_image` to the same
 // call/result pair the finished item produces, with the preview marked so a consumer can tell the
 // two apart (`_chat_client.py:3196-3222`). The event only exists when the caller asked for it via
