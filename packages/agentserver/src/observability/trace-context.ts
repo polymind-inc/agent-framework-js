@@ -12,7 +12,7 @@
  */
 
 import type { Context, TextMapGetter } from '@opentelemetry/api';
-import { context as contextApi, propagation, ROOT_CONTEXT } from '@opentelemetry/api';
+import { propagation, ROOT_CONTEXT } from '@opentelemetry/api';
 
 const HEADERS_GETTER: TextMapGetter<Headers> = {
   get(carrier: Headers, key: string): string | undefined {
@@ -100,28 +100,30 @@ export function withResponseBaggage(context: Context, turn: ResponseBaggage): Co
 }
 
 /**
- * Pins `context` to every pull of `iterable`.
+ * Runs every pull of `iterable` through `run`, which re-enters whatever ambient scopes the turn
+ * needs — the OTel context, the request's `AsyncLocalStorage`, or both composed.
  *
  * An async generator resumes in whatever context its consumer holds when it calls `next()` — and
  * an SSE body is consumed by the socket writer, long after the request scope closed. Without
  * this, the handler's spans would parent correctly up to the first event (pulled inside the
- * request scope) and then fall out of the trace.
+ * request scope) and then fall out of the trace, and work the turn still does while the stream
+ * drains would lose the request's platform headers.
  */
-export function bindIterable<T>(iterable: AsyncIterable<T>, context: Context): AsyncIterable<T> {
+export function bindIterable<T>(iterable: AsyncIterable<T>, run: <R>(fn: () => R) => R): AsyncIterable<T> {
   return {
     [Symbol.asyncIterator](): AsyncIterator<T> {
       const iterator = iterable[Symbol.asyncIterator]();
       const { return: returnFn, throw: throwFn } = iterator;
       const bound: AsyncIterator<T> = {
-        next: (): Promise<IteratorResult<T>> => contextApi.with(context, () => iterator.next()),
+        next: (): Promise<IteratorResult<T>> => run(() => iterator.next()),
       };
       if (returnFn !== undefined) {
         bound.return = (value?: unknown): Promise<IteratorResult<T>> =>
-          contextApi.with(context, () => returnFn.call(iterator, value));
+          run(() => returnFn.call(iterator, value));
       }
       if (throwFn !== undefined) {
         bound.throw = (error?: unknown): Promise<IteratorResult<T>> =>
-          contextApi.with(context, () => throwFn.call(iterator, error));
+          run(() => throwFn.call(iterator, error));
       }
       return bound;
     },

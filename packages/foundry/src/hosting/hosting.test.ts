@@ -39,6 +39,7 @@ import {
 } from './converters.js';
 import { createFoundryHandler, defaultApprovalStorage, defaultSessionStore } from './handler.js';
 import { OutputBuilder } from './output.js';
+import { FoundryResponseStore } from './response-store.js';
 import { FileSystemAgentSessionStore, InMemoryAgentSessionStore } from './session-store.js';
 
 function say(text: string): MockTurn {
@@ -61,6 +62,21 @@ function textOf(response: ResponseObject): string {
 function must<T>(value: T | null | undefined): T {
   if (value == null) throw new Error('expected a value');
   return value;
+}
+
+/** Polls `GET /responses/{id}` until the response completes, failing the test after ~4s. */
+async function waitUntilCompleted(app: ResponsesServer, id: string): Promise<ResponseObject> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const response = await app.handle(new Request(`http://localhost:8088/responses/${id}`));
+    if (response.status === 200) {
+      const body = (await response.json()) as ResponseObject;
+      if (body.status === 'completed') {
+        return body;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`response ${id} never completed`);
 }
 
 describe('function_call_output encoding', () => {
@@ -1461,6 +1477,306 @@ describe('stored-history replay', () => {
     expect(contents).toContainEqual(
       expect.objectContaining({ type: 'unknown', unknownType: 'memory_search_call', id: 'msc_1' }),
     );
+  });
+});
+
+describe('background execution with the Foundry store', () => {
+  /**
+   * An in-memory double of the Foundry storage service, faithful to the behaviours measured
+   * against the live one: a write whose response carries no `agent_reference.name` dies as an
+   * opaque 500; a create that re-sends an already-stored item id fails with an "already exists"
+   * body (the shape that masquerades as a duplicate create); `history_item_ids` resolve back
+   * into the transcript on read; and a conversation is linked from the resource itself.
+   */
+  function storageServiceDouble(options: { requireCallId?: boolean } = {}): {
+    fetch: typeof globalThis.fetch;
+    writes: ResponseObject[];
+  } {
+    const records = new Map<string, { response: ResponseObject; itemIds: string[] }>();
+    const items = new Map<string, OutputItem>();
+    const conversations = new Map<string, string[]>();
+    const writes: ResponseObject[] = [];
+    const respond = (status: number, body?: unknown): Response =>
+      new Response(body === undefined ? null : JSON.stringify(body), { status });
+    const outputOf = (response: ResponseObject): OutputItem[] =>
+      Array.isArray(response.output) ? response.output : [];
+    const idsOf = (list: OutputItem[]): string[] =>
+      list.map((item) => item.id).filter((id): id is string => typeof id === 'string');
+    // One statement of the live service's write validation, used by create and update alike.
+    const namesAgent = (response: ResponseObject): boolean =>
+      typeof response.agent_reference?.name === 'string' && response.agent_reference.name !== '';
+    /** Registers output items and extends the conversation's transcript, like the service does. */
+    const index = (response: ResponseObject): void => {
+      for (const item of outputOf(response)) {
+        if (typeof item.id === 'string') items.set(item.id, item);
+      }
+      const conversation = (response as { conversation?: { id?: string } }).conversation;
+      if (typeof conversation?.id === 'string') {
+        const ids = conversations.get(conversation.id) ?? [];
+        const stored = records.get(response.id);
+        for (const itemId of [...(stored?.itemIds ?? []), ...idsOf(outputOf(response))]) {
+          if (!ids.includes(itemId)) ids.push(itemId);
+        }
+        conversations.set(conversation.id, ids);
+      }
+    };
+
+    const handle = async (url: URL, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? 'GET';
+      const segments = url.pathname.split('/storage/')[1]?.split('/') ?? [];
+      const payload = typeof init?.body === 'string' ? (JSON.parse(init.body) as never) : undefined;
+
+      if (
+        options.requireCallId === true &&
+        method !== 'GET' &&
+        new Headers(init?.headers).get('x-agent-foundry-call-id') === null
+      ) {
+        // The live service's behaviour: a write without the platform call id fails opaquely.
+        return respond(500, { error: { code: 'server_error', message: 'An error occurred.' } });
+      }
+
+      if (method === 'POST' && segments.length === 1 && segments[0] === 'responses') {
+        const create = payload as unknown as {
+          response: ResponseObject;
+          input_items: OutputItem[];
+          history_item_ids: string[];
+        };
+        writes.push(create.response);
+        if (!namesAgent(create.response)) {
+          return respond(500, { error: { code: 'server_error', message: 'An error occurred.' } });
+        }
+        if (records.has(create.response.id)) {
+          return respond(409, { error: { code: 'conflict', message: 'already exists' } });
+        }
+        for (const item of [...create.input_items, ...outputOf(create.response)]) {
+          if (typeof item.id === 'string' && items.has(item.id)) {
+            return respond(400, {
+              error: { code: 'invalid_request', message: `Item '${item.id}' already exists.` },
+            });
+          }
+        }
+        for (const item of create.input_items) {
+          if (typeof item.id === 'string') items.set(item.id, item);
+        }
+        records.set(create.response.id, {
+          response: create.response,
+          itemIds: [...create.history_item_ids, ...idsOf(create.input_items)],
+        });
+        index(create.response);
+        return respond(201, create.response);
+      }
+      const id = segments[1] ?? '';
+      const record = records.get(id);
+      if (method === 'POST' && segments.length === 2 && segments[0] === 'responses') {
+        const update = payload as unknown as ResponseObject;
+        writes.push(update);
+        if (!namesAgent(update)) {
+          return respond(500, { error: { code: 'server_error', message: 'An error occurred.' } });
+        }
+        if (record === undefined) {
+          return respond(404, { error: { code: 'not_found', message: 'not found' } });
+        }
+        record.response = update;
+        index(update);
+        return respond(200, update);
+      }
+      if (method === 'GET' && segments.length === 2 && segments[0] === 'responses') {
+        return record === undefined ? respond(404) : respond(200, record.response);
+      }
+      if (method === 'GET' && segments.length === 3 && segments[2] === 'input_items') {
+        return record === undefined
+          ? respond(404)
+          : respond(200, {
+              object: 'list',
+              data: record.itemIds.map((itemId) => items.get(itemId)).filter((item) => item !== undefined),
+              has_more: false,
+            });
+      }
+      if (method === 'DELETE' && segments.length === 2 && segments[0] === 'responses') {
+        return records.delete(id) ? respond(204) : respond(404);
+      }
+      if (method === 'GET' && segments[0] === 'history' && segments[1] === 'item_ids') {
+        const ids = conversations.get(url.searchParams.get('conversation_id') ?? '');
+        return ids === undefined ? respond(404) : respond(200, ids);
+      }
+      if (
+        method === 'POST' &&
+        segments[0] === 'items' &&
+        segments[1] === 'batch' &&
+        segments[2] === 'retrieve'
+      ) {
+        const request = payload as unknown as { item_ids: string[] };
+        return respond(
+          200,
+          request.item_ids.map((itemId) => items.get(itemId) ?? null),
+        );
+      }
+      return respond(500, {
+        error: { code: 'server_error', message: `unhandled ${method} ${url.pathname}` },
+      });
+    };
+
+    return {
+      fetch: (async (url: string | URL | Request, init?: RequestInit) =>
+        handle(new URL(String(url)), init)) as typeof globalThis.fetch,
+      writes,
+    };
+  }
+
+  async function foundryBackedServer(
+    turns: MockTurn[],
+    options: { requireCallId?: boolean } = {},
+  ): Promise<{
+    app: ResponsesServer;
+    writes: ResponseObject[];
+    client: MockChatClient;
+  }> {
+    const service = storageServiceDouble(options);
+    const client = new MockChatClient(turns);
+    const store = new FoundryResponseStore({
+      projectEndpoint: 'https://my-resource.services.ai.azure.com/api/projects/my-project',
+      credential: {
+        getToken: async () => ({ token: 'mi-token', expiresOnTimestamp: Date.now() + 3_600_000 }),
+      },
+      fetch: service.fetch,
+      replayRoot: await mkdtemp(join(tmpdir(), 'afjs-fdry-')),
+      retry: { baseDelayMs: 0 },
+    });
+    const app = new ResponsesServer({
+      handler: createFoundryHandler({
+        agent: new Agent({ client }),
+        sessionStore: new InMemoryAgentSessionStore(),
+        approvalStorage: new InMemoryApprovalStorage(),
+        hosted: false,
+      }),
+      store,
+    });
+    return { app, writes: service.writes, client };
+  }
+
+  it('accepts a background create instead of the documented 501, and finishes durably', async () => {
+    const { app, writes } = await foundryBackedServer([say('bg answer')]);
+
+    const created = await app.handle(post({ input: 'hi', background: true }));
+    expect(created.status).toBe(200);
+    const snapshot = (await created.json()) as ResponseObject;
+    expect(snapshot.background).toBe(true);
+
+    const finished = await waitUntilCompleted(app, snapshot.id);
+    expect(JSON.stringify(finished.output)).toContain('bg answer');
+
+    // Every service write carried the agent reference the service validates — the resource was
+    // stamped at construction, not patched up by the store's fallback.
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) {
+      expect(write.agent_reference?.name).toBe('server-default-agent');
+    }
+  });
+
+  it('replays the finished background stream from the persisted event log', async () => {
+    const { app } = await foundryBackedServer([say('replayed')]);
+
+    const created = await app.handle(post({ input: 'hi', background: true, stream: true }));
+    expect(created.status).toBe(200);
+    // Drain the live stream so the run finishes and persists its replay log.
+    const live = await created.text();
+    const id = /"id":\s*"(caresp_[A-Za-z0-9]+)"/.exec(live)?.[1];
+    expect(id).toBeDefined();
+    await waitUntilCompleted(app, must(id));
+
+    // A second subscriber replays the same events from the persisted log — the run is gone.
+    const replay = await app.handle(
+      new Request(`http://localhost:8088/responses/${id}?stream=true`, { method: 'GET' }),
+    );
+    expect(replay.status).toBe(200);
+    const replayed = await replay.text();
+    expect(replayed).toContain('response.completed');
+    expect(replayed).toContain('replayed');
+  });
+
+  it('keeps the platform call id on writes made while a foreground stream drains', async () => {
+    // The terminal persist of a `stream: true` foreground turn runs from the SSE consumer, after
+    // `handle()` returned — outside the request's AsyncLocalStorage scope unless the stream is
+    // re-bound to it. Without the call id the live service refuses the write, and a perfectly
+    // good stream ends in `storage_error`.
+    const { app, writes } = await foundryBackedServer([say('streamed answer')], {
+      requireCallId: true,
+    });
+
+    const created = await app.handle(
+      post({ input: 'hi', stream: true }, { [HEADERS.foundryCallId]: 'call-fg-1' }),
+    );
+    expect(created.status).toBe(200);
+    const stream = await created.text();
+
+    expect(stream).toContain('response.completed');
+    expect(stream).not.toContain('storage_error');
+    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it('continues a conversation with previous_response_id without re-sending stored items', async () => {
+    // The continuation turn's write embeds the previous turn's items; sent under their own ids
+    // the service rejects the create and the whole turn dies as `storage_error` (measured live).
+    // They must travel as history references instead.
+    const { app, client } = await foundryBackedServer([say('first answer'), say('second answer')]);
+
+    const first = (await (
+      await app.handle(post({ input: 'remember the word apple' }))
+    ).json()) as ResponseObject;
+    expect(first.status).toBe('completed');
+
+    const second = (await (
+      await app.handle(post({ input: 'what word?', previous_response_id: first.id }))
+    ).json()) as ResponseObject;
+    expect(second.status).toBe('completed');
+    expect(second.error ?? null).toBeNull();
+
+    // The model saw the first turn's transcript, replayed from the service store.
+    const replayedTexts = JSON.stringify(must(client.calls[1]).messages);
+    expect(replayedTexts).toContain('remember the word apple');
+    expect(replayedTexts).toContain('first answer');
+  });
+
+  it('continues a conversation-addressed turn through the service linkage, with no alias record', async () => {
+    const { app, writes, client } = await foundryBackedServer([say('one'), say('two')]);
+
+    const first = (await (
+      await app.handle(post({ input: 'the color is teal', conversation: 'caconv_test1' }))
+    ).json()) as ResponseObject;
+    expect(first.status).toBe('completed');
+
+    const second = (await (
+      await app.handle(post({ input: 'which color?', conversation: 'caconv_test1' }))
+    ).json()) as ResponseObject;
+    expect(second.status).toBe('completed');
+    expect(second.error ?? null).toBeNull();
+    expect(JSON.stringify(must(client.calls[1]).messages)).toContain('the color is teal');
+
+    // No alias record was written under the conversation id: every stored response keeps its own
+    // id, and the linkage lives in the service (the alias create would have collided anyway).
+    for (const write of writes) {
+      expect(write.id).not.toBe('caconv_test1');
+    }
+  });
+
+  it('resumes the replay after the cursor, not from the top', async () => {
+    const { app } = await foundryBackedServer([say('cursor test')]);
+
+    const created = await app.handle(post({ input: 'hi', background: true, stream: true }));
+    const live = await created.text();
+    const id = must(/"id":\s*"(caresp_[A-Za-z0-9]+)"/.exec(live)?.[1]);
+    await waitUntilCompleted(app, id);
+
+    const tail = await app.handle(
+      new Request(`http://localhost:8088/responses/${id}?stream=true&starting_after=0`, {
+        method: 'GET',
+      }),
+    );
+    expect(tail.status).toBe(200);
+    const replayed = await tail.text();
+    // Event 0 (`response.created`) is behind the cursor; the terminal is ahead of it.
+    expect(replayed).not.toContain('response.created');
+    expect(replayed).toContain('response.completed');
   });
 });
 
