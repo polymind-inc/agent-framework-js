@@ -85,15 +85,18 @@ describe('textOfMessages', () => {
       textOfMessages([
         { role: 'assistant', contents: [textContent('foo')] },
         { role: 'assistant', contents: [] },
-        { role: 'assistant', contents: [{ type: 'function_call', callId: 'c1', name: 'f', arguments: '{}' }] },
+        {
+          role: 'assistant',
+          contents: [{ type: 'function_call', callId: 'c1', name: 'f', arguments: '{}' }],
+        },
         { role: 'assistant', contents: [textContent('Bar')] },
       ]),
     ).toBe('foo\nBar');
   });
 
   it('concatenates contents inside one message without a separator', () => {
-    expect(
-      textOfMessages([{ role: 'assistant', contents: [textContent('foo'), textContent('Bar')] }]),
-    ).toBe('fooBar');
+    expect(textOfMessages([{ role: 'assistant', contents: [textContent('foo'), textContent('Bar')] }])).toBe(
+      'fooBar',
+    );
   });
 });

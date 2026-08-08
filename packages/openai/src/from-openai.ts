@@ -140,7 +140,10 @@ const DEFAULT_FAILURE_CODE = 'failed';
  * MEAI Responses client and Go `responsesFailureContent` report the same content). When the wire
  * carries no usable message or code, generic substitutes keep the failure from being silent.
  */
-function failureContent(response: Partial<Response> | null | undefined, rawEvent: unknown): ErrorContent | undefined {
+function failureContent(
+  response: Partial<Response> | null | undefined,
+  rawEvent: unknown,
+): ErrorContent | undefined {
   const error = response?.error;
   const message = typeof error?.message === 'string' ? error.message : '';
   const code = typeof error?.code === 'string' ? error.code : '';

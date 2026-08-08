@@ -238,7 +238,9 @@ describe('failed responses surface their error', () => {
     const updates = fold([
       { type: 'response.completed', response: { id: 'resp_1', status: 'completed', output: [] } },
     ]);
-    expect(updates.flatMap((update) => update.contents).some((content) => content.type === 'error')).toBe(false);
+    expect(updates.flatMap((update) => update.contents).some((content) => content.type === 'error')).toBe(
+      false,
+    );
   });
 });
 
