@@ -26,6 +26,8 @@ interface Call {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  /** The Response object this call was answered with, absent when the call threw. */
+  reply?: Response;
 }
 
 /** One shared scratch directory per test file run; each store() call gets its own subdirectory. */
@@ -47,21 +49,23 @@ function store(
     new Headers(init?.headers).forEach((value, name) => {
       headers[name] = value;
     });
-    calls.push({
+    const call: Call = {
       method: init?.method ?? 'GET',
       url: String(url),
       headers,
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-    });
+    };
+    calls.push(call);
     const reply = replies[Math.min(index, replies.length - 1)] ?? { status: 200 };
     index++;
     if (reply.networkError === true) {
       throw new TypeError('fetch failed');
     }
-    return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), {
+    call.reply = new Response(reply.body === undefined ? null : JSON.stringify(reply.body), {
       status: reply.status ?? 200,
       ...(reply.body === undefined ? {} : { headers: { 'content-type': 'application/json' } }),
     });
+    return call.reply;
   }) as typeof globalThis.fetch;
 
   return {
@@ -716,6 +720,20 @@ describe('bounded retry', () => {
 
     await expect(subject.put({ response: response() })).rejects.toThrow(/returned 400/);
     expect(calls).toHaveLength(1);
+  });
+
+  it('cancels the body of a response it discards for a retry', async () => {
+    // An unconsumed body keeps its connection busy in undici; a reply the loop moves past must
+    // release it rather than leave that to GC.
+    const { store: subject, calls } = store([
+      { status: 503, body: { error: { code: 'server_error', message: 'busy' } } },
+      { status: 201 },
+    ]);
+
+    await subject.put({ response: response() });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.reply?.bodyUsed).toBe(true);
   });
 
   it('retries reads as well as writes', async () => {

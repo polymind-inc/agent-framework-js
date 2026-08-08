@@ -175,9 +175,12 @@ function sameTurn(local: ResponseObject, remote: ResponseObject): boolean {
  * - `x-agent-user-id` is deliberately not sent — see `platformHeaders`. It is a global cross-agent
  *   identifier, and the service does not accept it. This is also why the `owner` argument every
  *   `ResponseProvider` method takes is accepted but not applied here: the partition is enforced
- *   service-side, before this client sees anything. The parameter stays in the signature because
- *   the abstraction — not the implementation — is what has to carry the guarantee for the stores
- *   that *can* be reached across users.
+ *   service-side, from the call id, before this client sees anything — measured: a read outside
+ *   the caller context answers 404 even for an id that exists. That covers every service route
+ *   this store uses, the conversation-linkage reads included. The parameter stays in the
+ *   signature because the abstraction — not the implementation — is what has to carry the
+ *   guarantee for the stores that *can* be reached across users, and the local replay mirror
+ *   does apply it.
  * - A stored response holds the whole conversation. It is protected by the project's access
  *   control, not by anything this client does.
  *
@@ -328,6 +331,9 @@ export class FoundryResponseStore implements ResponseProvider {
           return { response, ambiguous };
         }
         ambiguous = true;
+        // A discarded response's body would otherwise hold its connection until GC; cancelling
+        // is best-effort resource hygiene, never a failure.
+        await response.body?.cancel().catch(() => {});
       } catch (error) {
         // A network-level failure is transient by definition; the last one surfaces as-is.
         if (last) {
