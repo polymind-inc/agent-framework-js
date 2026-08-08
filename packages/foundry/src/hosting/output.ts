@@ -27,7 +27,14 @@ export interface SurfacedApproval {
 }
 
 /** Which kind of output item a content maps to. */
-type ItemKind = 'message' | 'function_call' | 'reasoning' | 'mcp_call' | 'mcp_approval_request';
+type ItemKind =
+  | 'message'
+  | 'function_call'
+  | 'reasoning'
+  | 'mcp_call'
+  | 'mcp_approval_request'
+  | 'search_call'
+  | 'code_interpreter_call';
 
 function kindOf(content: Content): ItemKind | undefined {
   switch (content.type) {
@@ -41,6 +48,14 @@ function kindOf(content: Content): ItemKind | undefined {
       return 'mcp_call';
     case 'function_approval_request':
       return 'mcp_approval_request';
+    case 'search_tool_call':
+      // Only the two searches with a wire item; an unknown search tool must not be guessed
+      // into `web_search_call` semantics it never had.
+      return content.toolName === 'web_search' || content.toolName === 'file_search'
+        ? 'search_call'
+        : undefined;
+    case 'code_interpreter_tool_call':
+      return 'code_interpreter_call';
     default:
       return undefined;
   }
@@ -119,6 +134,62 @@ function shellOutputEntry(content: {
     stderr: content.stderr ?? '',
     outcome: { type: 'exit', exit_code: content.exitCode ?? 0 },
   };
+}
+
+/**
+ * A tool call's arguments as a structured object.
+ *
+ * While streaming, arguments commonly arrive as the concatenated JSON string rather than a parsed
+ * object; both forms must produce the same wire item. A string that is not a JSON object (still
+ * partial, or not JSON at all) yields an empty object rather than a crash or a dropped field.
+ */
+function argumentsRecord(args: Record<string, unknown> | string | undefined): Record<string, unknown> {
+  if (typeof args === 'object' && args !== null) {
+    return args;
+  }
+  if (typeof args === 'string' && args !== '') {
+    try {
+      const parsed: unknown = JSON.parse(args);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Fall through to the empty object.
+    }
+  }
+  return {};
+}
+
+/** The code a `code_interpreter_tool_call` ran: the concatenated text of its inputs. */
+function codeOfInputs(inputs: unknown): string {
+  if (!Array.isArray(inputs)) {
+    return '';
+  }
+  let code = '';
+  for (const input of inputs) {
+    const text = (input as { text?: unknown } | null)?.text;
+    if (typeof text === 'string') {
+      code += text;
+    }
+  }
+  return code;
+}
+
+/** Wire `code_interpreter_call.outputs` entries from a result's content outputs. */
+function codeInterpreterWireOutputs(outputs: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(outputs)) {
+    return [];
+  }
+  const entries: Array<Record<string, unknown>> = [];
+  for (const output of outputs) {
+    const record = output as { type?: unknown; text?: unknown; uri?: unknown } | null;
+    if (record?.type === 'text' && typeof record.text === 'string') {
+      entries.push({ type: 'logs', logs: record.text });
+    } else if ((record?.type === 'uri' || record?.type === 'data') && typeof record.uri === 'string') {
+      entries.push({ type: 'image', url: record.uri });
+    }
+  }
+  return entries;
 }
 
 /** The wire text for an MCP tool result's `output` payload (Python `_stringify_mcp_output`). */
@@ -209,6 +280,45 @@ export class OutputBuilder {
         call_id: callId ?? '',
         output: mcpOutputText(content),
       });
+      return;
+    }
+    if (content.type === 'search_tool_result') {
+      // A search result belongs *on* its call item: the wire carries a web search's outcome
+      // inside `action` (already on the item) and a file search's retrieved documents in
+      // `results`. There is no standalone wire item for an orphan search result, so one with no
+      // matching open call is reported rather than emitted.
+      const open = this.#open;
+      const callId = content.callId;
+      if (
+        open !== undefined &&
+        open.kind === 'search_call' &&
+        (callId === undefined || callId === open.callId || callId === open.id)
+      ) {
+        const results = (content.result as { results?: unknown } | null | undefined)?.results;
+        if (open.item.type === 'file_search_call' && Array.isArray(results)) {
+          open.item.results = results;
+        }
+        yield* this.close();
+        return;
+      }
+      this.#onUnsupportedContent?.(content);
+      return;
+    }
+    if (content.type === 'code_interpreter_tool_result') {
+      // Same shape as a search result: the sandbox's outputs live on the `code_interpreter_call`
+      // item itself, and an orphan result has no wire item of its own.
+      const open = this.#open;
+      const callId = content.callId;
+      if (
+        open !== undefined &&
+        open.kind === 'code_interpreter_call' &&
+        (callId === undefined || callId === open.callId || callId === open.id)
+      ) {
+        open.item.outputs = codeInterpreterWireOutputs(content.outputs);
+        yield* this.close();
+        return;
+      }
+      this.#onUnsupportedContent?.(content);
       return;
     }
     if (content.type === 'image_generation_tool_result') {
@@ -306,8 +416,9 @@ export class OutputBuilder {
       const id = (content as { id?: string }).id;
       return id === undefined || id === this.#open.id;
     }
-    // A single approval request is one item; a second one needs its own.
-    return kind !== 'mcp_approval_request';
+    // One item per approval request, per search call and per code interpreter run; only message
+    // text and MCP-call argument fragments coalesce.
+    return kind !== 'mcp_approval_request' && kind !== 'search_call' && kind !== 'code_interpreter_call';
   }
 
   *#open_(kind: ItemKind, content: Content): Generator<ResponseEvent> {
@@ -378,6 +489,45 @@ export class OutputBuilder {
         this.surfacedApprovals.push({ wireId: id, request });
         break;
       }
+      case 'search_call': {
+        const call = content as {
+          callId?: string;
+          toolName?: string;
+          arguments?: Record<string, unknown> | string;
+        };
+        const isWeb = call.toolName !== 'file_search';
+        // The provider's own call id is reused only when it fits this protocol's id format,
+        // like `mcp_call`; the replayed item then carries the id the provider actually issued.
+        id = isValidId(call.callId)
+          ? (call.callId as string)
+          : newId(isWeb ? ID_PREFIX.webSearchCall : ID_PREFIX.fileSearchCall, this.#partitionHint);
+        const args = argumentsRecord(call.arguments);
+        item = isWeb
+          ? { type: 'web_search_call', id, status: 'in_progress', action: args }
+          : {
+              type: 'file_search_call',
+              id,
+              status: 'in_progress',
+              queries: Array.isArray((args as { queries?: unknown }).queries)
+                ? ((args as { queries: unknown[] }).queries as unknown[])
+                : [],
+            };
+        break;
+      }
+      case 'code_interpreter_call': {
+        const call = content as { callId?: string; inputs?: unknown };
+        id = isValidId(call.callId)
+          ? (call.callId as string)
+          : newId(ID_PREFIX.codeInterpreterCall, this.#partitionHint);
+        item = {
+          type: 'code_interpreter_call',
+          id,
+          status: 'in_progress',
+          code: codeOfInputs(call.inputs),
+          outputs: [],
+        };
+        break;
+      }
     }
 
     this.#open = {
@@ -386,7 +536,8 @@ export class OutputBuilder {
       index,
       item,
       buffer: '',
-      ...(kind === 'mcp_call' && typeof (content as { callId?: string }).callId === 'string'
+      ...((kind === 'mcp_call' || kind === 'search_call' || kind === 'code_interpreter_call') &&
+      typeof (content as { callId?: string }).callId === 'string'
         ? { callId: (content as { callId?: string }).callId }
         : {}),
     };
@@ -486,7 +637,10 @@ export class OutputBuilder {
         return;
       }
       case 'mcp_approval_request':
-        // Approval requests carry no incremental payload.
+      case 'search_call':
+      case 'code_interpreter_call':
+        // These carry no incremental payload: an approval request is complete when surfaced, and
+        // provider-executed calls arrive whole.
         return;
     }
   }
@@ -572,6 +726,12 @@ export class OutputBuilder {
         break;
       }
       case 'mcp_approval_request':
+        break;
+      case 'search_call':
+      case 'code_interpreter_call':
+        // The result (file search documents, sandbox outputs) was attached by `push` before the
+        // close; a call whose result never arrived still finishes its item, like `mcp_call`.
+        open.item.status = 'completed';
         break;
     }
 

@@ -1404,6 +1404,66 @@ describe('hosted tool content mappings', () => {
   });
 });
 
+describe('stored-history replay', () => {
+  it('replays every prefetched history item to the model, including ones this build does not model', async () => {
+    // The platform prefetches the transcript and the handler replays it as this turn's input.
+    // A hosted-tool record or an item from a newer producer must survive that hop: dropping it
+    // would have the model answer as though its own earlier actions never happened.
+    const client = new MockChatClient([say('done')]);
+    const handler = createFoundryHandler({
+      agent: new Agent({ client }),
+      sessionStore: new InMemoryAgentSessionStore(),
+      approvalStorage: new InMemoryApprovalStorage(),
+      hosted: false,
+    });
+    const responseId = newId(ID_PREFIX.response);
+    const context: HandlerContext = {
+      responseId,
+      conversationId: undefined,
+      request: createRequestContext(new Headers()),
+      history: [
+        {
+          type: 'web_search_call',
+          id: 'ws_1',
+          status: 'completed',
+          action: { type: 'search', query: 'weather in tokyo' },
+        },
+        {
+          type: 'computer_call',
+          id: 'cu_1',
+          call_id: 'call_cu1',
+          status: 'completed',
+          action: { type: 'screenshot' },
+          pending_safety_checks: [],
+        },
+        { type: 'memory_search_call', id: 'msc_1', query: 'past decisions' },
+      ],
+      signal: new AbortController().signal,
+      response: { id: responseId, object: 'response', created_at: 0, status: 'queued', output: [] },
+    };
+
+    for await (const event of handler({ input: 'hi' }, context)) {
+      void event;
+    }
+
+    const contents = must(client.calls[0]).messages.flatMap((message) => message.contents);
+    expect(contents).toContainEqual(
+      expect.objectContaining({ type: 'search_tool_call', callId: 'ws_1', toolName: 'web_search' }),
+    );
+    expect(contents).toContainEqual(
+      expect.objectContaining({
+        type: 'function_call',
+        callId: 'call_cu1',
+        name: 'computer_use',
+        informationalOnly: true,
+      }),
+    );
+    expect(contents).toContainEqual(
+      expect.objectContaining({ type: 'unknown', unknownType: 'memory_search_call', id: 'msc_1' }),
+    );
+  });
+});
+
 describe('usage on the terminal event', () => {
   it('converts framework usage to the wire shape (.NET ConvertUsage)', () => {
     expect(
