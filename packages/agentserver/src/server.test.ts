@@ -243,6 +243,30 @@ describe('routes', () => {
     ]);
   });
 
+  it('treats a prototype-inherited type name as unknown, not as a prefix', async () => {
+    // `__proto__` and `constructor` resolve to inherited values on a plain-object prefix table;
+    // minting from one would produce an id like `[object Object]_…`. Such a type has no own
+    // entry, so the item is handled exactly like any other unknown type: left out of persistence.
+    const server = makeServer();
+    const created = (await (
+      await server.handle(
+        post({
+          input: [
+            { type: '__proto__' },
+            { type: 'constructor' },
+            { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+          ],
+        }),
+      )
+    ).json()) as ResponseObject;
+
+    const items = await server.handle(
+      new Request(`http://localhost:8088/responses/${created.id}/input_items`),
+    );
+    const list = (await items.json()) as { data: Array<{ type: string }> };
+    expect(list.data.map((item) => item.type)).toEqual(['message']);
+  });
+
   it('leaves an id-less input item of unknown type out of persistence', async () => {
     // No known prefix means no valid platform id can be minted for it, and sending it id-less
     // fails the whole persist. Python's `to_output_item` drops unrecognized types the same way.

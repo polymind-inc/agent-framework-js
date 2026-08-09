@@ -105,7 +105,9 @@ const ITEM_ID_PREFIX: Record<string, string> = {
 
 /** The id prefix for an item wire `type`, or `undefined` when the type has none. */
 export function itemIdPrefix(type: string): string | undefined {
-  return ITEM_ID_PREFIX[type];
+  // Own-entry lookup only: `type` is caller-supplied, and a name like `__proto__` or
+  // `constructor` would otherwise resolve to an inherited value and mint a garbage prefix.
+  return Object.hasOwn(ITEM_ID_PREFIX, type) ? ITEM_ID_PREFIX[type] : undefined;
 }
 
 function randomBytes(length: number): Uint8Array {
