@@ -12,6 +12,7 @@ import { platformHeaders } from './context.js';
 import { ProtocolError } from './errors.js';
 import { FOUNDRY_ATTR, FOUNDRY_BAGGAGE, FoundryEnrichmentSpanProcessor } from './observability/enrichment.js';
 import { flushTelemetry, setTelemetryFlusher } from './observability/flush.js';
+import { GenAIMainAgentSpanProcessor } from './observability/main-agent.js';
 // Type-only, and never used as a value: the setup module is re-imported per test through
 // `vi.resetModules()`, so importing it here would pin the very instance those tests replace.
 import type * as HostObservabilitySetup from './observability/setup.js';
@@ -135,6 +136,121 @@ describe('FoundryEnrichmentSpanProcessor', () => {
   });
 });
 
+describe('GenAIMainAgentSpanProcessor', () => {
+  function pipeline(...processors: import('@opentelemetry/sdk-trace-base').SpanProcessor[]): {
+    exporter: InMemorySpanExporter;
+    provider: BasicTracerProvider;
+  } {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [...processors, new SimpleSpanProcessor(exporter)],
+    });
+    return { exporter, provider };
+  }
+
+  it('promotes the invoke_agent span itself, reading the enrichment-stamped identity', () => {
+    const { exporter, provider } = pipeline(
+      new FoundryEnrichmentSpanProcessor({ agentName: 'deployed-name', agentVersion: '7', agentId: 'mi-id' }),
+      new GenAIMainAgentSpanProcessor(),
+    );
+
+    provider
+      .getTracer('test')
+      .startSpan('invoke_agent bot', {
+        attributes: {
+          'gen_ai.operation.name': 'invoke_agent',
+          'gen_ai.agent.name': 'in-code-bot',
+          'gen_ai.agent.id': 'in-code-id',
+        },
+      })
+      .end();
+
+    // The main-agent processor runs after enrichment, so the platform identity wins over the
+    // in-code agent name — matching what the reference host reports.
+    const [finished] = exporter.getFinishedSpans();
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.name']).toBe('deployed-name');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.id']).toBe('mi-id');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.version']).toBe('7');
+  });
+
+  it('copies the parent identity and project ids onto children as they start', () => {
+    const { exporter, provider } = pipeline(new GenAIMainAgentSpanProcessor());
+    const tracer = provider.getTracer('test');
+
+    const parent = tracer.startSpan('invoke_agent bot', {
+      attributes: {
+        'gen_ai.agent.name': 'bot',
+        'gen_ai.agent.id': 'id-1',
+        'gen_ai.conversation.id': 'conv-9',
+        'microsoft.foundry.project.id': '/subscriptions/s/rg/r/projects/p',
+      },
+    });
+    const child = tracer.startSpan('chat model', {}, trace.setSpan(contextApi.active(), parent));
+    child.end();
+    parent.end();
+
+    const finished = exporter.getFinishedSpans().find((span) => span.name === 'chat model');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.name']).toBe('bot');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.id']).toBe('id-1');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.conversation_id']).toBe('conv-9');
+    expect(finished?.attributes['microsoft.foundry.project.id']).toBe('/subscriptions/s/rg/r/projects/p');
+  });
+
+  it('retries from the parent at end when the parent was stamped after the child started', () => {
+    const { exporter, provider } = pipeline(new GenAIMainAgentSpanProcessor());
+    const tracer = provider.getTracer('test');
+
+    const parent = tracer.startSpan('invoke_agent bot');
+    const child = tracer.startSpan('chat model', {}, trace.setSpan(contextApi.active(), parent));
+    parent.setAttribute('gen_ai.agent.name', 'late-bot');
+    child.end();
+    parent.end();
+
+    const finished = exporter.getFinishedSpans().find((span) => span.name === 'chat model');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.name']).toBe('late-bot');
+  });
+
+  it('stamps nothing from a remote parent, whose attributes are not readable', () => {
+    const { exporter, provider } = pipeline(new GenAIMainAgentSpanProcessor());
+    // The shape the propagator hands the server: a valid but remote span context, as the Foundry
+    // gateway's traceparent produces. There are no attributes to read, so nothing propagates.
+    const remoteParent = trace.wrapSpanContext({
+      traceId: '0af7651916cd43dd8448eb211c80319c',
+      spanId: 'b7ad6b7169203331',
+      traceFlags: 1,
+      isRemote: true,
+    });
+
+    provider
+      .getTracer('test')
+      .startSpan('chat model', {}, trace.setSpan(contextApi.active(), remoteParent))
+      .end();
+
+    const [finished] = exporter.getFinishedSpans();
+    expect(finished).toBeDefined();
+    expect(Object.keys(finished?.attributes ?? {})).toEqual([]);
+  });
+
+  it('leaves an already-stamped span alone', () => {
+    const { exporter, provider } = pipeline(new GenAIMainAgentSpanProcessor());
+
+    provider
+      .getTracer('test')
+      .startSpan('invoke_agent bot', {
+        attributes: {
+          'gen_ai.operation.name': 'invoke_agent',
+          'gen_ai.agent.name': 'own-name',
+          'microsoft.gen_ai.main_agent.name': 'preset',
+        },
+      })
+      .end();
+
+    const [finished] = exporter.getFinishedSpans();
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.name']).toBe('preset');
+    expect(finished?.attributes['microsoft.gen_ai.main_agent.id']).toBeUndefined();
+  });
+});
+
 describe('setupHostObservability', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -164,6 +280,40 @@ describe('setupHostObservability', () => {
     expect(span.isRecording()).toBe(true);
     span.end();
     await handle.flush();
+  });
+
+  it('stamps the Foundry resource attributes and the main-agent identity through the pipeline', async () => {
+    vi.stubEnv('FOUNDRY_AGENT_NAME', 'probe-agent');
+    vi.stubEnv('FOUNDRY_AGENT_VERSION', '42');
+    vi.stubEnv('FOUNDRY_PROJECT_ENDPOINT', 'https://res.services.ai.azure.com/api/projects/p');
+    vi.stubEnv('FOUNDRY_PROJECT_ARM_ID', '/subscriptions/s/rg/r/projects/p');
+    const spans = new InMemorySpanExporter();
+    const { setupHostObservability } = await freshSetup();
+    const handle = await setupHostObservability({ spanProcessors: [new SimpleSpanProcessor(spans)] });
+    try {
+      trace
+        .getTracer('probe')
+        .startSpan('invoke_agent bot', { attributes: { 'gen_ai.operation.name': 'invoke_agent' } })
+        .end();
+
+      const [finished] = spans.getFinishedSpans();
+      // The .NET host's resource-detector attributes, alongside the service identity.
+      expect(finished?.resource.attributes['service.name']).toBe('probe-agent');
+      expect(finished?.resource.attributes['foundry.agent.name']).toBe('probe-agent');
+      expect(finished?.resource.attributes['foundry.agent.version']).toBe('42');
+      expect(finished?.resource.attributes['foundry.project.endpoint']).toBe(
+        'https://res.services.ai.azure.com/api/projects/p',
+      );
+      expect(finished?.resource.attributes['foundry.project.arm_id']).toBe(
+        '/subscriptions/s/rg/r/projects/p',
+      );
+      // Enrichment stamps the deployed identity at end, and the main-agent processor — running
+      // after it — promotes exactly that identity on the invoke_agent span.
+      expect(finished?.attributes['microsoft.gen_ai.main_agent.name']).toBe('probe-agent');
+      expect(finished?.attributes['microsoft.gen_ai.main_agent.version']).toBe('42');
+    } finally {
+      await handle.shutdown();
+    }
   });
 
   it('turns on Azure Monitor export when the platform injects a connection string', async () => {

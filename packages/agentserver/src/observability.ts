@@ -9,6 +9,7 @@
 export type { FoundryIdentity } from './observability/enrichment.js';
 export { FOUNDRY_ATTR, FOUNDRY_BAGGAGE, FoundryEnrichmentSpanProcessor } from './observability/enrichment.js';
 export { flushTelemetry, setTelemetryFlusher } from './observability/flush.js';
+export { GenAIMainAgentSpanProcessor } from './observability/main-agent.js';
 export type { HostExporter, HostObservability, HostObservabilityOptions } from './observability/setup.js';
 export { activeHostObservability, setupHostObservability } from './observability/setup.js';
 export { extractTraceContext } from './observability/trace-context.js';
