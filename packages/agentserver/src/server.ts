@@ -45,6 +45,7 @@ import {
 } from './validation.js';
 import { raceTimeout } from './wait.js';
 import type {
+  AgentReference,
   ApiError,
   CreateResponseRequest,
   DeletedResponse,
@@ -63,6 +64,18 @@ export interface HandlerContext {
   readonly conversationId: string | undefined;
   /** The platform request context: user id, call id, correlation id. */
   readonly request: RequestContext;
+  /**
+   * Which agent this turn resolved to. Always carries a non-empty name — the same resolution
+   * stamped on the response resource, so a handler routing between agents reads it here instead
+   * of re-deriving it from the request.
+   */
+  readonly agentReference: AgentReference;
+  /**
+   * The sandbox session this turn runs in, as returned on `x-agent-session-id`. Container-scoped,
+   * not conversation-scoped: one value serves every conversation and user this container hosts,
+   * so it must never key per-conversation or per-user state.
+   */
+  readonly agentSessionId: string;
   /** The transcript so far, prefetched from the store. Empty for a new conversation. */
   readonly history: readonly OutputItem[];
   /** Aborted when the client disconnects or the container is shutting down. */
@@ -952,6 +965,9 @@ export class ResponsesServer {
     // Resolved per request rather than per response: it names the sandbox the turn runs in, and
     // every turn of one conversation has to come back to the same one.
     const sessionId = await resolveAgentSessionId(created);
+    // Which agent produced this response. Always resolved to a non-empty name: a service-side
+    // store validates its presence on every write, and rejects one without it opaquely.
+    const agentReference = resolveAgentReference(created.agent_reference);
 
     const initial: ResponseObject = {
       id: responseId,
@@ -959,9 +975,7 @@ export class ResponsesServer {
       created_at: Math.floor(Date.now() / 1000),
       status: 'queued',
       output: [],
-      // Which agent produced this response. Always resolved to a non-empty name: a service-side
-      // store validates its presence on every write, and rejects one without it opaquely.
-      agent_reference: resolveAgentReference(created.agent_reference),
+      agent_reference: agentReference,
       // Persisted on the resource because the replay and cancel routes decide their answers by
       // it long after the run itself is gone.
       ...(background ? { background: true } : {}),
@@ -1001,6 +1015,8 @@ export class ResponsesServer {
       responseId,
       conversationId,
       request: context,
+      agentReference,
+      agentSessionId: sessionId,
       history,
       signal: abort.signal,
       response: initial,

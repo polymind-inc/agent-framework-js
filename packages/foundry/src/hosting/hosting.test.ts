@@ -15,7 +15,11 @@ import {
   newId,
   ResponsesServer,
 } from '@polymind-inc/agent-framework-agentserver';
-import type { Content, FunctionApprovalRequestContent } from '@polymind-inc/agent-framework-core';
+import type {
+  Content,
+  ContextProvider,
+  FunctionApprovalRequestContent,
+} from '@polymind-inc/agent-framework-core';
 import {
   Agent,
   InMemoryHistoryProvider,
@@ -38,6 +42,8 @@ import {
   usageToResponseUsage,
 } from './converters.js';
 import { createFoundryHandler, defaultApprovalStorage, defaultSessionStore } from './handler.js';
+import type { HostedAgentContext } from './hosted-context.js';
+import { getHostedAgentContext } from './hosted-context.js';
 import { OutputBuilder } from './output.js';
 import { FoundryResponseStore } from './response-store.js';
 import { FileSystemAgentSessionStore, InMemoryAgentSessionStore } from './session-store.js';
@@ -668,6 +674,8 @@ describe('tool approval over the protocol', () => {
       responseId,
       conversationId: undefined,
       request: createRequestContext(new Headers({ [HEADERS.userId]: 'alice' })),
+      agentReference: { type: 'agent_reference', name: 'test-agent' },
+      agentSessionId: 'session-test',
       history: [],
       signal: new AbortController().signal,
       response: { id: responseId, object: 'response', created_at: 0, status: 'queued', output: [] },
@@ -1437,6 +1445,8 @@ describe('stored-history replay', () => {
       responseId,
       conversationId: undefined,
       request: createRequestContext(new Headers()),
+      agentReference: { type: 'agent_reference', name: 'test-agent' },
+      agentSessionId: 'session-test',
       history: [
         {
           type: 'web_search_call',
@@ -2244,5 +2254,133 @@ describe('file approval storage concurrency', () => {
 
     expect(await storage.load('alice', 'mcpr_a')).toBeDefined();
     expect(await storage.load('alice', 'mcpr_b')).toBeDefined();
+  });
+});
+
+describe('hosted agent context', () => {
+  function captureThen(text: string): MockTurn[] {
+    return [
+      {
+        contents: [{ type: 'function_call', callId: 'cap1', name: 'capture', arguments: '{}' }],
+        finishReason: 'tool_calls',
+      },
+      say(text),
+    ];
+  }
+
+  it('is undefined outside a turn', () => {
+    expect(getHostedAgentContext()).toBeUndefined();
+  });
+
+  it('hands tools and context providers one context for the whole turn', async () => {
+    const seenByTool: Array<HostedAgentContext | undefined> = [];
+    const capture = tool({
+      name: 'capture',
+      description: 'Capture the ambient context',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        seenByTool.push(getHostedAgentContext());
+        return 'ok';
+      },
+    });
+    let seenByProvider: HostedAgentContext | undefined;
+    const provider: ContextProvider = {
+      sourceId: 'context-capture',
+      beforeRun: () => {
+        seenByProvider = getHostedAgentContext();
+      },
+    };
+    const agent = new Agent({
+      client: new MockChatClient(captureThen('done')),
+      tools: [capture],
+      contextProviders: [provider],
+    });
+    const app = new ResponsesServer({
+      handler: createFoundryHandler({
+        agent,
+        sessionStore: new InMemoryAgentSessionStore(),
+        approvalStorage: new InMemoryApprovalStorage(),
+        hosted: false,
+      }),
+      store: new InMemoryResponseProvider(),
+    });
+
+    const response = (await (
+      await app.handle(
+        post({ input: 'go' }, { [HEADERS.userId]: 'alice', [HEADERS.foundryCallId]: 'call-77' }),
+      )
+    ).json()) as ResponseObject;
+    expect(response.status).toBe('completed');
+
+    const context = must(seenByTool[0]);
+    expect(context.userId).toBe('alice');
+    expect(context.callId).toBe('call-77');
+    expect(context.responseId).toBe(response.id);
+    expect(context.conversationId).toBeUndefined();
+    expect(context.agent.name).not.toBe('');
+    expect(context.agentSessionId).not.toBe('');
+    expect(context.requestId).not.toBe('');
+    expect(context.signal.aborted).toBe(false);
+    // One instance per turn: the provider saw the very same object the tool did.
+    expect(seenByProvider).toBe(context);
+    // The scope ended with the turn.
+    expect(getHostedAgentContext()).toBeUndefined();
+  });
+
+  it('keeps the contexts of concurrent turns apart', async () => {
+    // Both turns must be inside their tool call at the same time: a context that leaked across
+    // requests would be visible here, where sequential runs would mask it.
+    let inFlight = 0;
+    let release: () => void = () => {};
+    const bothIn = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const whoami = tool({
+      name: 'capture',
+      description: 'Report the ambient user',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        inFlight += 1;
+        if (inFlight === 2) release();
+        await bothIn;
+        return getHostedAgentContext()?.userId ?? 'nobody';
+      },
+    });
+    const callCapture: MockTurn = {
+      contents: [{ type: 'function_call', callId: 'cap1', name: 'capture', arguments: '{}' }],
+      finishReason: 'tool_calls',
+    };
+    const agent = new Agent({
+      // Both tool-call turns first, then both completions: the barrier holds each turn inside its
+      // tool until the other arrives, so the runs are interleaved rather than sequential.
+      client: new MockChatClient([callCapture, callCapture, say('done'), say('done')]),
+      tools: [whoami],
+    });
+    const app = new ResponsesServer({
+      handler: createFoundryHandler({
+        agent,
+        sessionStore: new InMemoryAgentSessionStore(),
+        approvalStorage: new InMemoryApprovalStorage(),
+        hosted: false,
+      }),
+      store: new InMemoryResponseProvider(),
+    });
+
+    const [alice, bob] = await Promise.all([
+      app
+        .handle(post({ input: 'who am I' }, { [HEADERS.userId]: 'alice' }))
+        .then(async (r) => (await r.json()) as ResponseObject),
+      app
+        .handle(post({ input: 'who am I' }, { [HEADERS.userId]: 'bob' }))
+        .then(async (r) => (await r.json()) as ResponseObject),
+    ]);
+
+    expect(alice.status).toBe('completed');
+    expect(bob.status).toBe('completed');
+    // Each turn's tool answered with that turn's user — captured while the other turn was live.
+    expect(textOf(alice)).toContain('alice');
+    expect(textOf(alice)).not.toContain('bob');
+    expect(textOf(bob)).toContain('bob');
+    expect(textOf(bob)).not.toContain('alice');
   });
 });
