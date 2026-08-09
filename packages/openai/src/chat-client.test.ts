@@ -592,6 +592,40 @@ describe('OpenAIChatClient response mapping', () => {
     expect(reasoning?.[0]).toMatchObject({ id: 'rs_1', text: 'think', protectedData: 'enc' });
   });
 
+  it('releases the SSE stream at the terminal event instead of draining to the connection close', async () => {
+    // Pins a WORKAROUND for a Foundry service defect: `/openai/v1/responses` holds the SSE
+    // socket open for ~5 seconds after `response.completed` and never sends a `[DONE]` sentinel
+    // (measured 2026-08-09, tail 5008±4ms across encodings), so an iterator that drains to the
+    // connection close pays that tail on every round. Nothing meaningful can follow the terminal
+    // event; stop pulling there. This test — and the `#untilTerminalEvent` wrapper it pins —
+    // should be deleted once Foundry ends its streams promptly after the terminal event.
+    let pulledPastTerminal = false;
+    let closed = false;
+    async function* heldOpen(): AsyncGenerator<unknown> {
+      try {
+        yield { type: 'response.created', response: { id: 'resp_1' } };
+        yield { type: 'response.output_text.delta', delta: 'Hello!' };
+        yield { type: 'response.completed', response: completedResponse() };
+        pulledPastTerminal = true;
+      } finally {
+        closed = true;
+      }
+    }
+    const create = vi.fn(async (_request?: Record<string, unknown>) => heldOpen());
+    const stream = new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' }).getResponse(HI);
+
+    for await (const _ of stream) {
+      void _;
+    }
+
+    const final = await stream.finalResponse();
+    expect(final.text).toBe('Hello!');
+    expect(final.finishReason).toBe('stop');
+    // The pull after the terminal event is the one that would sit on the held-open socket.
+    expect(pulledPastTerminal).toBe(false);
+    expect(closed).toBe(true);
+  });
+
   it('wraps a mid-stream failure in ChatClientError like a request failure', async () => {
     // The connection can drop long after `create` resolved; the error contract has to be the
     // same in both phases (Python wraps the whole iteration).

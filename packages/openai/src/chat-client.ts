@@ -379,6 +379,38 @@ export class OpenAIChatClient
     return options?.rawRequestTransform?.(request) ?? request;
   }
 
+  /**
+   * WORKAROUND, service-side defect: stops pulling an SSE event stream once its terminal event
+   * has been yielded, instead of draining to the connection close the way the SDK's own iterator
+   * does.
+   *
+   * Azure AI Foundry's `/openai/v1/responses` holds the socket open for ~5 seconds after
+   * `response.completed` and never sends a `[DONE]` sentinel (measured 2026-08-09; the OpenAI
+   * platform sends `[DONE]` and closes immediately), so an iterator that waits for the close
+   * pays that tail on every streamed round. Returning here lets the enclosing `for await`
+   * release the SDK stream — which aborts the request — and skips the idle tail. Against a
+   * well-behaved endpoint this is a no-op: nothing is defined after the terminal event, and the
+   * close follows it at once.
+   *
+   * Delete this wrapper (restoring the plain pass-through of the SDK stream) once Foundry ends
+   * its streams promptly after the terminal event; the paired test named "releases the SSE
+   * stream at the terminal event" documents and pins the behaviour until then.
+   */
+  static async *#untilTerminalEvent(events: AsyncIterable<unknown>): AsyncGenerator<unknown> {
+    for await (const event of events) {
+      yield event;
+      const type = (event as { type?: string }).type;
+      if (
+        type === 'response.completed' ||
+        type === 'response.incomplete' ||
+        type === 'response.failed' ||
+        type === 'response.cancelled'
+      ) {
+        return;
+      }
+    }
+  }
+
   getResponse(
     messages: Message[],
     options?: OpenAIChatOptions & { signal?: AbortSignal },
@@ -416,7 +448,7 @@ export class OpenAIChatClient
             options?.signal,
           );
           return this.#parseStream(
-            replay.data as unknown as AsyncIterable<unknown>,
+            OpenAIChatClient.#untilTerminalEvent(replay.data as unknown as AsyncIterable<unknown>),
             withServedModel(parseContext, replay.servedModel),
             options?.signal,
           );
@@ -448,7 +480,7 @@ export class OpenAIChatClient
           options?.signal,
         );
         return this.#parseStream(
-          created.data as unknown as AsyncIterable<unknown>,
+          OpenAIChatClient.#untilTerminalEvent(created.data as unknown as AsyncIterable<unknown>),
           withServedModel(parseContext, created.servedModel),
           options?.signal,
         );
