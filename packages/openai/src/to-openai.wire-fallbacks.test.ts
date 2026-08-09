@@ -92,6 +92,12 @@ describe('MCP call replay', () => {
     expect(mcpItems({ k: 1 })[0]?.output).toBe('{"k":1}');
   });
 
+  it('renders a result payload JSON.stringify cannot represent as an empty string', () => {
+    // JSON.stringify returns undefined for a symbol; the wire field is a string, so the
+    // unrepresentable payload degrades to empty rather than leaking undefined into the item.
+    expect(mcpItems(Symbol('opaque'))[0]?.output).toBe('');
+  });
+
   it('drops a call without an id and its fallbacks default the rest', () => {
     const items = toResponsesInput([
       {
@@ -215,6 +221,26 @@ describe('reasoning replay fallbacks', () => {
         status: 'completed',
       },
     ]);
+  });
+
+  it('treats a non-string protectedData as absent rather than falling back', () => {
+    // A corrupt opaque payload is not replayable; silently substituting the additionalProperties
+    // copy would replay under a payload the provider never paired with this fragment.
+    const items = toResponsesInput([
+      {
+        role: 'assistant',
+        contents: [
+          {
+            type: 'text_reasoning',
+            id: 'rs_1',
+            text: 'summary',
+            protectedData: 123 as unknown as string,
+            additionalProperties: { encrypted_content: 'enc' },
+          },
+        ],
+      },
+    ]);
+    expect(items).toEqual([]);
   });
 
   it('uses a string reasoning_text marker as the private text itself', () => {

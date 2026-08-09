@@ -14,6 +14,10 @@ export default defineConfig({
       ),
       '@polymind-inc/agent-framework-core': fileURLToPath(new URL('../core/src/index.ts', import.meta.url)),
       '@polymind-inc/agent-framework-mcp': fileURLToPath(new URL('../mcp/src/index.ts', import.meta.url)),
+      // Subpath alias first, for the same reason as `core/testing` above.
+      '@polymind-inc/agent-framework-openai/internal': fileURLToPath(
+        new URL('../openai/src/internal.ts', import.meta.url),
+      ),
       '@polymind-inc/agent-framework-openai': fileURLToPath(
         new URL('../openai/src/index.ts', import.meta.url),
       ),

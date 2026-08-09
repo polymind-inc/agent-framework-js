@@ -344,6 +344,50 @@ describe('function and hosted tool call fallbacks', () => {
     ]);
   });
 
+  it('renders a non-string logs payload as an empty text output', () => {
+    // A corrupt transcript can carry anything in `logs`; `Content.text` is a string contract, so
+    // the payload degrades to empty rather than leaking a number into the content model.
+    const contents = contentsOf(
+      parseResponse({
+        output: [{ type: 'code_interpreter_call', id: 'ci_1', outputs: [{ type: 'logs', logs: 42 }] }],
+      }),
+    );
+    expect(contents[0]).toMatchObject({
+      type: 'code_interpreter_tool_result',
+      outputs: [expect.objectContaining({ type: 'text', text: '' })],
+    });
+  });
+
+  it('treats a non-array outputs payload as no outputs instead of throwing', () => {
+    // A non-array is not even iterable; the conversion must not let a corrupt transcript turn
+    // into a thrown TypeError that fails the whole parse.
+    const contents = contentsOf(
+      parseResponse({
+        output: [{ type: 'code_interpreter_call', id: 'ci_1', outputs: { corrupt: true } }],
+      }),
+    );
+    expect(contents[0]).toMatchObject({ type: 'code_interpreter_tool_result', outputs: [] });
+  });
+
+  it('falls back to call_id when an mcp_call has an empty id', () => {
+    const contents = contentsOf(parseResponse({ output: [{ type: 'mcp_call', id: '', call_id: 'mc_2' }] }));
+    expect(contents[0]).toMatchObject({ type: 'mcp_server_tool_call', callId: 'mc_2' });
+  });
+
+  it('falls back to call_id when a search call has an empty id', () => {
+    const contents = contentsOf(
+      parseResponse({ output: [{ type: 'web_search_call', id: '', call_id: 'ws_2' }] }),
+    );
+    expect(contents[0]).toMatchObject({ type: 'search_tool_call', callId: 'ws_2' });
+  });
+
+  it('falls back to the item id when a code interpreter call_id is empty', () => {
+    const contents = contentsOf(
+      parseResponse({ output: [{ type: 'code_interpreter_call', call_id: '', id: 'ci_9' }] }),
+    );
+    expect(contents[0]).toMatchObject({ type: 'code_interpreter_tool_result', callId: 'ci_9' });
+  });
+
   it('maps a bare mcp_call without output to a call and no result', () => {
     const contents = contentsOf(parseResponse({ output: [{ type: 'mcp_call' }] }));
     expect(contents).toEqual([

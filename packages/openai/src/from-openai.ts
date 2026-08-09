@@ -367,21 +367,57 @@ function searchToolName(itemType: string | undefined): string {
   return itemType === 'web_search_call' ? 'web_search' : 'file_search';
 }
 
-/** Both halves of a provider-run search: what was asked, and what came back. */
-function searchContents(item: Wire<ResponseFunctionWebSearch> | Wire<ResponseFileSearchToolCall>): Content[] {
-  // `call_id` is not declared on the SDK's search-call items; the fallback keeps whatever the
-  // wire carried, since the framework has no other correlation key to offer.
-  const callId = (item.id ?? item.call_id ?? '') as string;
-  const toolName = searchToolName(item.type);
-  const isWeb = item.type === 'web_search_call';
-  const action: unknown = item.action;
-  const status = item.status;
+/**
+ * The first candidate that is a non-empty string, or `''`.
+ *
+ * The wire's correlation keys are strings; an empty or non-string id does not name anything, so
+ * it falls through to the next candidate the way Python's `id or call_id or ""` truthiness does.
+ */
+function firstNonEmptyString(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate !== '') {
+      return candidate;
+    }
+  }
+  return '';
+}
+
+/** A tool call's wire `arguments`: a (possibly partial) JSON string or a structured object. */
+function wireArguments(raw: unknown): Record<string, unknown> | string {
+  if (typeof raw === 'string') {
+    return raw;
+  }
+  return typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : '';
+}
+
+/**
+ * Both halves of a provider-run search: what was asked, and what came back.
+ *
+ * Shared with the Foundry hosting converters, so a search replayed from a stored response and one
+ * arriving live from the provider produce identical contents. The correlation key follows the
+ * Python client's `id or call_id or ""`: `call_id` is not declared on the SDK's search-call
+ * items, but when the wire carries one it is the only fallback the framework has to offer.
+ */
+export function searchCallContents(item: unknown): Content[] {
+  const raw = item as Wire<ResponseFunctionWebSearch> | Wire<ResponseFileSearchToolCall>;
+  const callId = firstNonEmptyString(raw.id, raw.call_id);
+  const toolName = searchToolName(raw.type);
+  const isWeb = raw.type === 'web_search_call';
+  const action: unknown = raw.action;
+  const status = raw.status;
+  // A web search's arguments are its `action` object; one that is missing or malformed leaves the
+  // arguments absent rather than fabricating an empty object.
+  const args = isWeb
+    ? typeof action === 'object' && action !== null
+      ? (action as Record<string, unknown>)
+      : undefined
+    : { queries: Array.isArray(raw.queries) ? raw.queries : [] };
   return [
     {
       type: 'search_tool_call',
       callId,
       toolName,
-      arguments: isWeb ? (action as Record<string, unknown>) : { queries: item.queries ?? [] },
+      ...(args === undefined ? {} : { arguments: args }),
       ...(status === undefined ? {} : { additionalProperties: { status } }),
       rawRepresentation: item,
     },
@@ -389,19 +425,83 @@ function searchContents(item: Wire<ResponseFunctionWebSearch> | Wire<ResponseFil
       type: 'search_tool_result',
       callId,
       toolName,
-      result: isWeb ? { action } : { results: item.results },
+      result: isWeb ? { action } : { results: raw.results },
       ...(status === undefined ? {} : { additionalProperties: { status } }),
       rawRepresentation: item,
     },
   ];
 }
 
+/**
+ * A provider-run MCP call and, when the item carries one, its result.
+ *
+ * Shared with the Foundry hosting converters — see {@link searchCallContents}. The result payload
+ * lives in `output` as a content list (Python
+ * `from_mcp_server_tool_result(output=[Content.from_text(item.output)])`).
+ */
+export function mcpCallContents(item: unknown): Content[] {
+  const raw = item as Wire<Extract<ResponseOutputItem, { type: 'mcp_call' }>>;
+  const callId = firstNonEmptyString(raw.id, raw.call_id);
+  const contents: Content[] = [
+    {
+      type: 'mcp_server_tool_call',
+      callId,
+      toolName: typeof raw.name === 'string' ? raw.name : '',
+      serverName: typeof raw.server_label === 'string' ? raw.server_label : '',
+      arguments: wireArguments(raw.arguments),
+      rawRepresentation: item,
+    },
+  ];
+  if (raw.output !== undefined && raw.output !== null) {
+    contents.push({
+      type: 'mcp_server_tool_result',
+      callId,
+      output: [{ type: 'text', text: String(raw.output), rawRepresentation: item }],
+      rawRepresentation: item,
+    });
+  }
+  return contents;
+}
+
+/**
+ * A provider-run code interpreter call — the code it ran, when the item reports it, and its
+ * result.
+ *
+ * Shared with the Foundry hosting converters — see {@link searchCallContents}. Unlike the other
+ * hosted items, the Python client reads this one's key as `call_id or id`: `call_id` is not
+ * declared on the SDK item, and the wire's value wins when it carries one.
+ */
+export function codeInterpreterCallContents(item: unknown): Content[] {
+  const raw = item as Wire<ResponseCodeInterpreterToolCall>;
+  const callId = firstNonEmptyString(raw.call_id, raw.id);
+  const contents: Content[] = [];
+  if (typeof raw.code === 'string' && raw.code !== '') {
+    contents.push({
+      type: 'code_interpreter_tool_call',
+      callId,
+      inputs: [{ type: 'text', text: raw.code, rawRepresentation: item }],
+      rawRepresentation: item,
+    });
+  }
+  contents.push({
+    type: 'code_interpreter_tool_result',
+    callId,
+    outputs: codeInterpreterOutputs(raw),
+    rawRepresentation: item,
+  });
+  return contents;
+}
+
 /** The sandbox's stdout and any images it produced. */
 function codeInterpreterOutputs(item: Wire<ResponseCodeInterpreterToolCall>): Content[] {
   const outputs: Content[] = [];
-  for (const output of item.outputs ?? []) {
+  // A stored transcript is not trusted wire data: a non-array `outputs` must not throw out of the
+  // parse, and a non-string `logs` degrades to empty text rather than leaking into the string
+  // contract of `Content.text`.
+  for (const output of Array.isArray(item.outputs) ? item.outputs : []) {
     if (output?.type === 'logs') {
-      outputs.push({ type: 'text', text: output.logs ?? '', rawRepresentation: output });
+      const logs = output.logs;
+      outputs.push({ type: 'text', text: typeof logs === 'string' ? logs : '', rawRepresentation: output });
     } else if (output?.type === 'image' && typeof output.url === 'string') {
       outputs.push({ type: 'uri', uri: output.url, mediaType: 'image', rawRepresentation: output });
     }
@@ -443,54 +543,13 @@ function outputItemToContents(item: unknown): Content[] {
 
     case 'web_search_call':
     case 'file_search_call':
-      return searchContents(raw);
+      return searchCallContents(raw);
 
-    case 'code_interpreter_call': {
-      // `call_id` is not declared on the SDK item; keep the wire's value when it carries one.
-      const callId = (raw.call_id ?? raw.id ?? '') as string;
-      const contents: Content[] = [];
-      if (typeof raw.code === 'string' && raw.code !== '') {
-        contents.push({
-          type: 'code_interpreter_tool_call',
-          callId,
-          inputs: [{ type: 'text', text: raw.code, rawRepresentation: raw }],
-          rawRepresentation: raw,
-        });
-      }
-      contents.push({
-        type: 'code_interpreter_tool_result',
-        callId,
-        outputs: codeInterpreterOutputs(raw),
-        rawRepresentation: raw,
-      });
-      return contents;
-    }
+    case 'code_interpreter_call':
+      return codeInterpreterCallContents(raw);
 
-    case 'mcp_call': {
-      // `call_id` is not declared on the SDK item; keep the wire's value when it carries one.
-      const callId = (raw.id ?? raw.call_id ?? '') as string;
-      const contents: Content[] = [
-        {
-          type: 'mcp_server_tool_call',
-          callId,
-          toolName: raw.name ?? '',
-          serverName: raw.server_label ?? '',
-          arguments: raw.arguments ?? '',
-          rawRepresentation: raw,
-        },
-      ];
-      if (raw.output !== undefined && raw.output !== null) {
-        // Python: `from_mcp_server_tool_result(output=[Content.from_text(item.output)])` — the
-        // payload lives in `output` as a content list, not in `outputs`.
-        contents.push({
-          type: 'mcp_server_tool_result',
-          callId,
-          output: [{ type: 'text', text: String(raw.output), rawRepresentation: raw }],
-          rawRepresentation: raw,
-        });
-      }
-      return contents;
-    }
+    case 'mcp_call':
+      return mcpCallContents(raw);
 
     case 'mcp_approval_request':
       // A hosted MCP server asking for a human. `server_label` is what tells the approval layer
