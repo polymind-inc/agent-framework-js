@@ -110,6 +110,11 @@ export class FoundryChatClient
     this.metadata = {
       providerName: 'azure.ai.foundry',
       ...(model === undefined ? {} : { modelId: model }),
+      // Foundry speaks the same Responses protocol, so which conversation ids are stable is the
+      // inner client's knowledge — re-spelling it here is how the two could drift.
+      ...(this.#inner.metadata.stableConversationId === undefined
+        ? {}
+        : { stableConversationId: this.#inner.metadata.stableConversationId }),
     };
   }
 

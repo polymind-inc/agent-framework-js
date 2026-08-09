@@ -20,6 +20,11 @@ A chat client comes from a provider package — for example
 [`@polymind-inc/agent-framework-openai`](https://www.npmjs.com/package/@polymind-inc/agent-framework-openai),
 [`@polymind-inc/agent-framework-anthropic`](https://www.npmjs.com/package/@polymind-inc/agent-framework-anthropic)
 or [`@polymind-inc/agent-framework-foundry`](https://www.npmjs.com/package/@polymind-inc/agent-framework-foundry).
+A custom client implements the `ChatClient` interface directly. One that manages conversations
+service-side should declare which conversation ids are stable anchors via
+`ChatClientMetadata.stableConversationId`; the function-calling loop and the agent's session
+propagation consult that predicate, and without it every reported conversation id advances the
+chain between tool rounds.
 
 Requirements: Node.js >= 24, ESM only (no CommonJS build).
 

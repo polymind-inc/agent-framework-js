@@ -134,6 +134,18 @@ function withServedModel(context: ParseContext, servedModel: string | undefined)
   return servedModel === undefined ? context : { ...context, model: servedModel, servedModel };
 }
 
+/**
+ * Whether a conversation id names a Responses API conversation *object* — a service-side anchor
+ * that stays stable across responses — as opposed to a response id chained through
+ * `previous_response_id`, which advances every round.
+ *
+ * The single spelling of this distinction: the request builder maps the id onto the right wire
+ * parameter with it, and the tool loop consults it through `metadata.stableConversationId`.
+ */
+function isConversationObjectId(id: string): boolean {
+  return id.startsWith('conv_');
+}
+
 /** Whether a raw Responses API conversation value refers to service-managed history. */
 function isServiceConversation(value: unknown): boolean {
   if (typeof value === 'string') {
@@ -252,6 +264,7 @@ export class OpenAIChatClient
     this.metadata = {
       providerName: detectProviderName(this.#client),
       ...(config.model === undefined ? {} : { modelId: config.model }),
+      stableConversationId: isConversationObjectId,
     };
   }
 
@@ -335,7 +348,7 @@ export class OpenAIChatClient
     // (`stop`, `seed`, `frequencyPenalty`, `presencePenalty` are Chat Completions concepts.)
 
     if (conversationId !== undefined && conversationId !== '') {
-      if (conversationId.startsWith('conv_')) {
+      if (isConversationObjectId(conversationId)) {
         request.conversation = conversationId;
       } else {
         request.previous_response_id = conversationId;

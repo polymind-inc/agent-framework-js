@@ -103,7 +103,22 @@ describe('FoundryChatClient', () => {
     });
 
     expect(deployment.baseURL).toBe(`${PROJECT}/openai/v1/`);
-    expect(deployment.metadata).toEqual({ providerName: 'azure.ai.foundry', modelId: 'gpt-4o' });
+    expect(deployment.metadata).toEqual({
+      providerName: 'azure.ai.foundry',
+      modelId: 'gpt-4o',
+      stableConversationId: expect.any(Function),
+    });
+  });
+
+  it('declares conv_ conversation ids stable for the tool loop, like the inner client', () => {
+    const stable = new FoundryChatClient({
+      projectEndpoint: PROJECT,
+      target: { modelDeployment: 'gpt-4o' },
+      credential: fakeCredential(),
+    }).metadata.stableConversationId;
+    expect(stable).toBeDefined();
+    expect(stable?.('conv_123')).toBe(true);
+    expect(stable?.('resp_123')).toBe(false);
   });
 
   it('exposes the SDK client and the hosted tool declarations of the inner client', () => {

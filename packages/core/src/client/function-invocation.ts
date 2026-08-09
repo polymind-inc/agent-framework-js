@@ -145,10 +145,13 @@ function withoutFunctionTools<TOptions extends ChatOptions>(options: TOptions): 
  *   `_tools.py`, Go `responses.go` `SetServiceID`).
  *
  * @param roundConversationId - The `conversationId` of the response this round produced.
+ * @param stableConversationId - The provider's declaration of which ids are stable anchors
+ *   ({@link ChatClientMetadata.stableConversationId}).
  */
 function optionsForNextIteration<TOptions extends ChatOptions>(
   options: TOptions,
   roundConversationId?: string,
+  stableConversationId?: (conversationId: string) => boolean,
 ): TOptions {
   const next = { ...options } as TOptions;
 
@@ -166,9 +169,11 @@ function optionsForNextIteration<TOptions extends ChatOptions>(
     // silently move a framework-managed transcript to the provider.
     current !== undefined &&
     current !== '' &&
-    // A `conv_…` conversation object is stable across responses; only a response chain advances
-    // (Go `keepConversationID`).
-    !current.startsWith('conv_') &&
+    // An id the provider declares stable is an anchor the service resolves across responses;
+    // displacing it with a round's reported id would unhook the run from the stored conversation
+    // (the provider-side guard Go keeps in `keepConversationID`). Which ids are stable is the
+    // provider's knowledge, so the loop only asks — it never inspects the id itself.
+    stableConversationId?.(current) !== true &&
     roundConversationId !== undefined &&
     roundConversationId !== '' &&
     roundConversationId !== current
@@ -1117,7 +1122,11 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       // up in the conversation twice.
       const serviceOwnsTranscript = current.conversationId !== undefined && current.conversationId !== '';
       history = serviceOwnsTranscript ? [toolMessage] : [...history, ...roundResponse.messages, toolMessage];
-      current = optionsForNextIteration(current, roundResponse.conversationId);
+      current = optionsForNextIteration(
+        current,
+        roundResponse.conversationId,
+        client.metadata.stableConversationId,
+      );
     }
   }
 

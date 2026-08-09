@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConfigurationError, SchemaResolutionError, UserInputRequiredError } from '../errors.js';
 import { functionMiddleware } from '../middleware/middleware.js';
+import { createResponseStream } from '../streaming/response-stream.js';
 import { invocationCountOf, resetInvocationCount, tool } from '../tools/tool.js';
 import type {
   Content,
@@ -10,7 +11,8 @@ import type {
   UserInputRequestContent,
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
-import type { ChatOptions } from './chat-client.js';
+import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
+import type { ChatClient, ChatClientMetadata, ChatOptions } from './chat-client.js';
 import { withFunctionInvocation } from './function-invocation.js';
 import { MockChatClient } from './test-support.js';
 
@@ -1112,5 +1114,94 @@ describe('withFunctionInvocation UserInputRequiredError', () => {
         consentLink: 'https://example.test/consent',
       }),
     ]);
+  });
+});
+
+describe('conversation chaining between rounds', () => {
+  const echo = tool({
+    name: 'echo',
+    description: 'echo',
+    parameters: echoSchema,
+    execute: async () => 'ok',
+  });
+
+  /**
+   * A two-round provider whose responses report the given conversation ids. The loop's chaining
+   * decision is driven entirely by what the round response reports and what the client's
+   * metadata declares stable, so the mock carries exactly those two knobs.
+   */
+  function chainingClient(
+    roundIds: [string, string],
+    metadata: ChatClientMetadata,
+  ): { client: ChatClient<ChatOptions>; requests: Array<ChatOptions | undefined> } {
+    const turns: Array<{ contents: Content[]; conversationId: string }> = [
+      { contents: [call('c1', 'echo', '{"value":"x"}')], conversationId: roundIds[0] },
+      { contents: [textContent('done')], conversationId: roundIds[1] },
+    ];
+    let index = 0;
+    const requests: Array<ChatOptions | undefined> = [];
+    const client: ChatClient<ChatOptions> = {
+      metadata,
+      getResponse: (_messages, options) => {
+        requests.push(options);
+        const turn = turns[Math.min(index++, turns.length - 1)] ?? { contents: [], conversationId: '' };
+        return createResponseStream({
+          start: () =>
+            (async function* () {
+              yield chatResponseUpdate({
+                contents: turn.contents,
+                role: 'assistant',
+                conversationId: turn.conversationId,
+              });
+            })(),
+          finalize: (updates) => mergeChatUpdates(updates),
+        });
+      },
+    };
+    return { client, requests };
+  }
+
+  it('holds the conversation anchor the provider declares stable', async () => {
+    // The provider says which ids are stable service-side anchors; a round that reports a
+    // response-chain id must not displace the anchor, or the next round falls off the stored
+    // conversation.
+    const { client, requests } = chainingClient(['resp_r1', 'resp_r2'], {
+      providerName: 'mock',
+      stableConversationId: (id) => id.startsWith('stable_'),
+    });
+    await withFunctionInvocation(client).getResponse([], {
+      tools: [echo],
+      conversationId: 'stable_1',
+    } as ChatOptions);
+
+    expect(requests).toHaveLength(2);
+    expect(must(requests[1]).conversationId).toBe('stable_1');
+  });
+
+  it('advances to the reported id when the provider declares no stable ids', async () => {
+    // Without the predicate every reported id advances the chain — including ids that happen to
+    // look like another provider's stable spelling. The loop owns no provider's id taxonomy.
+    const { client, requests } = chainingClient(['resp_r1', 'resp_r2'], { providerName: 'mock' });
+    await withFunctionInvocation(client).getResponse([], {
+      tools: [echo],
+      conversationId: 'conv_1',
+    } as ChatOptions);
+
+    expect(requests).toHaveLength(2);
+    expect(must(requests[1]).conversationId).toBe('resp_r1');
+  });
+
+  it('advances a non-stable id even when the provider declares a stable spelling', async () => {
+    const { client, requests } = chainingClient(['resp_r1', 'resp_r2'], {
+      providerName: 'mock',
+      stableConversationId: (id) => id.startsWith('stable_'),
+    });
+    await withFunctionInvocation(client).getResponse([], {
+      tools: [echo],
+      conversationId: 'resp_r0',
+    } as ChatOptions);
+
+    expect(requests).toHaveLength(2);
+    expect(must(requests[1]).conversationId).toBe('resp_r1');
   });
 });
