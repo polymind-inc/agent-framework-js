@@ -40,11 +40,13 @@ import {
   isOtlpEnabled,
   otlpProtocol,
   projectArmId,
+  projectEndpoint,
   resolveAgentId,
 } from '../config.js';
 import { raceTimeout } from '../wait.js';
 import { FoundryEnrichmentSpanProcessor } from './enrichment.js';
 import { setTelemetryFlusher } from './flush.js';
+import { GenAIMainAgentSpanProcessor } from './main-agent.js';
 
 /** `service.name` when the container contract did not name the agent (the reference's value). */
 const DEFAULT_SERVICE_NAME = 'azure.ai.agentserver';
@@ -222,11 +224,20 @@ async function configureHostObservability(options: HostObservabilityOptions): Pr
 
   const name = agentName();
   const version = agentVersion();
-  // `service.name` is what App Insights shows as the cloud role name.
+  const endpoint = projectEndpoint();
+  const armId = projectArmId();
+  // `service.name` is what App Insights shows as the cloud role name. The `foundry.*` entries are
+  // the .NET host's resource-detector attributes: unlike `microsoft.*` span attributes they
+  // survive every exporter, so a backend that keys on resources can attribute this process to its
+  // Foundry project and agent.
   const resource = defaultResource().merge(
     resourceFromAttributes({
       'service.name': name ?? DEFAULT_SERVICE_NAME,
       ...(version === undefined ? {} : { 'service.version': version }),
+      ...(name === undefined ? {} : { 'foundry.agent.name': name }),
+      ...(version === undefined ? {} : { 'foundry.agent.version': version }),
+      ...(endpoint === undefined ? {} : { 'foundry.project.endpoint': endpoint }),
+      ...(armId === undefined ? {} : { 'foundry.project.arm_id': armId }),
     }),
   );
 
@@ -234,12 +245,18 @@ async function configureHostObservability(options: HostObservabilityOptions): Pr
     agentName: name,
     agentVersion: version,
     agentId: resolveAgentId(),
-    projectId: projectArmId(),
+    projectId: armId,
     blueprintId: blueprintClientId(),
     tenantId: agentTenantId(),
   });
 
-  const spanProcessors: SpanProcessor[] = [enrichment, ...(options.spanProcessors ?? [])];
+  // Order matters: the main-agent processor runs after enrichment, so an invoke_agent span
+  // promoting itself reads the platform identity the enrichment just stamped.
+  const spanProcessors: SpanProcessor[] = [
+    enrichment,
+    new GenAIMainAgentSpanProcessor(),
+    ...(options.spanProcessors ?? []),
+  ];
   const metricExporters: PushMetricExporter[] = [];
   const exporters: HostExporter[] = [];
 
