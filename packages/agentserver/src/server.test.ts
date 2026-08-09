@@ -2,6 +2,7 @@ import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HEADERS } from './context.js';
 import { ProtocolError } from './errors.js';
+import { partitionKeyOf } from './ids.js';
 import type { HandlerContext, ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { encodeEvent } from './sse.js';
@@ -178,6 +179,115 @@ describe('routes', () => {
 
     const gone = await server.handle(new Request(`http://localhost:8088/responses/${created.id}`));
     expect(gone.status).toBe(404);
+  });
+
+  it('mints platform ids for input items that arrive without one', async () => {
+    // Callers — the Foundry Playground among them — send `input` as an item array with no ids,
+    // and the Foundry storage service refuses an id-less item with an opaque 500, which turned
+    // every such turn's persist into a `storage_error` terminal. Python's hosting assigns ids at
+    // conversion (`to_output_item`); the same normalization happens here.
+    const server = makeServer();
+    const created = (await (
+      await server.handle(
+        post({
+          input: [
+            { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+            { type: 'function_call_output', call_id: 'call_1', output: '"ok"' },
+          ],
+        }),
+      )
+    ).json()) as ResponseObject;
+
+    const items = await server.handle(
+      new Request(`http://localhost:8088/responses/${created.id}/input_items?order=asc`),
+    );
+    const list = (await items.json()) as { data: Array<{ type: string; id?: string }> };
+
+    expect(list.data.map((item) => item.type)).toEqual(['message', 'function_call_output']);
+    expect(list.data[0]?.id).toMatch(/^msg_/);
+    expect(list.data[1]?.id).toMatch(/^fco_/);
+    // Minted ids co-locate with the response, like every other id the turn mints.
+    expect(partitionKeyOf(list.data[0]?.id)).toBe(partitionKeyOf(created.id));
+  });
+
+  it('mints ids across the reference id-generator dispatch, not just the common types', async () => {
+    // The prefix table has to cover everything Python's `IdGenerator.new_item_id` covers: a type
+    // missing from it is silently left out of persistence, and the next turn replays a
+    // conversation with a hole in it.
+    const server = makeServer();
+    const created = (await (
+      await server.handle(
+        post({
+          input: [
+            { type: 'output_message', role: 'assistant', content: [] },
+            { type: 'computer_call_output', call_id: 'call_1', output: { type: 'screenshot' } },
+            { type: 'shell_call', action: { commands: [] } },
+            { type: 'apply_patch_call', operation: {} },
+            { type: 'mcp_approval_response', approval_request_id: 'mcpr_x', approve: true },
+          ],
+        }),
+      )
+    ).json()) as ResponseObject;
+
+    const items = await server.handle(
+      new Request(`http://localhost:8088/responses/${created.id}/input_items?order=asc`),
+    );
+    const list = (await items.json()) as { data: Array<{ type: string; id?: string }> };
+
+    expect(list.data.map((item) => `${item.type}:${item.id?.split('_')[0]}`)).toEqual([
+      'output_message:om',
+      'computer_call_output:cuo',
+      'shell_call:lsh',
+      'apply_patch_call:ap',
+      'mcp_approval_response:mcpa',
+    ]);
+  });
+
+  it('treats a prototype-inherited type name as unknown, not as a prefix', async () => {
+    // `__proto__` and `constructor` resolve to inherited values on a plain-object prefix table;
+    // minting from one would produce an id like `[object Object]_…`. Such a type has no own
+    // entry, so the item is handled exactly like any other unknown type: left out of persistence.
+    const server = makeServer();
+    const created = (await (
+      await server.handle(
+        post({
+          input: [
+            { type: '__proto__' },
+            { type: 'constructor' },
+            { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+          ],
+        }),
+      )
+    ).json()) as ResponseObject;
+
+    const items = await server.handle(
+      new Request(`http://localhost:8088/responses/${created.id}/input_items`),
+    );
+    const list = (await items.json()) as { data: Array<{ type: string }> };
+    expect(list.data.map((item) => item.type)).toEqual(['message']);
+  });
+
+  it('leaves an id-less input item of unknown type out of persistence', async () => {
+    // No known prefix means no valid platform id can be minted for it, and sending it id-less
+    // fails the whole persist. Python's `to_output_item` drops unrecognized types the same way.
+    // The item still reached the model as input; only the stored transcript omits it.
+    const server = makeServer();
+    const created = (await (
+      await server.handle(
+        post({
+          input: [
+            { type: 'mystery_item' },
+            { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+          ],
+        }),
+      )
+    ).json()) as ResponseObject;
+
+    const items = await server.handle(
+      new Request(`http://localhost:8088/responses/${created.id}/input_items`),
+    );
+    const list = (await items.json()) as { data: Array<{ type: string }> };
+    expect(list.data.map((item) => item.type)).toEqual(['message']);
   });
 
   it('lists input items newest-first by default, and accepts order case-insensitively', async () => {
