@@ -220,7 +220,7 @@ environment variables each one needs.
 ## Stability and versioning
 
 The public API is stable but not frozen: surface changes are made deliberately, motivated by
-alignment with the upstream implementations. During `0.x`, **minor releases may contain breaking
+alignment with the reference implementations. During `0.x`, **minor releases may contain breaking
 changes**; patch releases are fixes only. All packages are versioned and released in
 lockstep, so a single [`CHANGELOG.md`](CHANGELOG.md) entry covers the set. Releases are published
 from CI with [npm provenance][provenance].

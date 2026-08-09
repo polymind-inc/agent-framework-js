@@ -137,5 +137,6 @@ programming model.
 - **`@polymind-inc/agent-framework-agentserver`** — Microsoft Foundry Responses container protocol
   v2.0.0 server, independent of the rest of the framework.
 
-The API surface of this release is frozen as Baseline v0.1 (2026-08-02). Known limitations are
-listed in the root [README](README.md).
+The API surface of this release was frozen as Baseline v0.1 (2026-08-02); the freeze was later
+lifted in favor of the policy described in [Stability and versioning](README.md#stability-and-versioning).
+Known limitations are listed in the root [README](README.md).

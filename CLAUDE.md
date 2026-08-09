@@ -21,7 +21,7 @@ The points below are the ones most often gotten wrong.
    core — it has to keep running on Deno, Bun, edge runtimes and in browsers.
 5. **API surface changes are grounded in the reference implementations; new features are gated.**
    The public API is no longer frozen, but a change to its surface must be justified by alignment
-   with the upstream implementations — name the reference behaviour it matches. Breaking changes
+   with the reference implementations — name the reference behaviour it matches. Breaking changes
    are called out in the changelog (during `0.x`, minor releases may break). New functionality —
    a new package, a new API area, workflows — is not built without an explicit request or an
    issue asking for it; quality, performance and parity work take priority.

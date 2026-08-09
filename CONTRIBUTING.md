@@ -48,7 +48,7 @@ on. Node-specific APIs do not belong in the core; the core has to keep running o
 runtimes and in browsers.
 
 **5. API surface changes are grounded in the reference implementations.** The public API is not
-frozen, but a change to its surface must be motivated by alignment with the upstream
+frozen, but a change to its surface must be motivated by alignment with the reference
 implementations — the pull request names the reference behaviour it matches. Breaking changes are
 called out in the changelog. New functionality — a new package, a new API area, workflows — starts
 from an issue that asks for it, not from a pull request; quality, performance and parity work take
