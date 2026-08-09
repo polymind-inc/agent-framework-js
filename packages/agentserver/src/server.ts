@@ -1,6 +1,5 @@
 import { context as otelContext } from '@opentelemetry/api';
 import {
-  agentSessionId,
   cancelGraceMs,
   isHosted,
   maxBodyBytes,
@@ -20,11 +19,18 @@ import {
   ProtocolError,
   requestTooLarge,
   routeNotFound,
-  toHeaderValue,
   toProtocolError,
   unavailable,
   upstreamError,
 } from './errors.js';
+import {
+  decodeSegment,
+  errorResponse,
+  jsonResponse,
+  stripPrefix,
+  trimTrailingSlashes,
+  withStandardHeaders,
+} from './http.js';
 import { ID_PREFIX, itemIdPrefix, newId, newResponseId } from './ids.js';
 import type { LifecycleViolation } from './lifecycle.js';
 import { applyCancelledTerminal, enforceLifecycle, ResponseTracker } from './lifecycle.js';
@@ -496,41 +502,9 @@ function cancelledTerminal(tracker: ResponseTracker): ResponseEvent {
   return { type: 'response.failed', response };
 }
 
-function jsonResponse(body: unknown, status: number, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', ...headers },
-  });
-}
-
-/**
- * Percent-decodes one path segment.
- *
- * A lone `%` makes `decodeURIComponent` throw a `URIError`, which would surface as an opaque 500
- * for what is plainly a malformed request.
- */
-function decodeSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    throw badRequest('Malformed identifier.', { code: 'invalid_parameters', param: 'response_id' });
-  }
-}
-
-/**
- * Drops trailing `/` characters, scanning once from the end.
- *
- * Deliberately not `/\/+$/`: that pattern retries the run from every start position, so a request
- * path made of slashes that does not end in one costs time quadratic in its length. The path comes
- * off the wire, which makes the difference a denial-of-service lever rather than a micro-optimization.
- */
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) {
-    end -= 1;
-  }
-  return end === value.length ? value : value.slice(0, end);
-}
+// jsonResponse, decodeSegment, trimTrailingSlashes and the prefix/header/error plumbing live in
+// http.ts, shared with the Invocations server: the container contract is one contract, and the
+// parts of it every protocol answers identically must have one implementation.
 
 /**
  * A Foundry Responses container protocol v2.0.0 server.
@@ -676,16 +650,7 @@ export class ResponsesServer {
       return jsonResponse({ status: 'healthy' }, 200);
     }
 
-    // `startsWith` alone is not a prefix match: with `prefix = '/api'` it would also claim
-    // `/apiary/responses`. Only the whole segment counts.
-    const relative =
-      this.#prefix === ''
-        ? path
-        : path === this.#prefix
-          ? '/'
-          : path.startsWith(`${this.#prefix}/`)
-            ? path.slice(this.#prefix.length)
-            : undefined;
+    const relative = stripPrefix(path, this.#prefix);
     if (relative === undefined || !relative.startsWith('/responses')) {
       throw routeNotFound();
     }
@@ -708,7 +673,7 @@ export class ResponsesServer {
       // unknown paths silently alias known ones.
       throw routeNotFound();
     }
-    const id = decodeSegment(segments[0] ?? '');
+    const id = decodeSegment(segments[0] ?? '', 'response_id');
     // The id is about to become a storage key — with a file-backed store, a file name. Rejecting a
     // malformed one here keeps behaviour identical across store implementations (the file store
     // would otherwise throw an opaque 500 where the in-memory store answers 404) and makes the id
@@ -1672,37 +1637,11 @@ export class ResponsesServer {
 
   /** Adds the headers the platform expects on every response. */
   #withStandardHeaders(response: Response, context: RequestContext): Response {
-    response.headers.set(HEADERS.requestId, context.requestId);
-    response.headers.set(HEADERS.serverVersion, serverIdentity());
-    // Routes other than `POST /responses` have no request to derive a session from, so they report
-    // the container's own, when the platform assigned one (Python `_session_headers`).
-    const ambient = agentSessionId();
-    if (ambient !== undefined && !response.headers.has(HEADERS.sessionId)) {
-      response.headers.set(HEADERS.sessionId, ambient);
-    }
-    return response;
+    return withStandardHeaders(response, context, serverIdentity());
   }
 
   /** Renders a {@link ProtocolError} as the wire envelope, with diagnostics kept out of the body. */
   #errorResponse(error: ProtocolError, context: RequestContext): Response {
-    const headers: Record<string, string> = {
-      [HEADERS.requestId]: context.requestId,
-      [HEADERS.serverVersion]: serverIdentity(),
-      [HEADERS.errorSource]: error.source,
-    };
-    // Only a `platform`-source error carries its diagnostics on the header — user and upstream
-    // failures are not the platform's to explain (Python `error_response`, .NET
-    // `ResponsesExceptionFilter` both gate the detail header the same way).
-    if (error.detail !== undefined && error.source === 'platform') {
-      headers[HEADERS.errorDetail] = toHeaderValue(error.detail);
-    }
-    if (error.allow !== undefined) {
-      headers.allow = error.allow;
-    }
-    const ambient = agentSessionId();
-    if (ambient !== undefined) {
-      headers[HEADERS.sessionId] = ambient;
-    }
-    return jsonResponse(error.toResponse(context.requestId), error.status, headers);
+    return errorResponse(error, context, serverIdentity());
   }
 }

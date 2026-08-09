@@ -6,6 +6,27 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-agentserver`** — new `InvocationsServer`: the Foundry
+  Invocations protocol ([#29](https://github.com/polymind-inc/agent-framework-js/issues/29)),
+  served alongside the existing Responses protocol. The protocol prescribes no payload — the
+  request body reaches the `InvocationHandler` unread, and the handler's `Response` is what the
+  caller gets — while the server owns the routes (`POST /invocations`, `GET /invocations/{id}`,
+  `POST /invocations/{id}/cancel`, `/readiness`), invocation and session id resolution
+  (`x-agent-invocation-id`; `agent_session_id` query → `FOUNDRY_AGENT_SESSION_ID` → generated),
+  their echo on every response including errors, cancellation via `InvocationContext.signal`,
+  opaque `upstream`-classified handler failures, SSE keep-alive injection for
+  `text/event-stream` bodies, and W3C trace propagation with the
+  `azure.ai.agentserver.invocation_id` / `.session_id` baggage. `serve` (on `/agentserver/node`)
+  now accepts any `{ fetch, drain }` protocol server — a widening, existing callers are
+  unaffected.
+- **`@polymind-inc/agent-framework-foundry`** — new `InvocationsHostServer` (on `/hosting`):
+  publishes an `Agent` over the Invocations protocol with the same wire contract as the Python
+  adapter — request `{ "message": string, "stream"?: boolean }`, plain-text responses, raw text
+  chunks under `text/event-stream` when streaming. Conversations are held in process, partitioned
+  per session id and — hosted — per platform user; callers continue a conversation by pinning the
+  `agent_session_id` query parameter to the previous response's `x-agent-session-id` header.
+  Hosted requests without the protocol-2.0.0 call id fail closed with 501, without a user id with
+  400, as the Responses adapter does.
 - **`@polymind-inc/agent-framework-foundry`** — the hosting layer now exposes the turn's typed
   execution context to code running inside the agent
   ([#23](https://github.com/polymind-inc/agent-framework-js/issues/23)). `getHostedAgentContext()`

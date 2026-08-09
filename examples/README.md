@@ -33,6 +33,7 @@ Foundry chat examples use Azure credentials from `DefaultAzureCredential`. Set
 | --- | --- | --- |
 | Foundry chat | Calling a model deployment through a Foundry project | `pnpm --filter example-02-foundry chat` |
 | Hosted Agent | Building and serving the Responses container protocol | `pnpm --filter example-02-foundry build`, then `pnpm --filter example-02-foundry host` |
+| Invocations Hosted Agent | Serving the same agent over the Invocations protocol | `pnpm --filter example-02-foundry build`, then `pnpm --filter example-02-foundry invocations` |
 | Tool approval | Pausing, persisting, approving, denying, and resuming locally | `pnpm --filter example-02-foundry approval` |
 | Foundry Toolbox | Calling tools exposed by a Foundry Toolbox MCP endpoint | `pnpm --filter example-02-foundry toolbox` |
 

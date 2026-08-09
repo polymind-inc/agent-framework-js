@@ -9,8 +9,10 @@
 
 Microsoft Foundry provider for the Agent Framework: `FoundryChatClient` talks to a Foundry
 project (model deployments or server agents) with Microsoft Entra authentication, and the
-`@polymind-inc/agent-framework-foundry/hosting` subpath publishes an `Agent` as a Foundry Hosted Agent over
-the Responses container protocol implemented by `@polymind-inc/agent-framework-agentserver`.
+`@polymind-inc/agent-framework-foundry/hosting` subpath publishes an `Agent` as a Foundry Hosted
+Agent — `ResponsesHostServer` over the Responses container protocol, `InvocationsHostServer` over
+the Invocations protocol — on the servers implemented by
+`@polymind-inc/agent-framework-agentserver`.
 
 ```sh
 npm install @polymind-inc/agent-framework-core @polymind-inc/agent-framework-foundry
