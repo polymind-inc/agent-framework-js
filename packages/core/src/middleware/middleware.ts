@@ -1,6 +1,7 @@
 import type { AgentSession } from '../agent/session.js';
 import type { ChatClient, ChatOptions } from '../client/chat-client.js';
 import { ConfigurationError, MiddlewareTerminated } from '../errors.js';
+import { HOSTED_TOOL_CAPABILITY_METHODS } from '../tools/hosted.js';
 import type { AnyFunctionTool, Tool } from '../tools/tool.js';
 import type { Message } from '../types/message.js';
 import type { AgentResponse, AgentResponseUpdate } from '../types/response.js';
@@ -292,14 +293,6 @@ export function terminateMiddleware(): never {
   throw new MiddlewareTerminated();
 }
 
-/** The hosted-tool capability methods a wrapping client must carry over from the wrapped one. */
-const CAPABILITY_METHODS = [
-  'getWebSearchTool',
-  'getFileSearchTool',
-  'getCodeInterpreterTool',
-  'getMCPTool',
-] as const;
-
 /**
  * Attaches middleware to a {@link ChatClient}, so an agent built on it picks them up.
  *
@@ -323,7 +316,7 @@ export function withMiddleware<TOptions extends ChatOptions>(
   // has to carry the underlying client's capability methods or `supportsMCP` and friends would
   // report a capable client as incapable after wrapping.
   const capabilities: Record<string, unknown> = {};
-  for (const method of CAPABILITY_METHODS) {
+  for (const method of HOSTED_TOOL_CAPABILITY_METHODS) {
     const fn = (client as unknown as Record<string, unknown>)[method];
     if (typeof fn === 'function') {
       capabilities[method] = fn.bind(client);

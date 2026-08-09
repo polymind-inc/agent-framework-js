@@ -230,7 +230,7 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
         throw this.#failure.error;
       }
       await this.#runCleanup();
-      await this.#finalize();
+      await this.#finalizeForHooks();
       return { done: true, value: undefined };
     }
 
@@ -253,6 +253,21 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
       if (this.#failure !== undefined) {
         throw this.#failure.error;
       }
+      await this.#finalizeForHooks();
+    }
+  }
+
+  /**
+   * Finalizes at end of iteration only when a result hook is waiting on it.
+   *
+   * The hooks' timing is load-bearing — history persistence and telemetry teardown must observe
+   * the folded result when the source ends, not when the caller happens to ask for it. Without
+   * hooks the fold is pure and memoized, so it is deferred to {@link finalResponse}: an inner
+   * stream in a layered pipeline is drained by the layer above and its own fold is never read,
+   * which would otherwise cost a full pass over the run's updates per layer.
+   */
+  async #finalizeForHooks(): Promise<void> {
+    if (this.#init.onResult !== undefined && this.#init.onResult.length > 0) {
       await this.#finalize();
     }
   }

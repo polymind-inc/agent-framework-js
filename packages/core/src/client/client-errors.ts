@@ -7,6 +7,7 @@
  * helpers capture that contract once, for both the request phase and the streaming phase.
  */
 
+import { errorMessageOf } from '../errors.js';
 import { abortErrorFrom, isAbortError } from '../streaming/abort.js';
 
 /**
@@ -59,8 +60,7 @@ export function createClientErrorNormalizer(options: ClientErrorNormalizerOption
     if (abortErrorClass !== undefined && error instanceof abortErrorClass) {
       return abortErrorFrom(signal, error);
     }
-    const detail = error instanceof Error ? error.message : String(error);
-    return wrap(error, detail);
+    return wrap(error, errorMessageOf(error));
   };
 }
 

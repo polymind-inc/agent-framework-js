@@ -32,7 +32,12 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import OpenAI, { AzureOpenAI } from 'openai';
 import type { ParseContext } from './from-openai.js';
-import { createStreamParseState, parseResponse, parseStreamEvent } from './from-openai.js';
+import {
+  createStreamParseState,
+  isTerminalResponseEvent,
+  parseResponse,
+  parseStreamEvent,
+} from './from-openai.js';
 import { codeInterpreterTool, fileSearchTool, mcpTool, webSearchTool } from './hosted-tools.js';
 import type { OpenAIChatOptions } from './options.js';
 import {
@@ -397,14 +402,14 @@ export class OpenAIChatClient
    * stream at the terminal event" documents and pins the behaviour until then.
    *
    * The terminal set is exactly the events the stream parser folds as terminal
-   * (`parseStreamEvent`); an event the parser does not treat as terminal must not end the
-   * iteration early, or the two would disagree about when a stream is over.
+   * (`isTerminalResponseEvent`, shared with `parseStreamEvent`); an event the parser does not
+   * treat as terminal must not end the iteration early, or the two would disagree about when a
+   * stream is over.
    */
   static async *#untilTerminalEvent(events: AsyncIterable<unknown>): AsyncGenerator<unknown> {
     for await (const event of events) {
       yield event;
-      const type = (event as { type?: string }).type;
-      if (type === 'response.completed' || type === 'response.incomplete' || type === 'response.failed') {
+      if (isTerminalResponseEvent((event as { type?: string }).type)) {
         return;
       }
     }

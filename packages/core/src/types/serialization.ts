@@ -15,32 +15,40 @@ export interface SerializedMessage {
   [key: string]: unknown;
 }
 
-const KNOWN_CONTENT_TYPES: ReadonlySet<string> = new Set<ContentType>([
-  'text',
-  'text_reasoning',
-  'data',
-  'uri',
-  'error',
-  'function_call',
-  'function_result',
-  'usage',
-  'function_approval_request',
-  'function_approval_response',
-  'hosted_file',
-  'hosted_vector_store',
-  'code_interpreter_tool_call',
-  'code_interpreter_tool_result',
-  'image_generation_tool_call',
-  'image_generation_tool_result',
-  'mcp_server_tool_call',
-  'mcp_server_tool_result',
-  'search_tool_call',
-  'search_tool_result',
-  'shell_tool_call',
-  'shell_tool_result',
-  'shell_command_output',
-  'oauth_consent_request',
-]);
+/**
+ * Every wire `type` literal this version models, keyed exhaustively so the compiler rejects both a
+ * stray entry and a missing one whenever the {@link Content} union changes. A variant absent from
+ * this record would otherwise deserialize as {@link UnknownContent} — its `type` silently moved to
+ * `unknownType` — even though the build models it.
+ */
+const WIRE_CONTENT_TYPES: Record<Exclude<ContentType, 'unknown'>, true> = {
+  text: true,
+  text_reasoning: true,
+  data: true,
+  uri: true,
+  error: true,
+  function_call: true,
+  function_result: true,
+  usage: true,
+  function_approval_request: true,
+  function_approval_response: true,
+  hosted_file: true,
+  hosted_vector_store: true,
+  code_interpreter_tool_call: true,
+  code_interpreter_tool_result: true,
+  image_generation_tool_call: true,
+  image_generation_tool_result: true,
+  mcp_server_tool_call: true,
+  mcp_server_tool_result: true,
+  search_tool_call: true,
+  search_tool_result: true,
+  shell_tool_call: true,
+  shell_tool_result: true,
+  shell_command_output: true,
+  oauth_consent_request: true,
+};
+
+const KNOWN_CONTENT_TYPES: ReadonlySet<string> = new Set(Object.keys(WIRE_CONTENT_TYPES));
 
 /**
  * Content keys whose values are themselves content items or lists of content items.

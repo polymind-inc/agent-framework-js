@@ -1,6 +1,7 @@
 import type { AgentSession } from '../agent/session.js';
 import {
   ConfigurationError,
+  errorMessageOf,
   MiddlewareTerminated,
   ToolInvocationError,
   throwIfAborted,
@@ -219,11 +220,12 @@ function collectExecutableCalls(messages: Message[]): FunctionCallContent[] {
 
 type InvocationStatus = 'completed' | 'not_found' | 'exception';
 
-interface InvocationResult {
+/** The outcome of one tool invocation. `R` is the type `result` carries at this stage. */
+interface Invocation<R> {
   status: InvocationStatus;
   call: FunctionCallContent;
-  /** Whatever the tool — or a middleware standing in for it — produced, before normalization. */
-  result?: unknown;
+  /** Set exactly when `status` is `'completed'` and no approval was raised. */
+  result?: R;
   error?: unknown;
   /** A middleware called `terminate()`: report this round, then stop calling the model. */
   terminated?: boolean;
@@ -238,13 +240,8 @@ interface InvocationResult {
   errorReport?: ExceptionReport;
 }
 
-/** The two strings an exception `function_result` carries: what the model reads, and the marker. */
-interface ExceptionReport {
-  /** Replaces the generic `Error: Function failed.` text. */
-  result: string;
-  /** Replaces the thrown error's message in `FunctionResultContent.exception`. */
-  exception: string;
-}
+/** Whatever the tool — or a middleware standing in for it — produced, before normalization. */
+type InvocationResult = Invocation<unknown>;
 
 /**
  * An invocation whose result has been normalized to what a `function_result` can carry.
@@ -253,16 +250,14 @@ interface ExceptionReport {
  * so a return value JSON cannot encode becomes the same result any other failing tool produces
  * instead of throwing out of the loop and failing the run.
  */
-interface SettledInvocation {
-  status: InvocationStatus;
-  call: FunctionCallContent;
-  /** Set exactly when `status` is `'completed'` and no approval was raised. */
-  result?: string | Content[];
-  error?: unknown;
-  terminated?: boolean;
-  approvalRequest?: FunctionApprovalRequestContent;
-  userInputRequests?: UserInputRequestContent[];
-  errorReport?: ExceptionReport;
+type SettledInvocation = Invocation<string | Content[]>;
+
+/** The two strings an exception `function_result` carries: what the model reads, and the marker. */
+interface ExceptionReport {
+  /** Replaces the generic `Error: Function failed.` text. */
+  result: string;
+  /** Replaces the thrown error's message in `FunctionResultContent.exception`. */
+  exception: string;
 }
 
 /**
@@ -322,10 +317,6 @@ interface RoundOutcome {
   approvals: UserInputRequestContent[];
   /** `true` when a middleware ended the loop. */
   terminated?: boolean;
-}
-
-function errorMessageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export class FunctionInvocationLimitError extends ToolInvocationError {

@@ -1,5 +1,5 @@
 import type { AgentSession } from '../agent/session.js';
-import { AgentFrameworkError, ConfigurationError, ToolInvocationError } from '../errors.js';
+import { AgentFrameworkError, ConfigurationError, errorMessageOf, ToolInvocationError } from '../errors.js';
 import type { Content } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { JsonSchema, SchemaInput } from './json-schema.js';
@@ -270,7 +270,7 @@ export function normalizeToolResult(value: unknown): string | Content[] {
     encoded = JSON.stringify(value);
   } catch (error) {
     throw new AgentFrameworkError(
-      `A tool returned a value that cannot be JSON-encoded: ${error instanceof Error ? error.message : String(error)}`,
+      `A tool returned a value that cannot be JSON-encoded: ${errorMessageOf(error)}`,
       { cause: error },
     );
   }

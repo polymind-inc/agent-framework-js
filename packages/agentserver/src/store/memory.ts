@@ -58,21 +58,28 @@ export class InMemoryResponseProvider implements ResponseProvider {
     assertOwnerCanWrite(this.#responses.get(id), id, owner);
   }
 
+  /**
+   * Evicts oldest-first until `map` is under the shared cap, cascading each eviction into
+   * `alsoDrop` — the response is what makes its event stream reachable, so keeping orphaned
+   * events would let the eviction bound be dodged through the second map.
+   */
+  #evictOldest(map: Map<string, unknown>, alsoDrop?: Map<string, unknown>): void {
+    while (map.size >= this.#maxResponses) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      map.delete(oldest);
+      alsoDrop?.delete(oldest);
+    }
+  }
+
   async put(stored: StoredResponse): Promise<void> {
     const id = stored.response.id;
     assertWritable(this.#responses.get(id), stored);
     // Overwriting an existing id does not grow the map, so only a genuinely new entry evicts.
     if (!this.#responses.has(id)) {
-      while (this.#responses.size >= this.#maxResponses) {
-        const oldest = this.#responses.keys().next().value;
-        if (oldest === undefined) {
-          break;
-        }
-        this.#responses.delete(oldest);
-        // The response is what makes its event stream reachable; keeping orphaned events would
-        // let the eviction bound be dodged through the second map.
-        this.#events.delete(oldest);
-      }
+      this.#evictOldest(this.#responses, this.#events);
     }
     this.#responses.set(id, stored);
   }
@@ -98,13 +105,7 @@ export class InMemoryResponseProvider implements ResponseProvider {
       throw notFound(id);
     }
     if (!this.#events.has(id)) {
-      while (this.#events.size >= this.#maxResponses) {
-        const oldest = this.#events.keys().next().value;
-        if (oldest === undefined) {
-          break;
-        }
-        this.#events.delete(oldest);
-      }
+      this.#evictOldest(this.#events);
     }
     this.#events.set(id, { owner, generation, events: [...events] });
   }
