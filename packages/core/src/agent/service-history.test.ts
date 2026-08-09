@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatClient, ChatOptions, ChatResponseStream } from '../client/chat-client.js';
+import type {
+  ChatClient,
+  ChatClientMetadata,
+  ChatOptions,
+  ChatResponseStream,
+} from '../client/chat-client.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError } from '../errors.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -17,13 +22,14 @@ function must<T>(value: T | null | undefined): T {
 
 /** A client that answers with text and reports a service-side conversation id, like Responses. */
 class StoringClient implements ChatClient<ChatOptions> {
-  readonly metadata = { providerName: 'mock' };
+  readonly metadata: ChatClientMetadata;
   readonly calls: Array<{ messages: Message[]; conversationId: string | undefined }> = [];
   #turn = 0;
   readonly #conversationIds: string[];
 
-  constructor(conversationIds: string[]) {
+  constructor(conversationIds: string[], metadata: ChatClientMetadata = { providerName: 'mock' }) {
     this.#conversationIds = conversationIds;
+    this.metadata = metadata;
   }
 
   getResponse(messages: Message[], options?: ChatOptions): ChatResponseStream {
@@ -82,6 +88,23 @@ describe('service-managed history', () => {
       // The id is available to a caller that never waits for the final response.
       expect(session.serviceSessionId).toBe('resp_1');
     }
+  });
+
+  it('holds a session anchor the provider declares stable', async () => {
+    // The per-update propagation must apply the same guard the tool loop does: a response-chain
+    // id reported mid-run must not unhook the session from a stored conversation the provider
+    // resolves by its stable anchor.
+    const client = new StoringClient(['resp_1'], {
+      providerName: 'mock',
+      stableConversationId: (id) => id.startsWith('stable_'),
+    });
+    const agent = new Agent({ client });
+    const session = agent.createSession({ serviceSessionId: 'stable_1' });
+
+    await agent.run('hi', { session });
+
+    expect(client.calls[0]?.conversationId).toBe('stable_1');
+    expect(session.serviceSessionId).toBe('stable_1');
   });
 
   it('keeps the framework transcript when the session is not service-managed', async () => {

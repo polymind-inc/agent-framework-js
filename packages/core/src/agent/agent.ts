@@ -566,14 +566,23 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
        * transcript from the framework to the provider. Handing the framework a conversation id is
        * the caller's decision to make.
        */
+      const stableConversationId = this.#client.metadata.stableConversationId;
       const propagateConversationId = (update: ChatResponseUpdate): void => {
         const conversationId = update.conversationId;
+        const current = session.serviceSessionId;
         if (
           conversationId === undefined ||
           conversationId === '' ||
-          session.serviceSessionId === undefined ||
-          session.serviceSessionId === conversationId
+          current === undefined ||
+          current === conversationId
         ) {
+          return;
+        }
+        // An anchor the provider declares stable stays the session's id: a per-response id
+        // reported mid-run must not unhook the session from the stored conversation. The same
+        // guard the function-calling loop applies between tool rounds, applied where the
+        // reference puts it — on the session update itself (Go `updateConversationID`).
+        if (stableConversationId?.(current) === true) {
           return;
         }
         session.serviceSessionId = conversationId;

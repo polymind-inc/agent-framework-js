@@ -674,6 +674,16 @@ describe('OpenAIChatClient configuration', () => {
     ).toBe('azure.ai.openai');
   });
 
+  it('declares conv_ conversation ids stable for the tool loop', () => {
+    // The function-calling loop consults this predicate instead of knowing the id spelling
+    // itself: a `conv_…` conversation object is a stable anchor, a `resp_…` chain advances.
+    const stable = new OpenAIChatClient({ client: fakeClient(vi.fn()), model: 'm' }).metadata
+      .stableConversationId;
+    expect(stable).toBeDefined();
+    expect(stable?.('conv_123')).toBe(true);
+    expect(stable?.('resp_123')).toBe(false);
+  });
+
   // Not a deferral: Chat Completions is out of scope for good (see `OpenAIChatClientOptions.api`).
   it('rejects the chat completions API', () => {
     expect(

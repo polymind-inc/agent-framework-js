@@ -4,6 +4,17 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
+## Unreleased
+
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — the function-calling loop no longer
+  hardcodes OpenAI's `conv_` prefix when deciding whether a conversation id advances between tool
+  rounds. Which ids are stable service-side anchors is now the provider's declaration:
+  `ChatClientMetadata.stableConversationId`, a new optional predicate the loop and the agent's
+  session propagation consult. The built-in OpenAI, Azure OpenAI and Foundry clients declare it,
+  so their behavior is unchanged. **A custom `ChatClient` implementation that relied on the loop
+  pinning `conv_…` ids must now declare the predicate on its `metadata`** — without it, every
+  conversation id a round reports advances the chain, matching the .NET and Python loops.
+
 ## 0.2.2
 
 Fixes accumulated since 0.2.1, centred on running agents as Microsoft Foundry Hosted Agents:

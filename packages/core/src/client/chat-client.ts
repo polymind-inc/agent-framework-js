@@ -9,6 +9,18 @@ export interface ChatClientMetadata {
   /** Used as OpenTelemetry's `gen_ai.provider.name`, for example `'openai'` or `'azure.ai.openai'`. */
   readonly providerName: string;
   readonly modelId?: string;
+  /**
+   * Whether `conversationId` names a service-side anchor that stays stable across responses, as
+   * opposed to a per-response chain that must advance to each round's reported id.
+   *
+   * Two places consult this: the function-calling loop between tool rounds, and the agent's
+   * session propagation when a run reports conversation ids. In both, an id the provider declares
+   * stable is never displaced by the id a response reports, so a service-held conversation cannot
+   * be unhooked by a response-chain fallback mid-run. Absent means no id is stable — every
+   * reported id advances the chain, which is also correct for providers whose stable ids are
+   * simply re-reported unchanged each round.
+   */
+  readonly stableConversationId?: (conversationId: string) => boolean;
 }
 
 /** How the model should pick tools. */
