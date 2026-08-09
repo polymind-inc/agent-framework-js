@@ -218,6 +218,28 @@ describe('GenAI tracing', () => {
     expect(invoke.attributes[GEN_AI.outputMessages]).toBeUndefined();
   });
 
+  it('keeps system instructions off the chat span until content capture is opted in', async () => {
+    // Regression: instructions used to be stamped unconditionally, leaking prompt
+    // text with capture off. The reference implementations emit the attribute only when
+    // sensitive-data capture is enabled.
+    const mock = new MockChatClient([{ contents: [textContent('x')], finishReason: 'stop' }]);
+    await new Agent({ client: mock, name: 'bot', instructions: 'You are terse.' }).run('q');
+
+    const chat = must(byName('chat mock-model'));
+    expect(chat.attributes[GEN_AI.systemInstructions]).toBeUndefined();
+  });
+
+  it('records system instructions as a parts array once opted in', async () => {
+    configureObservability({ captureMessageContent: true });
+    const mock = new MockChatClient([{ contents: [textContent('x')], finishReason: 'stop' }]);
+    await new Agent({ client: mock, name: 'bot', instructions: 'You are terse.' }).run('q');
+
+    const chat = must(byName('chat mock-model'));
+    expect(chat.attributes[GEN_AI.systemInstructions]).toBe(
+      JSON.stringify([{ type: 'text', content: 'You are terse.' }]),
+    );
+  });
+
   it('records message content once opted in', async () => {
     configureObservability({ captureMessageContent: true });
     const mock = new MockChatClient([{ contents: [textContent('the answer')], finishReason: 'stop' }]);

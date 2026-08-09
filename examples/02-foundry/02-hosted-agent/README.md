@@ -173,6 +173,11 @@ Locally, point OTLP at any collector (an Aspire dashboard, Jaeger):
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 pnpm --filter example-02-foundry host
 ```
 
-Message _content_ (prompts, tool arguments, results) is never recorded on spans unless you opt in
-with `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` — set it in `agent.yaml`'s
-`environment_variables` if your tracing backend is allowed to see conversations.
+Message _content_ (prompts, system instructions, tool arguments, results) is never recorded on
+spans unless you opt in with `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` — set it in
+`agent.yaml`'s `environment_variables` if your tracing backend is allowed to see conversations.
+(The Python hosting SDK turns content capture **on** unless that variable says otherwise, so a
+Python agent shows message text in the portal where this host stays silent by default — that
+difference is deliberate.) If you set it, verify it actually reached the registered version with
+`GET /agents/<name>/versions/<n>`: as noted above, `environment_variables` does not arrive
+through every deployment flow.

@@ -1,5 +1,7 @@
 import type { Attributes, AttributeValue, Span } from '@opentelemetry/api';
 import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
+import type { Content } from '../types/content.js';
+import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { ChatResponse, ResponseBase } from '../types/response.js';
 import type { UsageDetails } from '../types/usage.js';
@@ -44,15 +46,29 @@ export function setResponseAttributes(
  * Only the fields the convention asks for, so a span does not carry provider objects or base64
  * payloads: those belong in the transcript, not in a trace.
  */
+/** One part of the sensitive-data serialization: only the field the convention asks for. */
+function spanPart(content: Content): { type: string; content?: string } {
+  return content.type === 'text' ? { type: 'text', content: content.text } : { type: content.type };
+}
+
 export function serializeMessagesForSpan(messages: readonly Message[]): string {
   return JSON.stringify(
     messages.map((msg) => ({
       role: msg.role,
-      parts: msg.contents.map((content) =>
-        content.type === 'text' ? { type: 'text', content: content.text } : { type: content.type },
-      ),
+      parts: msg.contents.map(spanPart),
     })),
   );
+}
+
+/**
+ * Whether message text may be recorded on `span`: the caller opted in, and the span is actually
+ * recording (a non-recording span would throw the serialization work away).
+ *
+ * Every attribute that carries prompt, completion or tool content answers to this one predicate —
+ * it is the single place to audit what gates sensitive data.
+ */
+export function capturesContent(span: Span): boolean {
+  return span.isRecording() && captureMessageContent();
 }
 
 /**
@@ -63,7 +79,7 @@ export function serializeMessagesForSpan(messages: readonly Message[]): string {
  * because both carry message text.
  */
 export function setMessageContent(span: Span, key: string, messages: readonly Message[]): void {
-  if (!captureMessageContent() || messages.length === 0) {
+  if (messages.length === 0 || !capturesContent(span)) {
     return;
   }
   span.setAttribute(key, serializeMessagesForSpan(messages));
@@ -71,6 +87,19 @@ export function setMessageContent(span: Span, key: string, messages: readonly Me
   for (const msg of messages) {
     addMessageEvent(span, msg, output);
   }
+}
+
+/**
+ * Records the system instructions, gated the same way as message content — they are prompt text.
+ *
+ * Serialized as a parts array (`[{ "type": "text", "content": ... }]`), the shape the .NET and
+ * Python implementations emit for this attribute, not the bare string.
+ */
+export function setSystemInstructions(span: Span, instructions: string | undefined): void {
+  if (instructions === undefined || instructions === '' || !capturesContent(span)) {
+    return;
+  }
+  span.setAttribute(GEN_AI.systemInstructions, JSON.stringify([spanPart(textContent(instructions))]));
 }
 
 /**
