@@ -47,9 +47,12 @@ needs to be called out in the pull request.
 on. Node-specific APIs do not belong in the core; the core has to keep running on Deno, Bun, edge
 runtimes and in browsers.
 
-**5. The public API is frozen as Baseline v0.1.** Changes to the frozen surface are possible but
-deliberate — open an issue describing the deviation and the reference behaviour that motivates it
-before writing the code.
+**5. API surface changes are grounded in the reference implementations.** The public API is not
+frozen, but a change to its surface must be motivated by alignment with the upstream
+implementations — the pull request names the reference behaviour it matches. Breaking changes are
+called out in the changelog. New functionality — a new package, a new API area, workflows — starts
+from an issue that asks for it, not from a pull request; quality, performance and parity work take
+priority over new features.
 
 ## Fixing a bug
 
