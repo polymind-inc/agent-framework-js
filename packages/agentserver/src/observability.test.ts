@@ -210,6 +210,27 @@ describe('GenAIMainAgentSpanProcessor', () => {
     expect(finished?.attributes['microsoft.gen_ai.main_agent.name']).toBe('late-bot');
   });
 
+  it('stamps nothing from a remote parent, whose attributes are not readable', () => {
+    const { exporter, provider } = pipeline(new GenAIMainAgentSpanProcessor());
+    // The shape the propagator hands the server: a valid but remote span context, as the Foundry
+    // gateway's traceparent produces. There are no attributes to read, so nothing propagates.
+    const remoteParent = trace.wrapSpanContext({
+      traceId: '0af7651916cd43dd8448eb211c80319c',
+      spanId: 'b7ad6b7169203331',
+      traceFlags: 1,
+      isRemote: true,
+    });
+
+    provider
+      .getTracer('test')
+      .startSpan('chat model', {}, trace.setSpan(contextApi.active(), remoteParent))
+      .end();
+
+    const [finished] = exporter.getFinishedSpans();
+    expect(finished).toBeDefined();
+    expect(Object.keys(finished?.attributes ?? {})).toEqual([]);
+  });
+
   it('leaves an already-stamped span alone', () => {
     const { exporter, provider } = pipeline(new GenAIMainAgentSpanProcessor());
 
