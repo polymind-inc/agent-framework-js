@@ -51,13 +51,13 @@ function spanPart(content: Content): { type: string; content?: string } {
   return content.type === 'text' ? { type: 'text', content: content.text } : { type: content.type };
 }
 
+/** One message of the sensitive-data serialization, as a JSON object string. */
+function serializeMessageForSpan(msg: Message): string {
+  return JSON.stringify({ role: msg.role, parts: msg.contents.map(spanPart) });
+}
+
 export function serializeMessagesForSpan(messages: readonly Message[]): string {
-  return JSON.stringify(
-    messages.map((msg) => ({
-      role: msg.role,
-      parts: msg.contents.map(spanPart),
-    })),
-  );
+  return `[${messages.map(serializeMessageForSpan).join(',')}]`;
 }
 
 /**
@@ -82,11 +82,14 @@ export function setMessageContent(span: Span, key: string, messages: readonly Me
   if (messages.length === 0 || !capturesContent(span)) {
     return;
   }
-  span.setAttribute(key, serializeMessagesForSpan(messages));
+  // Each message is serialized once; the aggregate attribute and the per-message events share the
+  // same strings, so a long transcript pays one serialization pass instead of two.
+  const serialized = messages.map(serializeMessageForSpan);
+  span.setAttribute(key, `[${serialized.join(',')}]`);
   const output = key === GEN_AI.outputMessages;
-  for (const msg of messages) {
-    addMessageEvent(span, msg, output);
-  }
+  messages.forEach((msg, index) => {
+    addMessageEvent(span, msg, output, serialized[index]);
+  });
 }
 
 /**
@@ -110,14 +113,14 @@ export function setSystemInstructions(span: Span, instructions: string | undefin
  * depends only on `@opentelemetry/api`. The event name and the serialized payload match, so the
  * two implementations produce the same shape.
  */
-export function addMessageEvent(span: Span, message: Message, output: boolean): void {
+export function addMessageEvent(span: Span, message: Message, output: boolean, serialized?: string): void {
   const name = output
     ? GEN_AI_MESSAGE_EVENT.choice
     : (GEN_AI_MESSAGE_EVENT[message.role as keyof typeof GEN_AI_MESSAGE_EVENT] ?? GEN_AI_MESSAGE_EVENT.user);
   span.addEvent(name, {
     [GEN_AI.eventName]: name,
     ...(message.role === undefined ? {} : { role: message.role }),
-    content: serializeMessagesForSpan([message]),
+    content: `[${serialized ?? serializeMessageForSpan(message)}]`,
   });
 }
 

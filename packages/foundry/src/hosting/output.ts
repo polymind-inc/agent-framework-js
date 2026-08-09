@@ -160,6 +160,14 @@ function argumentsRecord(args: Record<string, unknown> | string | undefined): Re
   return {};
 }
 
+/**
+ * The wire form of a tool call's arguments: a string — possibly a partial streamed fragment —
+ * passes through, a structured object is JSON-encoded.
+ */
+function argumentsText(args: Record<string, unknown> | string): string {
+  return typeof args === 'string' ? args : JSON.stringify(args);
+}
+
 /** The code a `code_interpreter_tool_call` ran: the concatenated text of its inputs. */
 function codeOfInputs(inputs: unknown): string {
   if (!Array.isArray(inputs)) {
@@ -255,6 +263,23 @@ export class OutputBuilder {
     this.#onUnsupportedContent = options.onUnsupportedContent;
   }
 
+  /**
+   * The open item, when a tool result of `kind` addresses it.
+   *
+   * A result's `callId` may name the provider's own call id *or* the re-minted item id — the item
+   * id is regenerated when the provider's does not satisfy this protocol's format, while the
+   * result content that follows still refers to the provider's — and a result with no `callId`
+   * matches whatever call is open.
+   */
+  #openFor(kind: ItemKind, callId: string | undefined): OpenItem | undefined {
+    const open = this.#open;
+    const matches =
+      open !== undefined &&
+      open.kind === kind &&
+      (callId === undefined || callId === open.callId || callId === open.id);
+    return matches ? open : undefined;
+  }
+
   /** Emits the events for one content item. */
   *push(content: Content): Generator<ResponseEvent> {
     if (content.type === 'mcp_server_tool_result') {
@@ -262,13 +287,9 @@ export class OutputBuilder {
       // its own — the wire item carries `arguments` and `output` together (Python folds it the
       // same way before emitting the item's `done`). A result with no matching open call is
       // surfaced as a standalone `custom_tool_call_output` instead (Python `_to_outputs`).
-      const open = this.#open;
       const callId = content.callId;
-      if (
-        open !== undefined &&
-        open.kind === 'mcp_call' &&
-        (callId === undefined || callId === open.callId || callId === open.id)
-      ) {
+      const open = this.#openFor('mcp_call', callId);
+      if (open !== undefined) {
         open.item.output = mcpOutputText(content);
         yield* this.close();
         return;
@@ -287,13 +308,8 @@ export class OutputBuilder {
       // inside `action` (already on the item) and a file search's retrieved documents in
       // `results`. There is no standalone wire item for an orphan search result, so one with no
       // matching open call is reported rather than emitted.
-      const open = this.#open;
-      const callId = content.callId;
-      if (
-        open !== undefined &&
-        open.kind === 'search_call' &&
-        (callId === undefined || callId === open.callId || callId === open.id)
-      ) {
+      const open = this.#openFor('search_call', content.callId);
+      if (open !== undefined) {
         const results = (content.result as { results?: unknown } | null | undefined)?.results;
         if (open.item.type === 'file_search_call' && Array.isArray(results)) {
           open.item.results = results;
@@ -307,13 +323,8 @@ export class OutputBuilder {
     if (content.type === 'code_interpreter_tool_result') {
       // Same shape as a search result: the sandbox's outputs live on the `code_interpreter_call`
       // item itself, and an orphan result has no wire item of its own.
-      const open = this.#open;
-      const callId = content.callId;
-      if (
-        open !== undefined &&
-        open.kind === 'code_interpreter_call' &&
-        (callId === undefined || callId === open.callId || callId === open.id)
-      ) {
+      const open = this.#openFor('code_interpreter_call', content.callId);
+      if (open !== undefined) {
         open.item.outputs = codeInterpreterWireOutputs(content.outputs);
         yield* this.close();
         return;
@@ -480,10 +491,7 @@ export class OutputBuilder {
               ? hostedLabel
               : AGENT_FRAMEWORK_SERVER_LABEL,
           name: request.functionCall.name,
-          arguments:
-            typeof request.functionCall.arguments === 'string'
-              ? request.functionCall.arguments
-              : JSON.stringify(request.functionCall.arguments),
+          arguments: argumentsText(request.functionCall.arguments),
         };
         // The wire id is the *key* the decision comes back under; the request keeps its own id.
         this.surfacedApprovals.push({ wireId: id, request });
@@ -592,8 +600,7 @@ export class OutputBuilder {
         return;
       }
       case 'function_call': {
-        const args = (content as { arguments: Record<string, unknown> | string }).arguments;
-        const delta = typeof args === 'string' ? args : JSON.stringify(args);
+        const delta = argumentsText((content as { arguments: Record<string, unknown> | string }).arguments);
         if (delta === '') return;
         open.buffer += delta;
         yield {
@@ -624,8 +631,9 @@ export class OutputBuilder {
         return;
       }
       case 'mcp_call': {
-        const args = (content as { arguments?: Record<string, unknown> | string }).arguments ?? '';
-        const delta = typeof args === 'string' ? args : JSON.stringify(args);
+        const delta = argumentsText(
+          (content as { arguments?: Record<string, unknown> | string }).arguments ?? '',
+        );
         if (delta === '') return;
         open.buffer += delta;
         yield {

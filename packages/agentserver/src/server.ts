@@ -130,6 +130,52 @@ function storageFailed(response: ResponseObject): ResponseObject {
 }
 
 /**
+ * The persist-before-terminal contract, shared by the foreground SSE stream and the background
+ * driver: the turn is offered to the store *before* its terminal event reaches any consumer, so a
+ * caller that reads `response.completed` can come back with `previous_response_id`. When the store
+ * refuses, the terminal the consumer reads is a `response.failed` carrying `storage_error`
+ * instead. Persisting is attempted at most once — .NET does not retry a failed persist, and
+ * neither does this.
+ */
+class TerminalPersister {
+  readonly #persist: () => Promise<void>;
+  readonly #tracker: ResponseTracker;
+  #attempted = false;
+
+  constructor(persist: () => Promise<void>, tracker: ResponseTracker) {
+    this.#persist = persist;
+    this.#tracker = tracker;
+  }
+
+  /** Persists ahead of the terminal `event`; on a store refusal returns the storage failure instead. */
+  async onTerminal(event: ResponseEvent): Promise<ResponseEvent> {
+    this.#attempted = true;
+    try {
+      await this.#persist();
+      return event;
+    } catch {
+      return { type: 'response.failed', response: storageFailed(this.#tracker.response) };
+    }
+  }
+
+  /**
+   * The teardown fallback for a stream torn down before any terminal event came through: records
+   * the partial turn — it is resumable with `previous_response_id`. A store failure here has no
+   * caller left to tell, so it is deliberately swallowed.
+   */
+  async ensureAttempted(): Promise<void> {
+    if (this.#attempted) {
+      return;
+    }
+    try {
+      await this.#persist();
+    } catch {
+      // Nothing to answer: the caller is gone.
+    }
+  }
+}
+
+/**
  * The cancel refusals for each terminal state, worded exactly as the reference words them
  * (Python `_endpoint_handler._CANCEL_TERMINAL_ERRORS`). `cancelled` is missing on purpose:
  * cancelling an already-cancelled response is idempotent and answers 200.
@@ -1193,7 +1239,7 @@ export class ResponsesServer {
   }): Promise<void> {
     const { run, responseId, claim, events, persist, releaseSignals } = args;
     const sequence = new SequenceNumberWriter();
-    let persistAttempted = false;
+    const persister = new TerminalPersister(persist, run.tracker);
     try {
       try {
         for await (const raw of events) {
@@ -1207,16 +1253,7 @@ export class ResponsesServer {
               // outlive its grace by any amount.
               event = cancelledTerminal(run.tracker);
             }
-            // Persist *before* the terminal event reaches any follower:
-            // a caller that reads `response.completed` — live or replayed — must be able to come
-            // back with `previous_response_id`. When the store refuses, the terminal every
-            // follower reads is a `response.failed` carrying `storage_error`.
-            persistAttempted = true;
-            try {
-              await persist();
-            } catch {
-              event = { type: 'response.failed', response: storageFailed(run.tracker.response) };
-            }
+            event = await persister.onTerminal(event);
           }
           run.deliver(sequence.stamp(event));
         }
@@ -1231,7 +1268,7 @@ export class ResponsesServer {
         const cause = error instanceof ProtocolError && error.cause !== undefined ? error.cause : error;
         const message =
           cause instanceof Error ? (cause.message === '' ? cause.name : cause.message) : String(cause);
-        let event = run.cancelRequested
+        const event = run.cancelRequested
           ? // Same override as the loop above: a handler that throws *after* the cancel route
             // answered still ends as `cancelled`, not as `failed` (the reference applies
             // `_maybe_override_to_cancelled` on the resolved terminal whatever produced it).
@@ -1239,23 +1276,11 @@ export class ResponsesServer {
           : run.tracker.lifecycleEvent('response.failed', 'failed', {
               error: { code: 'server_error', message, type: 'server_error' },
             });
-        persistAttempted = true;
-        try {
-          await persist();
-        } catch {
-          event = { type: 'response.failed', response: storageFailed(run.tracker.response) };
-        }
-        run.deliver(sequence.stamp(event));
+        run.deliver(sequence.stamp(await persister.onTerminal(event)));
       }
-      if (!persistAttempted) {
-        // Unreachable while `enforceLifecycle` guarantees a terminal event; kept so a future
-        // regression cannot silently drop a finished turn.
-        try {
-          await persist();
-        } catch {
-          // Nobody left to tell.
-        }
-      }
+      // Unreachable while `enforceLifecycle` guarantees a terminal event; kept so a future
+      // regression cannot silently drop a finished turn.
+      await persister.ensureAttempted();
       if (run.streamed && !run.overflowed) {
         await this.#storeReplayLog(responseId, run, claim);
       }
@@ -1366,26 +1391,14 @@ export class ResponsesServer {
     }
 
     const sequence = new SequenceNumberWriter();
+    const persister = new TerminalPersister(persist, tracker);
     const numbered = async function* (): AsyncGenerator<ResponseEvent> {
-      // Whether the turn has been offered to the store, successfully or not. `.NET` does not
-      // retry a failed persist, and neither does this.
-      let persistAttempted = false;
       try {
         let pending = first;
         while (pending.done !== true) {
           let event = pending.value;
           if (isTerminalEventType(String(event.type))) {
-            // Persist *before* the terminal event is delivered (.NET's streaming contract): a
-            // caller that reads `response.completed` must be able to come back with
-            // `previous_response_id`. When the store refuses, the terminal the caller reads is a
-            // `response.failed` carrying `storage_error` — not a `completed` for a turn that no
-            // longer exists anywhere.
-            persistAttempted = true;
-            try {
-              await persist();
-            } catch {
-              event = { type: 'response.failed', response: storageFailed(tracker.response) };
-            }
+            event = await persister.onTerminal(event);
           }
           yield sequence.stamp(event);
           pending = await iterator.next();
@@ -1393,20 +1406,13 @@ export class ResponsesServer {
       } finally {
         // The client-disconnect path: the stream was torn down before the terminal event came
         // through. Close the handler chain first so its own `finally` blocks run, then record the
-        // partial turn — it is resumable with `previous_response_id`. A store failure here has no
-        // caller left to tell, so it is deliberately swallowed.
+        // partial turn.
         try {
           await iterator.return?.();
         } catch {
           // The generator's own failure must not mask the teardown.
         }
-        if (!persistAttempted) {
-          try {
-            await persist();
-          } catch {
-            // Nothing to answer: the caller is gone.
-          }
-        }
+        await persister.ensureAttempted();
         releaseSignals();
         // Stream over — flush before the platform freezes the sandbox (the reference's
         // `trace_stream` flushes in its own `finally` the same way).

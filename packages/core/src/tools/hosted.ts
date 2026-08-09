@@ -89,7 +89,29 @@ export interface SupportsMCPTool {
   getMCPTool(options: MCPToolOptions): HostedTool;
 }
 
-function hasMethod(value: object, name: string): boolean {
+/** The method names of the duck-typed hosted-tool capability protocol defined above. */
+type CapabilityMethod = keyof (SupportsWebSearchTool &
+  SupportsFileSearchTool &
+  SupportsCodeInterpreterTool &
+  SupportsMCPTool);
+
+/**
+ * Every capability method, keyed exhaustively so the compiler flags this record when a capability
+ * interface is added to {@link CapabilityMethod} but not listed here (and vice versa). The
+ * `supports*` predicates below and `withMiddleware`'s capability carry-over both consume this
+ * list, so a capability missing from it would silently vanish when a client is wrapped.
+ */
+const CAPABILITY_METHOD_RECORD: Record<CapabilityMethod, true> = {
+  getWebSearchTool: true,
+  getFileSearchTool: true,
+  getCodeInterpreterTool: true,
+  getMCPTool: true,
+};
+
+/** The hosted-tool capability methods a wrapping client must carry over from the wrapped one. */
+export const HOSTED_TOOL_CAPABILITY_METHODS: readonly string[] = Object.keys(CAPABILITY_METHOD_RECORD);
+
+function hasMethod(value: object, name: CapabilityMethod): boolean {
   return typeof (value as Record<string, unknown>)[name] === 'function';
 }
 

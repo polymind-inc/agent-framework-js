@@ -133,3 +133,8 @@ export class StreamConsumedError extends AgentFrameworkError {
 export function throwIfAborted(signal?: AbortSignal): void {
   signal?.throwIfAborted();
 }
+
+/** The human-readable summary of a thrown value: `error.message` for an `Error`, `String(error)` otherwise. */
+export function errorMessageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

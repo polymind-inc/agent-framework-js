@@ -605,6 +605,25 @@ export function parseResponse(response: unknown, ctx: ParseContext = {}): ChatRe
 }
 
 /**
+ * The three events that end a Responses SSE stream; nothing meaningful follows them.
+ *
+ * Single authority for "the stream is over": the terminal case labels in {@link parseStreamEvent}
+ * and the chat client's early stream release both follow this set, so they cannot disagree about
+ * when a stream is done. A new terminal event is added here and to the matching case labels
+ * together.
+ */
+const TERMINAL_RESPONSE_EVENTS: ReadonlySet<string> = new Set([
+  'response.completed',
+  'response.incomplete',
+  'response.failed',
+]);
+
+/** Whether `type` names an event that ends a Responses SSE stream. */
+export function isTerminalResponseEvent(type: string | undefined): boolean {
+  return type !== undefined && TERMINAL_RESPONSE_EVENTS.has(type);
+}
+
+/**
  * Converts one Responses API stream event into a {@link ChatResponseUpdate}.
  *
  * Returns `undefined` for events that carry no framework-visible information (progress markers,
@@ -831,6 +850,7 @@ export function parseStreamEvent(
       break;
     }
 
+    // These labels are exactly TERMINAL_RESPONSE_EVENTS; change them only together.
     case 'response.completed':
     case 'response.incomplete':
     case 'response.failed': {

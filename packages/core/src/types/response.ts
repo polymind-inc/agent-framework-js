@@ -188,14 +188,28 @@ function isValidCreatedAt(value: string | undefined): boolean {
   return value !== undefined && value !== '';
 }
 
-function appendRaw(current: unknown, incoming: unknown): unknown {
+function appendRaw(current: unknown, incoming: unknown, owned: WeakSet<object>): unknown {
   if (incoming === undefined || incoming === null) {
     return current;
   }
   if (current === undefined) {
     return incoming;
   }
-  return Array.isArray(current) ? [...current, incoming] : [current, incoming];
+  // Streams carry one raw event per update, so this append runs per delta. Push in place when the
+  // accumulating array was created by this fold (O(1) per update); copy a caller-supplied array
+  // once so it is never mutated.
+  if (Array.isArray(current)) {
+    if (owned.has(current)) {
+      current.push(incoming);
+      return current;
+    }
+    const copy = [...current, incoming];
+    owned.add(copy);
+    return copy;
+  }
+  const pair = [current, incoming];
+  owned.add(pair);
+  return pair;
 }
 
 interface FoldState {
@@ -210,6 +224,8 @@ interface FoldState {
   continuationToken: ContinuationToken | undefined;
   additionalProperties: Record<string, unknown> | undefined;
   rawRepresentation: unknown;
+  /** Arrays created by this fold's `appendRaw`, safe to extend in place. */
+  ownedRaw: WeakSet<object>;
 }
 
 function foldUpdate(state: FoldState, update: ChatResponseUpdate | AgentResponseUpdate): void {
@@ -249,8 +265,8 @@ function foldUpdate(state: FoldState, update: ChatResponseUpdate | AgentResponse
     state.additionalProperties = { ...state.additionalProperties, ...update.additionalProperties };
   }
   if (update.rawRepresentation !== undefined) {
-    msg.rawRepresentation = appendRaw(msg.rawRepresentation, update.rawRepresentation);
-    state.rawRepresentation = appendRaw(state.rawRepresentation, update.rawRepresentation);
+    msg.rawRepresentation = appendRaw(msg.rawRepresentation, update.rawRepresentation, state.ownedRaw);
+    state.rawRepresentation = appendRaw(state.rawRepresentation, update.rawRepresentation, state.ownedRaw);
   }
 
   state.responseId = orLater(update.responseId, state.responseId);
@@ -286,6 +302,7 @@ function fold(updates: readonly (ChatResponseUpdate | AgentResponseUpdate)[]): F
     continuationToken: undefined,
     additionalProperties: undefined,
     rawRepresentation: undefined,
+    ownedRaw: new WeakSet(),
   };
   for (const update of updates) {
     foldUpdate(state, update);
@@ -317,12 +334,7 @@ export function mergeUpdates<T = undefined>(updates: readonly AgentResponseUpdat
   const init: AgentResponseInit<T> = { messages: state.messages };
   if (state.agentId !== undefined) init.agentId = state.agentId;
   if (state.responseId !== undefined) init.responseId = state.responseId;
-  if (state.createdAt !== undefined) init.createdAt = state.createdAt;
-  if (state.finishReason !== undefined) init.finishReason = state.finishReason;
-  if (state.usageDetails !== undefined) init.usageDetails = state.usageDetails;
-  if (state.continuationToken !== undefined) init.continuationToken = state.continuationToken;
-  if (state.additionalProperties !== undefined) init.additionalProperties = state.additionalProperties;
-  if (state.rawRepresentation !== undefined) init.rawRepresentation = state.rawRepresentation;
+  setFoldMetadata(init, state);
   return agentResponse<T>(init);
 }
 
@@ -333,13 +345,21 @@ export function mergeChatUpdates<T = undefined>(updates: readonly ChatResponseUp
   if (state.responseId !== undefined) init.responseId = state.responseId;
   if (state.conversationId !== undefined) init.conversationId = state.conversationId;
   if (state.model !== undefined) init.model = state.model;
+  setFoldMetadata(init, state);
+  return chatResponse<T>(init);
+}
+
+/** Copies the folded response-level metadata common to both response flavors onto the init. */
+function setFoldMetadata(
+  init: ChatResponseInit<unknown> | AgentResponseInit<unknown>,
+  state: FoldState,
+): void {
   if (state.createdAt !== undefined) init.createdAt = state.createdAt;
   if (state.finishReason !== undefined) init.finishReason = state.finishReason;
   if (state.usageDetails !== undefined) init.usageDetails = state.usageDetails;
   if (state.continuationToken !== undefined) init.continuationToken = state.continuationToken;
   if (state.additionalProperties !== undefined) init.additionalProperties = state.additionalProperties;
   if (state.rawRepresentation !== undefined) init.rawRepresentation = state.rawRepresentation;
-  return chatResponse<T>(init);
 }
 
 /** Constructor input common to both update flavors: {@link ResponseUpdateBase} without `text`. */
