@@ -395,17 +395,16 @@ export class OpenAIChatClient
    * Delete this wrapper (restoring the plain pass-through of the SDK stream) once Foundry ends
    * its streams promptly after the terminal event; the paired test named "releases the SSE
    * stream at the terminal event" documents and pins the behaviour until then.
+   *
+   * The terminal set is exactly the events the stream parser folds as terminal
+   * (`parseStreamEvent`); an event the parser does not treat as terminal must not end the
+   * iteration early, or the two would disagree about when a stream is over.
    */
   static async *#untilTerminalEvent(events: AsyncIterable<unknown>): AsyncGenerator<unknown> {
     for await (const event of events) {
       yield event;
       const type = (event as { type?: string }).type;
-      if (
-        type === 'response.completed' ||
-        type === 'response.incomplete' ||
-        type === 'response.failed' ||
-        type === 'response.cancelled'
-      ) {
+      if (type === 'response.completed' || type === 'response.incomplete' || type === 'response.failed') {
         return;
       }
     }
