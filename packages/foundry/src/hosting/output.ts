@@ -1,6 +1,11 @@
 import type { OutputItem, ResponseEvent } from '@polymind-inc/agent-framework-agentserver';
 import { ID_PREFIX, isValidId, newId } from '@polymind-inc/agent-framework-agentserver';
-import type { Content, FunctionApprovalRequestContent } from '@polymind-inc/agent-framework-core';
+import type {
+  Content,
+  FunctionApprovalRequestContent,
+  TextReasoningContent,
+} from '@polymind-inc/agent-framework-core';
+import { reasoningEncryptedContent, stringifyMcpOutput } from '@polymind-inc/agent-framework-openai/internal';
 import type { ToolboxConsentRequest } from './consent.js';
 import { AGENT_FRAMEWORK_SERVER_LABEL, encodeFunctionOutput } from './converters.js';
 
@@ -89,16 +94,6 @@ interface OpenItem {
    * dropped across hosted turns (Python `_reasoning_output_item`).
    */
   encryptedContent?: string;
-}
-
-/** The opaque reasoning payload used for stateless replay (Python `_reasoning_encrypted_content`). */
-function reasoningEncryptedContent(content: Content): string | undefined {
-  const candidate = content as { protectedData?: string; additionalProperties?: Record<string, unknown> };
-  const value =
-    candidate.protectedData !== undefined && candidate.protectedData !== ''
-      ? candidate.protectedData
-      : candidate.additionalProperties?.encrypted_content;
-  return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
 /**
@@ -200,29 +195,6 @@ function codeInterpreterWireOutputs(outputs: unknown): Array<Record<string, unkn
   return entries;
 }
 
-/** The wire text for an MCP tool result's `output` payload (Python `_stringify_mcp_output`). */
-function mcpOutputText(content: { output?: unknown }): string {
-  const output = content.output;
-  if (output === undefined || output === null) {
-    return '';
-  }
-  if (typeof output === 'string') {
-    return output;
-  }
-  if (Array.isArray(output)) {
-    return output
-      .map((entry) => {
-        if (typeof entry === 'string') {
-          return entry;
-        }
-        const text = (entry as { text?: unknown } | null)?.text;
-        return typeof text === 'string' ? text : JSON.stringify(entry);
-      })
-      .join('');
-  }
-  return JSON.stringify(output) ?? '';
-}
-
 /** Construction options for {@link OutputBuilder}. */
 export interface OutputBuilderOptions {
   /**
@@ -290,7 +262,7 @@ export class OutputBuilder {
       const callId = content.callId;
       const open = this.#openFor('mcp_call', callId);
       if (open !== undefined) {
-        open.item.output = mcpOutputText(content);
+        open.item.output = stringifyMcpOutput(content.output);
         yield* this.close();
         return;
       }
@@ -299,7 +271,7 @@ export class OutputBuilder {
         type: 'custom_tool_call_output',
         id: newId(ID_PREFIX.customToolCallOutput, this.#partitionHint),
         call_id: callId ?? '',
-        output: mcpOutputText(content),
+        output: stringifyMcpOutput(content.output),
       });
       return;
     }
@@ -614,7 +586,7 @@ export class OutputBuilder {
       case 'reasoning': {
         // Whichever fragment carries the payload wins the slot — the provider may attach it to
         // any fragment of the item, and a later one supersedes an earlier (Python does the same).
-        const encrypted = reasoningEncryptedContent(content);
+        const encrypted = reasoningEncryptedContent(content as TextReasoningContent);
         if (encrypted !== undefined) {
           open.encryptedContent = encrypted;
         }

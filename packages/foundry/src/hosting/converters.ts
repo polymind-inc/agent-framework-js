@@ -6,6 +6,13 @@ import type {
 } from '@polymind-inc/agent-framework-agentserver';
 import type { ChatOptions, Content, Message, UsageDetails } from '@polymind-inc/agent-framework-core';
 import { unknownContent, uriContent } from '@polymind-inc/agent-framework-core';
+// The `./internal` entry shares the wire mappers without evaluating the OpenAI SDK, which the
+// hosting adapter never needs — replay must stay cheap to load inside the hosted container.
+import {
+  codeInterpreterCallContents,
+  mcpCallContents,
+  searchCallContents,
+} from '@polymind-inc/agent-framework-openai/internal';
 
 /**
  * The label the framework declares itself under when it surfaces an approval as MCP's.
@@ -235,39 +242,12 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       return { role: 'assistant', contents: [content] };
     }
 
-    case 'mcp_call': {
+    case 'mcp_call':
       // A provider-run MCP call from an earlier turn. Restored so the model keeps seeing what the
       // tool was asked and what it returned; dropping it would have the model re-call the tool or
-      // contradict its own transcript. Shapes mirror the openai package's `mcp_call` conversion,
-      // so the provider-bound re-send path treats both identically.
-      const callId =
-        typeof item.id === 'string' && item.id !== ''
-          ? item.id
-          : typeof item.call_id === 'string'
-            ? item.call_id
-            : '';
-      const contents: Content[] = [
-        {
-          type: 'mcp_server_tool_call',
-          callId,
-          toolName: typeof item.name === 'string' ? item.name : '',
-          serverName: typeof item.server_label === 'string' ? item.server_label : '',
-          arguments: parseArguments(item.arguments),
-          rawRepresentation: item,
-        },
-      ];
-      const output = item.output;
-      if (output !== undefined && output !== null) {
-        // Python parity: the MCP result payload lives in `output` as a content list.
-        contents.push({
-          type: 'mcp_server_tool_result',
-          callId,
-          output: [{ type: 'text', text: String(output), rawRepresentation: item }],
-          rawRepresentation: item,
-        });
-      }
-      return { role: 'assistant', contents };
-    }
+      // contradict its own transcript. The openai package's mapper is the single implementation,
+      // so the provider-bound re-send path treats a replayed call and a live one identically.
+      return { role: 'assistant', contents: mcpCallContents(item) };
 
     case 'mcp_approval_request': {
       const serverLabel = typeof item.server_label === 'string' ? item.server_label : '';
@@ -402,69 +382,13 @@ export function itemToMessage(item: OutputItem): Message | undefined {
     }
 
     case 'web_search_call':
-    case 'file_search_call': {
-      // Both halves of a provider-run search live on one item; the shapes mirror the openai
-      // package's conversion of the same item types, so the provider-bound re-send path treats
-      // a replayed search and a live one identically.
-      const callId =
-        typeof item.id === 'string' ? item.id : typeof item.call_id === 'string' ? item.call_id : '';
-      const isWeb = item.type === 'web_search_call';
-      const toolName = isWeb ? 'web_search' : 'file_search';
-      const action =
-        typeof item.action === 'object' && item.action !== null
-          ? (item.action as Record<string, unknown>)
-          : {};
-      const status = typeof item.status === 'string' ? { additionalProperties: { status: item.status } } : {};
-      return {
-        role: 'assistant',
-        contents: [
-          {
-            type: 'search_tool_call',
-            callId,
-            toolName,
-            arguments: isWeb ? action : { queries: Array.isArray(item.queries) ? item.queries : [] },
-            ...status,
-            rawRepresentation: item,
-          },
-          {
-            type: 'search_tool_result',
-            callId,
-            toolName,
-            result: isWeb ? { action: item.action } : { results: item.results },
-            ...status,
-            rawRepresentation: item,
-          },
-        ],
-      };
-    }
+    case 'file_search_call':
+      // Both halves of a provider-run search live on one item; the openai package's mapper is
+      // the single implementation, like `mcp_call`.
+      return { role: 'assistant', contents: searchCallContents(item) };
 
-    case 'code_interpreter_call': {
-      const callId =
-        typeof item.id === 'string' ? item.id : typeof item.call_id === 'string' ? item.call_id : '';
-      const contents: Content[] = [];
-      if (typeof item.code === 'string' && item.code !== '') {
-        contents.push({
-          type: 'code_interpreter_tool_call',
-          callId,
-          inputs: [{ type: 'text', text: item.code, rawRepresentation: item }],
-          rawRepresentation: item,
-        });
-      }
-      const outputs: Content[] = [];
-      for (const output of Array.isArray(item.outputs) ? (item.outputs as JsonObject[]) : []) {
-        if (output?.type === 'logs') {
-          outputs.push({
-            type: 'text',
-            text: typeof output.logs === 'string' ? output.logs : '',
-            rawRepresentation: output,
-          });
-        } else if (output?.type === 'image' && typeof output.url === 'string') {
-          outputs.push({ type: 'uri', uri: output.url, mediaType: 'image', rawRepresentation: output });
-        }
-      }
-      contents.push({ type: 'code_interpreter_tool_result', callId, outputs, rawRepresentation: item });
-      return { role: 'assistant', contents };
-    }
+    case 'code_interpreter_call':
+      return { role: 'assistant', contents: codeInterpreterCallContents(item) };
 
     case 'local_shell_call': {
       // The exec action's field is `command` (a list), unlike `shell_call`'s `commands`.

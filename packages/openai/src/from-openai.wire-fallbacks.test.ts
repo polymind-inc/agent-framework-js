@@ -344,6 +344,25 @@ describe('function and hosted tool call fallbacks', () => {
     ]);
   });
 
+  it('falls back to call_id when an mcp_call has an empty id', () => {
+    const contents = contentsOf(parseResponse({ output: [{ type: 'mcp_call', id: '', call_id: 'mc_2' }] }));
+    expect(contents[0]).toMatchObject({ type: 'mcp_server_tool_call', callId: 'mc_2' });
+  });
+
+  it('falls back to call_id when a search call has an empty id', () => {
+    const contents = contentsOf(
+      parseResponse({ output: [{ type: 'web_search_call', id: '', call_id: 'ws_2' }] }),
+    );
+    expect(contents[0]).toMatchObject({ type: 'search_tool_call', callId: 'ws_2' });
+  });
+
+  it('falls back to the item id when a code interpreter call_id is empty', () => {
+    const contents = contentsOf(
+      parseResponse({ output: [{ type: 'code_interpreter_call', call_id: '', id: 'ci_9' }] }),
+    );
+    expect(contents[0]).toMatchObject({ type: 'code_interpreter_tool_result', callId: 'ci_9' });
+  });
+
   it('maps a bare mcp_call without output to a call and no result', () => {
     const contents = contentsOf(parseResponse({ output: [{ type: 'mcp_call' }] }));
     expect(contents).toEqual([

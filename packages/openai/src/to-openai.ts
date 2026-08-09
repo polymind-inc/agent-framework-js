@@ -40,9 +40,13 @@ function resultToOutput(result: unknown): string {
  *
  * Mirrors Python `_stringify_mcp_output`: strings pass through, text-bearing entries contribute
  * their text, and anything else is JSON-encoded rather than dropped so the wire payload stays
- * parseable for downstream callers.
+ * parseable for downstream callers. A payload `JSON.stringify` cannot represent (a symbol, a
+ * function) degrades to an empty string rather than leaking `undefined` into the wire field.
+ *
+ * The single implementation of this rendering: the live provider path here and the Foundry
+ * hosting replay path both go through it, so the two cannot drift apart.
  */
-function stringifyMcpOutput(output: unknown): string {
+export function stringifyMcpOutput(output: unknown): string {
   if (output === undefined || output === null) {
     return '';
   }
@@ -60,7 +64,7 @@ function stringifyMcpOutput(output: unknown): string {
       })
       .join('');
   }
-  return JSON.stringify(output);
+  return JSON.stringify(output) ?? '';
 }
 
 /** The text-span regions of an annotation that carry valid integer bounds. */
@@ -258,13 +262,27 @@ function functionCallOutput(content: FunctionResultContent): string | ResponsesI
   return parts.length === 0 ? resultToOutput(content.result) : parts;
 }
 
-/** The opaque replay payload of a reasoning fragment, wherever it is carried. */
-function reasoningEncryptedContent(content: TextReasoningContent): string | undefined {
-  if (typeof content.protectedData === 'string' && content.protectedData !== '') {
-    return content.protectedData;
-  }
-  const fallback = content.additionalProperties?.encrypted_content;
-  return typeof fallback === 'string' && fallback !== '' ? fallback : undefined;
+/**
+ * The opaque replay payload of a reasoning fragment, wherever it is carried.
+ *
+ * Providers that support stateless continuation attach an encrypted reasoning payload that must
+ * be replayed verbatim. This framework stores it as {@link TextReasoningContent.protectedData};
+ * transcripts written by other producers carry it as `additionalProperties.encrypted_content`
+ * instead, so both places are read (Python `_reasoning_encrypted_content`). A `protectedData`
+ * that is present but unusable (not a string) does not fall through to the copy in
+ * `additionalProperties` — the two are not guaranteed to describe the same fragment. Returns
+ * `undefined` when no usable payload is present; an empty string counts as absent.
+ *
+ * The single implementation of this lookup: the provider replay path and the hosted replay path
+ * (via the `./internal` entry) both read through it, so they cannot disagree about which
+ * fragments are replayable.
+ */
+export function reasoningEncryptedContent(content: TextReasoningContent): string | undefined {
+  const value =
+    content.protectedData !== undefined && content.protectedData !== ''
+      ? content.protectedData
+      : content.additionalProperties?.encrypted_content;
+  return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
 /**

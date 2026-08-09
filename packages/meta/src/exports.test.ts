@@ -69,6 +69,9 @@ describe('the exports map mirrors every dependency subpath', () => {
     for (const [dir, prefix] of dependencies) {
       for (const subpath of Object.keys(readManifest(`../../${dir}/package.json`).exports)) {
         if (subpath === './package.json') continue;
+        // `./internal` entries are contracts between the framework's own packages, not part of
+        // the supported surface — the umbrella package deliberately does not re-export them.
+        if (subpath === './internal' || subpath.endsWith('/internal')) continue;
         expected.add(`.${prefix}${subpath.slice(1)}`);
       }
     }

@@ -206,6 +206,16 @@ describe('call and result item fallbacks', () => {
     expect(message.contents[0]).toMatchObject({ callId: 'mc_1' });
   });
 
+  it('prefers the wire call_id over the item id on a code interpreter call', () => {
+    const message = messageOf({ type: 'code_interpreter_call', id: 'ci_1', call_id: 'call_ci1', code: 'x' });
+    expect(message.contents[0]).toMatchObject({ type: 'code_interpreter_tool_call', callId: 'call_ci1' });
+  });
+
+  it('falls back to call_id when a search call has an empty id', () => {
+    const message = messageOf({ type: 'web_search_call', id: '', call_id: 'ws_2' });
+    expect(message.contents[0]).toMatchObject({ type: 'search_tool_call', callId: 'ws_2' });
+  });
+
   it('maps a custom_tool_call_output without call_id or output to empty strings', () => {
     expect(messageOf({ type: 'custom_tool_call_output' }).contents[0]).toMatchObject({
       type: 'function_result',
