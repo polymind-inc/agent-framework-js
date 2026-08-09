@@ -1430,6 +1430,44 @@ describe('input_items paging', () => {
   });
 });
 
+describe('handler context identity', () => {
+  it('hands the handler the resolved agent reference and sandbox session id', async () => {
+    let seen: HandlerContext | undefined;
+    const server = makeServer(async function* (_request: CreateResponseRequest, context: HandlerContext) {
+      seen = context;
+      yield { type: 'response.created', response: context.response };
+      yield { type: 'response.in_progress', response: { ...context.response, status: 'in_progress' } };
+      yield { type: 'response.completed', response: { ...context.response, status: 'completed' } };
+    });
+
+    const response = await server.handle(post({ input: 'hi' }));
+    expect(response.status).toBe(200);
+
+    const context = must(seen);
+    // The same resolution the response resource and the `x-agent-session-id` header carry — the
+    // handler no longer has to re-derive either.
+    expect(context.agentReference).toEqual(((await response.json()) as ResponseObject).agent_reference);
+    expect(context.agentReference.name).not.toBe('');
+    expect(context.agentSessionId).toBe(must(response.headers.get(HEADERS.sessionId)));
+  });
+
+  it('resolves the agent reference the request named', async () => {
+    let seen: HandlerContext | undefined;
+    const server = makeServer(async function* (_request: CreateResponseRequest, context: HandlerContext) {
+      seen = context;
+      yield { type: 'response.created', response: context.response };
+      yield { type: 'response.in_progress', response: { ...context.response, status: 'in_progress' } };
+      yield { type: 'response.completed', response: { ...context.response, status: 'completed' } };
+    });
+
+    await server.handle(
+      post({ input: 'hi', agent_reference: { type: 'agent_reference', name: 'triage', version: '3' } }),
+    );
+
+    expect(must(seen).agentReference).toMatchObject({ name: 'triage', version: '3' });
+  });
+});
+
 describe('draining', () => {
   let server: ResponsesServer;
 

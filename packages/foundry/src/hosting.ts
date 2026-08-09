@@ -52,6 +52,10 @@ export { FileSystemAgentSessionStore, InMemoryAgentSessionStore } from './hostin
 
 export type { FoundryHandlerConfig } from './hosting/handler.js';
 export { createFoundryHandler, defaultApprovalStorage, defaultSessionStore } from './hosting/handler.js';
+export type { HostedAgentContext } from './hosting/hosted-context.js';
+// The builder (hostedAgentContextOf) and the iteration wrapper stay internal: the handler is the
+// only writer, which is what keeps the ambient read-only for everything below it.
+export { getHostedAgentContext } from './hosting/hosted-context.js';
 
 export type { ResponsesHostServerConfig } from './hosting/server.js';
 export { defaultStore, ResponsesHostServer } from './hosting/server.js';

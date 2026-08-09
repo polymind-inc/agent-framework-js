@@ -31,6 +31,7 @@ import {
   requestToChatOptions,
   usageToResponseUsage,
 } from './converters.js';
+import { hostedAgentContextOf, withHostedAgentContext } from './hosted-context.js';
 import { OutputBuilder } from './output.js';
 import type { AgentSessionStore } from './session-store.js';
 import {
@@ -376,6 +377,7 @@ export function createFoundryHandler(options: FoundryHandlerConfig): ResponseHan
     yield { type: 'response.in_progress', response: { ...context.response, status: 'in_progress' } };
 
     const consentChannel = createConsentChannel();
+    const hostedContext = hostedAgentContextOf(context);
 
     try {
       const stream = agent.run(messages, {
@@ -393,7 +395,10 @@ export function createFoundryHandler(options: FoundryHandlerConfig): ResponseHan
       // text is attacker-reachable, so it is never read as protocol (see `consent-channel.ts`).
       const consentRequests: ToolboxConsentRequest[] = [];
 
-      for await (const update of withConsentChannel(consentChannel, stream)) {
+      for await (const update of withHostedAgentContext(
+        hostedContext,
+        withConsentChannel(consentChannel, stream),
+      )) {
         for (const content of update.contents) {
           if (content.type === 'usage') {
             usage = addUsage(usage, content.usageDetails);

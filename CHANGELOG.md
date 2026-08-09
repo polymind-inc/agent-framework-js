@@ -6,6 +6,22 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-foundry`** — the hosting layer now exposes the turn's typed
+  execution context to code running inside the agent
+  ([#23](https://github.com/polymind-inc/agent-framework-js/issues/23)). `getHostedAgentContext()`
+  (exported from `/hosting`) returns a frozen per-turn `HostedAgentContext` — the platform user id
+  and call id, the correlation id, the response and conversation ids, the resolved agent
+  reference, the sandbox session id, and the turn's `AbortSignal` — from any tool, context
+  provider or middleware, and `undefined` outside a hosted turn. Concurrent turns on one container
+  each see their own context; the stores that persist per-user state keep taking their partition
+  key as an explicit argument. There is deliberately no per-request tenant field: the platform's
+  trust boundary injects only the user id and call id, and a hosted container is deployed per
+  agent inside one tenant.
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`** — `HandlerContext` gains two required
+  fields: `agentReference` (the resolved agent this turn targets, always with a non-empty name)
+  and `agentSessionId` (the resolved sandbox session id, as returned on `x-agent-session-id`).
+  Handlers only read the context and are unaffected; code that *constructs* `HandlerContext`
+  values — test doubles, custom protocol frontends — must now supply both.
 - **[BREAKING] `@polymind-inc/agent-framework-core`** — the function-calling loop no longer
   hardcodes OpenAI's `conv_` prefix when deciding whether a conversation id advances between tool
   rounds. Which ids are stable service-side anchors is now the provider's declaration:
