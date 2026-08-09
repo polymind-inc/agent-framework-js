@@ -261,8 +261,10 @@ describe('setupHostObservability', () => {
       }
 
       const clients = httpSpans.getFinishedSpans().filter((span) => span.kind === SpanKind.CLIENT);
-      expect(clients.length).toBeGreaterThanOrEqual(1);
-      expect(String(clients[0]?.attributes['url.full'])).toContain('/via-fetch');
+      // Located by URL rather than position: finished-span order is not guaranteed, and other
+      // client spans may exist alongside the one this test issued.
+      const fetchSpan = clients.find((span) => String(span.attributes['url.full']).includes('/via-fetch'));
+      expect(fetchSpan).toBeDefined();
       // The local listener served the call, but no server span exists for it: the platform's
       // gateway already records one per turn, and the listener would emit one per readiness probe.
       expect(httpSpans.getFinishedSpans().filter((span) => span.kind === SpanKind.SERVER)).toEqual([]);
