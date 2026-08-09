@@ -5,8 +5,8 @@ import {
   finishChatSpan,
   inActiveSpan,
   recordSpanError,
-  setAttr,
   setMessageContent,
+  setSystemInstructions,
   spanName,
   startSpan,
   withActiveSpan,
@@ -109,9 +109,7 @@ export function withChatTelemetry<TOptions extends ChatOptions>(
         span = chatSpan;
         startedAt = performance.now();
         setMessageContent(chatSpan, GEN_AI.inputMessages, messages);
-        if (options?.instructions !== undefined) {
-          setAttr(chatSpan, GEN_AI.systemInstructions, options.instructions);
-        }
+        setSystemInstructions(chatSpan, options?.instructions);
         try {
           // Inside the `try`: a client that rejects the call synchronously — a bad model name, a
           // missing key — would otherwise leave this span open and unrecorded, because the failure

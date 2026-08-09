@@ -10,8 +10,7 @@ import type { FunctionMiddleware, FunctionMiddlewareContext } from '../middlewar
 import { runMiddlewareChain, terminateMiddleware } from '../middleware/middleware.js';
 import { readRunScope, stripRunScope } from '../middleware/run-scope.js';
 import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
-import { captureMessageContent } from '../observability/settings.js';
-import { recordSpanError, setAttr, spanName, withSpan } from '../observability/tracing.js';
+import { capturesContent, recordSpanError, setAttr, spanName, withSpan } from '../observability/tracing.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import {
   approvalReason,
@@ -374,7 +373,7 @@ async function invokeOne(
       ...(target.description === '' ? {} : { [GEN_AI.toolDescription]: target.description }),
     },
     async (span) => {
-      if (captureMessageContent()) {
+      if (capturesContent(span)) {
         setAttr(span, GEN_AI.toolArguments, stringifyForSpan(call.arguments));
       }
       // Middleware runs inside the span: a middleware that answers for the tool still produced the
@@ -427,7 +426,7 @@ async function invokeOne(
       if (settled.status === 'exception') {
         // Reported to the model as a result rather than thrown, so the span records it explicitly.
         recordSpanError(span, settled.error);
-      } else if (settled.userInputRequests === undefined && captureMessageContent()) {
+      } else if (settled.userInputRequests === undefined && capturesContent(span)) {
         setAttr(span, GEN_AI.toolResult, stringifyForSpan(settled.result));
       }
       return settled;
