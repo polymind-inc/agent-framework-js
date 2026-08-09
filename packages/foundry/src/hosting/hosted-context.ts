@@ -71,7 +71,10 @@ export function hostedAgentContextOf(context: HandlerContext): HostedAgentContex
     requestId: context.request.requestId,
     responseId: context.responseId,
     conversationId: context.conversationId,
-    agent: context.agentReference,
+    // A frozen copy, not the shared instance: the protocol layer persists its own reference on
+    // the response resource, so a mutation through this view — or freezing an object this module
+    // does not own — must not reach it.
+    agent: Object.freeze({ ...context.agentReference }),
     agentSessionId: context.agentSessionId,
     signal: context.signal,
   });
@@ -110,8 +113,9 @@ export async function* withHostedAgentContext<T>(
       yield next.value;
     }
   } finally {
-    // `break` in the consumer has to reach the agent's own cleanup (session save, tool teardown)
-    // exactly as it would without this wrapper.
-    await iterator.return?.();
+    // `break` in the consumer has to reach the agent's own cleanup (session save, tool teardown,
+    // afterRun hooks) exactly as it would without this wrapper — and that cleanup runs *inside*
+    // the context, because an early end is still part of the turn it ends.
+    await storage.run(context, () => iterator.return?.());
   }
 }
