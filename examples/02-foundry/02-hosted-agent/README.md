@@ -163,8 +163,9 @@ and never forwarded anywhere) and `x-request-id` (echoed back).
 
 Nothing to wire up: `serve` configures OpenTelemetry at startup, the way the reference hosts do.
 A Foundry deployment injects `APPLICATIONINSIGHTS_CONNECTION_STRING`, so traces (`invoke_agent` /
-`chat` / `execute_tool` spans with GenAI attributes) and token-usage metrics appear in the
-project's observability page / Application Insights without any code — the startup log prints
+`chat` / `execute_tool` spans with GenAI attributes, plus HTTP client spans for the outbound
+`fetch` calls — the model and storage requests) and token-usage metrics appear in the project's
+observability page / Application Insights without any code — the startup log prints
 `exporting telemetry via: azure-monitor` when the wiring is live.
 
 Locally, point OTLP at any collector (an Aspire dashboard, Jaeger):
