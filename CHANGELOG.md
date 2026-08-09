@@ -4,6 +4,74 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
+## 0.2.2
+
+Fixes accumulated since 0.2.1, centred on running agents as Microsoft Foundry Hosted Agents:
+persistence against the Foundry storage service, latency of streamed model calls, transcript
+fidelity, and telemetry attribution.
+
+- **`@polymind-inc/agent-framework-openai`**
+  - A streamed Responses API call now releases its SSE stream as soon as the terminal event
+    (`response.completed` / `response.incomplete` / `response.failed`) has been yielded, instead
+    of draining to the connection close. Azure AI Foundry's `/openai/v1/responses` holds the
+    socket open for ~5 seconds after the terminal event and never sends the `[DONE]` sentinel, so
+    every streamed round paid that tail — for a deployed hosted agent, the measured end-to-end
+    turn dropped from 9.7s to 3.5s. Against an endpoint that closes promptly after the terminal
+    event this is a no-op. The wrapper is a workaround for the service-side behavior; its removal
+    is tracked in [#40](https://github.com/polymind-inc/agent-framework-js/issues/40).
+  - A failed response now surfaces its diagnostic: the parsed response and the `response.failed`
+    stream event carry an `error` content built from `response.error`, with generic substitutes
+    when the wire carries no usable message or code. Previously the reason a run failed was only
+    available in `rawRepresentation`.
+  - A local tool's approval no longer reaches the Responses API input. Only hosted (MCP)
+    approvals serialize to `mcp_approval_request` / `mcp_approval_response` items; a local
+    approval is resolved in-process, and serializing it produced an orphaned request
+    (`server_label: null`) or a response referencing an id the API never issued. Mirrors the
+    upstream Python fix.
+- **`@polymind-inc/agent-framework-core`**
+  - `AgentResponse.text` / `ChatResponse.text` join the texts of multiple messages with a
+    newline, matching the .NET reference (previously concatenated without a separator).
+  - `gen_ai.system_instructions` is recorded on chat spans only when sensitive-content capture is
+    enabled, serialized as a parts array (`[{"type":"text","content":…}]`). It was previously
+    stamped unconditionally as a bare string, so the system prompt reached the tracing backend
+    even with capture off — the OpenTelemetry GenAI conventions treat the attribute as opt-in,
+    and the .NET and Python implementations gate it the same way.
+- **`@polymind-inc/agent-framework-foundry`**
+  - `FoundryResponseStore` is production-ready and is now the hosted default. Writes carry the
+    resolved `agent_reference` and forward the platform call id (the two undocumented
+    requirements behind the service's opaque 500s), replayed history travels as item-id
+    references instead of re-sent items, conversation ids resolve through the service's own
+    linkage, ambiguous failures are retried with bounded backoff and reconciled against what the
+    service actually holds, and background responses replay from a sandbox-local event mirror —
+    removing the documented 501 limitation on background execution. A hosted container without a
+    reachable project endpoint falls back to the sandbox filesystem.
+  - The hosting converters cover the Responses v2 item set: twelve more inbound item types —
+    provider-run searches, code interpreter and image generation among them — now convert to
+    framework messages instead of being silently dropped from the replayed transcript, and the
+    output builder emits the matching wire representations so those items survive into the next
+    turn's history. Semantics cross-checked against the .NET and Python hosted converters.
+- **`@polymind-inc/agent-framework-agentserver`**
+  - An input item that arrives without an id is assigned a platform id under its type's prefix
+    before persistence, covering the reference id generator's full per-type dispatch. The Foundry
+    storage service refuses an id-less item with an opaque 500, so a turn whose `input` was an
+    item array without ids — the Foundry Playground's request shape among them — ended in
+    `response.failed` with `storage_error` instead of completing. An item that already carries an
+    id keeps it, and an id-less item of an unrecognized type is left out of persistence.
+  - `GET /responses/{id}` reports `cancelled` as soon as a cancel has been accepted, instead of
+    `in_progress` for as long as the cancel waits out its grace period. Only the status is
+    overridden; the cancelled terminal still clears the output when the winddown ends, matching
+    the reference server's refresh.
+  - The hosted observability setup instruments outbound `fetch` (undici), so model requests and
+    Foundry storage writes appear as HTTP client spans nested under the `chat` / `invoke_agent`
+    spans — a 7-second span now shows where the time went.
+  - Hosted telemetry is attributed to the deployed agent: a processor stamps the
+    `microsoft.gen_ai.main_agent.*` attributes (the only `microsoft.*` span attributes the Azure
+    Monitor JS exporter forwards), and the resource carries `foundry.*` attributes mirroring the
+    .NET host, so the Foundry portal can associate spans with the agent and project.
+  - New public API from the storage work: `stateRoot` and `resolveAgentReference` are exported,
+    and `FoundryResponseStoreConfig` accepts `replayRoot` and `retry`.
+- Repository: issue and pull request labels are applied automatically from paths and templates.
+
 ## 0.2.1
 
 Documentation and positioning only — no change to any published API.
