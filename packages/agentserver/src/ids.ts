@@ -38,6 +38,76 @@ export const ID_PREFIX = {
   oauthConsentRequest: 'oacr',
 } as const;
 
+/**
+ * The prefix an item of each wire `type` mints its id under.
+ *
+ * The full per-type dispatch of the reference's id factories (Python `IdGenerator.new_item_id`),
+ * entry for entry — a type missing here is silently left out of persistence, so partial coverage
+ * would punch holes in the stored transcript. A type absent from the reference dispatch has no
+ * known prefix, and no valid platform id can be minted for it.
+ *
+ * One deliberate divergence: the reference dispatch mints `oauth` for `oauth_consent_request`,
+ * but its own hosting layer (and this package's `OutputBuilder`) mint `oacr` for the same item
+ * type; `oacr` is kept so an item's id prefix does not depend on which layer minted it.
+ */
+const ITEM_ID_PREFIX: Record<string, string> = {
+  message: ID_PREFIX.message,
+  output_message: 'om',
+  function_call: ID_PREFIX.functionCall,
+  function_call_output: ID_PREFIX.functionCallOutput,
+  custom_tool_call: ID_PREFIX.customToolCall,
+  custom_tool_call_output: ID_PREFIX.customToolCallOutput,
+  computer_call: ID_PREFIX.computerCall,
+  computer_call_output: 'cuo',
+  file_search_call: ID_PREFIX.fileSearchCall,
+  web_search_call: ID_PREFIX.webSearchCall,
+  image_generation_call: ID_PREFIX.imageGenerationCall,
+  code_interpreter_call: ID_PREFIX.codeInterpreterCall,
+  local_shell_call: 'lsh',
+  local_shell_call_output: 'lsho',
+  shell_call: 'lsh',
+  shell_call_output: 'lsho',
+  apply_patch_call: 'ap',
+  apply_patch_call_output: 'apo',
+  mcp_list_tools: ID_PREFIX.mcpListTools,
+  mcp_call: ID_PREFIX.mcpCall,
+  mcp_approval_request: ID_PREFIX.mcpApprovalRequest,
+  mcp_approval_response: 'mcpa',
+  reasoning: ID_PREFIX.reasoning,
+  compaction: 'cmp',
+  compaction_summary: 'cmp',
+  structured_outputs: ID_PREFIX.functionCallOutput,
+  tool_search_call: 'ts',
+  tool_search_output: 'tso',
+  additional_tools: 'adt',
+  oauth_consent_request: ID_PREFIX.oauthConsentRequest,
+  memory_search_call: 'mem',
+  workflow_action: 'wfa',
+  a2a_preview_call: 'a2a',
+  a2a_preview_call_output: 'a2ao',
+  bing_grounding_call: 'bg',
+  bing_grounding_call_output: 'bgo',
+  sharepoint_grounding_preview_call: 'sp',
+  sharepoint_grounding_preview_call_output: 'spo',
+  azure_ai_search_call: 'ais',
+  azure_ai_search_call_output: 'aiso',
+  bing_custom_search_preview_call: 'bcs',
+  bing_custom_search_preview_call_output: 'bcso',
+  openapi_call: 'oa',
+  openapi_call_output: 'oao',
+  browser_automation_preview_call: 'ba',
+  browser_automation_preview_call_output: 'bao',
+  fabric_dataagent_preview_call: 'fda',
+  fabric_dataagent_preview_call_output: 'fdao',
+  azure_function_call: 'azf',
+  azure_function_call_output: 'azfo',
+};
+
+/** The id prefix for an item wire `type`, or `undefined` when the type has none. */
+export function itemIdPrefix(type: string): string | undefined {
+  return ITEM_ID_PREFIX[type];
+}
+
 function randomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);

@@ -25,7 +25,7 @@ import {
   unavailable,
   upstreamError,
 } from './errors.js';
-import { ID_PREFIX, newId, newResponseId } from './ids.js';
+import { ID_PREFIX, itemIdPrefix, newId, newResponseId } from './ids.js';
 import type { LifecycleViolation } from './lifecycle.js';
 import { applyCancelledTerminal, enforceLifecycle, ResponseTracker } from './lifecycle.js';
 import { flushTelemetry } from './observability/flush.js';
@@ -1004,7 +1004,14 @@ export class ResponsesServer {
 
       // A string `input` is shorthand for one user message. Normalizing it here is what keeps it
       // in the stored transcript: left as-is it would simply vanish, and the next turn would
-      // replay a conversation missing everything the caller actually said.
+      // replay a conversation missing everything the caller actually said. An item array is
+      // normalized too: callers — the Foundry Playground among them — send items with no ids,
+      // and a service-side store refuses an id-less item (Foundry answers an opaque 500), which
+      // would turn the whole persist into a `storage_error` terminal. An item that already
+      // carries an id keeps it — replayed history is deduplicated against the store by exactly
+      // that id — and an id-less item of a type with no known prefix stays out of persistence
+      // (Python `to_output_item` drops unrecognized types the same way): no valid id can be
+      // minted for it, and it already reached the model as input.
       const inputItems: OutputItem[] =
         typeof created.input === 'string'
           ? created.input === ''
@@ -1018,7 +1025,13 @@ export class ResponsesServer {
                 },
               ]
           : Array.isArray(created.input)
-            ? (created.input as OutputItem[])
+            ? (created.input as OutputItem[]).flatMap((item): OutputItem[] => {
+                if (typeof item.id === 'string' && item.id !== '') {
+                  return [item];
+                }
+                const prefix = itemIdPrefix(item.type);
+                return prefix === undefined ? [] : [{ ...item, id: newId(prefix, responseId) }];
+              })
             : [];
       const storedInputItems = [...history, ...inputItems];
       // The replayed history is already held by a service-side store under these very ids, so it
