@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-a2a",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Agent2Agent (A2A) protocol client for the Agent Framework: use a remote A2A agent as an agent.",
   "keywords": [
     "agent",

@@ -120,7 +120,7 @@ export function stateRoot(): string {
 }
 
 /** This package's version. Keep in sync with `version` in package.json — a unit test enforces it. */
-export const PACKAGE_VERSION = '0.2.1';
+export const PACKAGE_VERSION = '0.2.2';
 
 /** The `x-platform-server` value: which SDK, which protocol, which runtime. */
 export function serverIdentity(): string {
