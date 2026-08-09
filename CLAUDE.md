@@ -19,8 +19,12 @@ The points below are the ones most often gotten wrong.
 4. **The core has exactly one runtime dependency**, `@opentelemetry/api`. Schema libraries are
    accepted through the Standard Schema interface, never depended on. No Node-specific APIs in the
    core — it has to keep running on Deno, Bun, edge runtimes and in browsers.
-5. **The public API is frozen as Baseline v0.1.** Deviating from it is a deliberate act that gets
-   discussed in an issue before it gets written.
+5. **API surface changes are grounded in the reference implementations; new features are gated.**
+   The public API is no longer frozen, but a change to its surface must be justified by alignment
+   with the reference implementations — name the reference behaviour it matches. Breaking changes
+   are called out in the changelog (during `0.x`, minor releases may break). New functionality —
+   a new package, a new API area, workflows — is not built without an explicit request or an
+   issue asking for it; quality, performance and parity work take priority.
 6. **Fix bugs reproduction-first.** Write a test that fails against the current code, make the fix,
    then temporarily revert the fix and confirm the test fails again.
 7. **Comments are self-contained.** They explain the code to a first-time reader. No references to
