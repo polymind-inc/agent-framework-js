@@ -495,9 +495,13 @@ export function codeInterpreterCallContents(item: unknown): Content[] {
 /** The sandbox's stdout and any images it produced. */
 function codeInterpreterOutputs(item: Wire<ResponseCodeInterpreterToolCall>): Content[] {
   const outputs: Content[] = [];
-  for (const output of item.outputs ?? []) {
+  // A stored transcript is not trusted wire data: a non-array `outputs` must not throw out of the
+  // parse, and a non-string `logs` degrades to empty text rather than leaking into the string
+  // contract of `Content.text`.
+  for (const output of Array.isArray(item.outputs) ? item.outputs : []) {
     if (output?.type === 'logs') {
-      outputs.push({ type: 'text', text: output.logs ?? '', rawRepresentation: output });
+      const logs = output.logs;
+      outputs.push({ type: 'text', text: typeof logs === 'string' ? logs : '', rawRepresentation: output });
     } else if (output?.type === 'image' && typeof output.url === 'string') {
       outputs.push({ type: 'uri', uri: output.url, mediaType: 'image', rawRepresentation: output });
     }

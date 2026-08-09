@@ -211,6 +211,20 @@ describe('call and result item fallbacks', () => {
     expect(message.contents[0]).toMatchObject({ type: 'code_interpreter_tool_call', callId: 'call_ci1' });
   });
 
+  it('renders a non-string logs payload in a replayed code interpreter call as empty text', () => {
+    // The stored transcript is not trusted: `Content.text` is a string contract, so corrupt
+    // `logs` degrades to empty rather than leaking a non-string into the replayed message.
+    const message = messageOf({
+      type: 'code_interpreter_call',
+      id: 'ci_1',
+      outputs: [{ type: 'logs', logs: 42 }],
+    });
+    expect(message.contents[0]).toMatchObject({
+      type: 'code_interpreter_tool_result',
+      outputs: [expect.objectContaining({ type: 'text', text: '' })],
+    });
+  });
+
   it('falls back to call_id when a search call has an empty id', () => {
     const message = messageOf({ type: 'web_search_call', id: '', call_id: 'ws_2' });
     expect(message.contents[0]).toMatchObject({ type: 'search_tool_call', callId: 'ws_2' });
