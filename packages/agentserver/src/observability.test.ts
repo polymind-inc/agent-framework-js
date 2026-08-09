@@ -1,4 +1,4 @@
-import { context as contextApi, metrics, propagation, trace } from '@opentelemetry/api';
+import { context as contextApi, metrics, propagation, SpanKind, trace } from '@opentelemetry/api';
 import type * as SdkMetrics from '@opentelemetry/sdk-metrics';
 import {
   BasicTracerProvider,
@@ -240,6 +240,65 @@ describe('setupHostObservability', () => {
     await expect(serve(server, { port: 0, host: '127.0.0.1', handleSignals: false })).rejects.toThrow(
       /Unsupported OTLP protocol/,
     );
+  });
+
+  it('records outbound fetch calls as HTTP client spans', async () => {
+    const httpSpans = new InMemorySpanExporter();
+    const { setupHostObservability } = await freshSetup();
+    const handle = await setupHostObservability({ spanProcessors: [new SimpleSpanProcessor(httpSpans)] });
+
+    // The `finally` unsubscribes the undici channels even when an assertion throws, so later
+    // tests always see an uninstrumented process.
+    try {
+      const { createServer } = await import('node:http');
+      const server = createServer((_req, res) => res.end('ok'));
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address() as { port: number };
+      try {
+        await (await fetch(`http://127.0.0.1:${port}/via-fetch`)).text();
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+
+      const clients = httpSpans.getFinishedSpans().filter((span) => span.kind === SpanKind.CLIENT);
+      expect(clients.length).toBeGreaterThanOrEqual(1);
+      expect(String(clients[0]?.attributes['url.full'])).toContain('/via-fetch');
+      // The local listener served the call, but no server span exists for it: the platform's
+      // gateway already records one per turn, and the listener would emit one per readiness probe.
+      expect(httpSpans.getFinishedSpans().filter((span) => span.kind === SpanKind.SERVER)).toEqual([]);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  it('disables the fetch instrumentation when another SDK owns the global tracer provider', async () => {
+    // The setup warns that a lost global registration leaves this pipeline inert. The undici
+    // subscription is bound to this pipeline's provider directly, so without an explicit disable
+    // it would keep exporting HTTP client spans the warning just declared impossible — and
+    // duplicate the embedder's own, if their SDK instruments fetch too.
+    const embedders = new NodeTracerProvider();
+    embedders.register();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const ourSpans = new InMemorySpanExporter();
+    const { setupHostObservability } = await freshSetup();
+    const handle = await setupHostObservability({ spanProcessors: [new SimpleSpanProcessor(ourSpans)] });
+    try {
+      const { createServer } = await import('node:http');
+      const server = createServer((_req, res) => res.end('ok'));
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address() as { port: number };
+      try {
+        await (await fetch(`http://127.0.0.1:${port}/inert`)).text();
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+
+      expect(ourSpans.getFinishedSpans()).toEqual([]);
+    } finally {
+      await handle.shutdown();
+      await embedders.shutdown();
+    }
   });
 
   it('is idempotent', async () => {

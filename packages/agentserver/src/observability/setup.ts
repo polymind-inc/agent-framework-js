@@ -22,6 +22,7 @@ import type { TracerProvider } from '@opentelemetry/api';
 import { metrics, trace } from '@opentelemetry/api';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { defaultResource, resourceFromAttributes } from '@opentelemetry/resources';
 import type { PushMetricExporter } from '@opentelemetry/sdk-metrics';
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
@@ -300,6 +301,30 @@ async function configureHostObservability(options: HostObservabilityOptions): Pr
     });
   }
 
+  // Outbound HTTP visibility, matching what the reference hosts inherit from their OTel distros:
+  // the model and storage calls appear as client spans nested under the framework's spans.
+  //
+  // Undici only, deliberately. Its instrumentation rides `diagnostics_channel`, so it works in
+  // the ESM bundle a hosted container actually runs. `@opentelemetry/instrumentation-http` would
+  // not: it patches the `node:http` module through the CommonJS require path, which an ESM import
+  // never crosses, leaving classic-stack clients (for example the managed-identity token calls)
+  // uninstrumented either way. Server-side request spans are also out: the platform's gateway
+  // already records one per turn, and the listener would emit one for every readiness probe.
+  //
+  // Wired through the instance API — not `registerInstrumentations`, which would drag in a
+  // second copy of the instrumentation base package (undici pins its own) plus the
+  // module-patching machinery a channel-based instrumentation never touches. Constructed with
+  // the default config on purpose: the class gates span creation on `getConfig().enabled` at
+  // event time, so `{ enabled: false }` + `enable()` subscribes but then discards every request
+  // (measured). The constructor subscribes immediately; the provider attaches on the next line,
+  // before anything can fetch.
+  //
+  // Only the tracer is bound to this pipeline — and the global-registration check below revokes
+  // even that if another SDK holds the global slot. Metrics stay on the global meter API, so
+  // they land in whichever meter provider actually owns the process.
+  const undiciInstrumentation = new UndiciInstrumentation();
+  undiciInstrumentation.setTracerProvider(tracerProvider);
+
   const flush = async (): Promise<void> => {
     // Metrics too — the reference flushes only spans, but a frozen sandbox that never reaches
     // the periodic reader would otherwise lose every histogram. Bounded
@@ -326,6 +351,7 @@ async function configureHostObservability(options: HostObservabilityOptions): Pr
           active = undefined;
         }
         setTelemetryFlusher(undefined);
+        undiciInstrumentation.disable();
         return Promise.all([tracerProvider.shutdown(), meterProvider?.shutdown()]).then(() => undefined);
       })();
       return shutdownPromise;
@@ -348,8 +374,12 @@ async function configureHostObservability(options: HostObservabilityOptions): Pr
   // A telemetry problem must never take the container down, so a lost
   // registration is reported, not thrown. `undefined` means "cannot tell" and says nothing.
   if (isGlobalTracerProvider(tracerProvider) === false) {
+    // The fetch instrumentation is bound to this pipeline's provider directly, so it would keep
+    // exporting HTTP client spans the warning below declares impossible — duplicated ones, if
+    // the SDK that won the slot instruments fetch itself. Disabled, so "inert" stays true.
+    undiciInstrumentation.disable();
     warn(
-      'another OpenTelemetry SDK already registered the global tracer provider, so this pipeline will receive no spans: the Foundry enrichment processor and the exporters configured above are inert. Configure host observability before registering your own SDK.',
+      'another OpenTelemetry SDK already registered the global tracer provider, so this pipeline will receive no spans: the Foundry enrichment processor and the exporters configured above are inert, and the fetch instrumentation has been disabled. Configure host observability before registering your own SDK.',
     );
   }
   if (meterProvider !== undefined && !metrics.setGlobalMeterProvider(meterProvider)) {
