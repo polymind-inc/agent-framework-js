@@ -229,38 +229,41 @@ export class FoundryMemoryProvider implements ContextProvider {
       }
     }
 
+    let contextual: string[] = [];
     const items = searchItems(this.#searchFilter(ctx.inputMessages));
-    if (items.length === 0) {
-      return;
+    if (items.length > 0) {
+      try {
+        const result = await this.#client.searchMemories(
+          {
+            name: this.#storeName,
+            scope,
+            items,
+            maxMemories: this.#maxMemories,
+            ...(state.previousSearchId === undefined ? {} : { previousSearchId: state.previousSearchId }),
+          },
+          ctx.signal,
+        );
+        contextual = contentsOf(result);
+        // Only a search that found something moves the incremental anchor: carrying forward the id
+        // of an empty search would make the next one resume from nothing.
+        if (contextual.length > 0 && typeof result.search_id === 'string') {
+          state.previousSearchId = result.search_id;
+        }
+      } catch (error) {
+        this.#failed('search', error);
+      }
     }
 
-    try {
-      const result = await this.#client.searchMemories(
-        {
-          name: this.#storeName,
-          scope,
-          items,
-          maxMemories: this.#maxMemories,
-          ...(state.previousSearchId === undefined ? {} : { previousSearchId: state.previousSearchId }),
-        },
-        ctx.signal,
-      );
-      const contextual = contentsOf(result);
-      // Only a search that found something moves the incremental anchor: carrying forward the id
-      // of an empty search would make the next one resume from nothing.
-      if (contextual.length > 0 && typeof result.search_id === 'string') {
-        state.previousSearchId = result.search_id;
-      }
-      const memories = [...(state.staticMemories ?? []), ...contextual];
-      if (memories.length === 0) {
-        return;
-      }
-      ctx.extendMessages([
-        { role: 'user', contents: [textContent(`${this.#contextPrompt}\n${memories.join('\n')}`)] },
-      ]);
-    } catch (error) {
-      this.#failed('search', error);
+    // The profile memories are injected whether or not this turn gave the contextual search
+    // anything to work with, and whether or not that search survived: they were retrieved to be
+    // replayed on every run, and a turn the agent is still going to answer deserves them.
+    const memories = [...(state.staticMemories ?? []), ...contextual];
+    if (memories.length === 0) {
+      return;
     }
+    ctx.extendMessages([
+      { role: 'user', contents: [textContent(`${this.#contextPrompt}\n${memories.join('\n')}`)] },
+    ]);
   }
 
   /**

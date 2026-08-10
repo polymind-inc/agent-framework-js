@@ -225,6 +225,21 @@ describe('FoundryMemoryProvider', () => {
 
       expect(searchCalls(calls)).toHaveLength(1);
     });
+
+    it('replays the profile memories even when there is nothing to search contextually', async () => {
+      const { memory, calls } = provider({
+        search: [{ body: memories(['likes tea']) }],
+        config: { searchFilter: none },
+      });
+      const { agent, messagesOf } = agentWith(memory);
+
+      await agent.run('hello');
+
+      expect(searchCalls(calls)).toHaveLength(1);
+      expect(injected(messagesOf())?.contents[0]).toMatchObject({
+        text: expect.stringContaining('likes tea'),
+      });
+    });
   });
 
   describe('storage', () => {
@@ -388,6 +403,32 @@ describe('FoundryMemoryProvider', () => {
       expect(messagesOf()).toHaveLength(1);
       expect(failures.map((failure) => failure.operation)).toEqual(['search', 'search']);
       expect(failures[0]?.error).toBeInstanceOf(FoundryMemoryError);
+    });
+
+    it('still injects the profile memories when the contextual search fails and the run continues', async () => {
+      const failures: FoundryMemoryFailure[] = [];
+      const { memory } = provider({
+        search: [{ body: memories(['likes tea']) }, { status: 500 }],
+        config: { onFailure: (failure) => failures.push(failure) },
+      });
+      const { agent, messagesOf } = agentWith(memory);
+
+      const response = await agent.run('hello');
+
+      expect(response.text).toBe('ok');
+      expect(failures.map((failure) => failure.operation)).toEqual(['search']);
+      expect(injected(messagesOf())?.contents[0]).toMatchObject({
+        text: expect.stringContaining('likes tea'),
+      });
+    });
+
+    it('fails the run when the contextual search fails and the mode is to fail closed', async () => {
+      const { memory } = provider({
+        search: [{ body: memories(['likes tea']) }, { status: 500 }],
+        config: { failureMode: 'throw' },
+      });
+
+      await expect(agentWith(memory).agent.run('hello')).rejects.toBeInstanceOf(FoundryMemoryError);
     });
 
     it('fails the run instead when configured to fail closed', async () => {
