@@ -68,6 +68,17 @@ export interface OpenAIChatClientOptions {
   apiKey?: string;
   /** Convenience for `new OpenAI({ baseURL })` when `client` is omitted. */
   baseURL?: string;
+  /**
+   * Whether to ask for `reasoning.encrypted_content` on requests whose transcript is replayed from
+   * this side. Defaults to `true`.
+   *
+   * A reasoning model needs its opaque reasoning payload back to accept a replayed transcript, so
+   * the request asks for it whenever there is no service-side storage to hold it. Set this to
+   * `false` for an endpoint whose deployments do not support encrypted reasoning and reject a
+   * request that asks for it. Only the implicit request is affected: an entry the caller puts in
+   * `include` themselves is always sent.
+   */
+  includeReasoningEncryptedContent?: boolean;
 }
 
 /**
@@ -212,6 +223,7 @@ export class OpenAIChatClient
   readonly metadata: ChatClientMetadata;
   readonly #client: OpenAI;
   readonly #model: string | undefined;
+  readonly #includeReasoningEncryptedContent: boolean;
   /**
    * Normalizes anything thrown around an SDK call into the value this client throws.
    *
@@ -261,6 +273,7 @@ export class OpenAIChatClient
         ...(config.baseURL === undefined ? {} : { baseURL: config.baseURL }),
       });
     this.#model = config.model;
+    this.#includeReasoningEncryptedContent = config.includeReasoningEncryptedContent ?? true;
     this.metadata = {
       providerName: detectProviderName(this.#client),
       ...(config.model === undefined ? {} : { modelId: config.model }),
@@ -383,10 +396,20 @@ export class OpenAIChatClient
     // supplied (`_prepare_options`), so the entry can never be lost; doing the merge here
     // reproduces that while leaving "additionalProperties wins" intact for the field itself and
     // for every other key.
+    //
+    // `includeReasoningEncryptedContent: false` suppresses only the *implicit* request, for an
+    // endpoint that rejects it. The caller's own entry is restored either way: with the implicit
+    // request off there is nothing else to add it back, so a raw `include` that replaced the typed
+    // list would drop an explicit opt-in — the one thing that reaches encrypted reasoning on such
+    // an endpoint — as silently as it would have disabled the implicit request.
     const passthroughInclude = request.include;
     if (passthroughInclude === undefined || Array.isArray(passthroughInclude)) {
       const include = [...((passthroughInclude as string[] | undefined) ?? options?.include ?? [])];
-      if (!usesServiceStorage && !include.includes('reasoning.encrypted_content')) {
+      const callerAskedForEncryptedReasoning =
+        options?.include?.includes('reasoning.encrypted_content') === true;
+      const wanted =
+        callerAskedForEncryptedReasoning || (this.#includeReasoningEncryptedContent && !usesServiceStorage);
+      if (wanted && !include.includes('reasoning.encrypted_content')) {
         include.push('reasoning.encrypted_content');
       }
       if (include.length > 0) {

@@ -188,6 +188,66 @@ describe('FoundryChatClient', () => {
     ]);
   });
 
+  // Foundry deployments do not all support encrypted reasoning, and one that does not rejects a
+  // request that asks for it. Asking implicitly would make those deployments unreachable.
+  it('does not request encrypted reasoning by default', () => {
+    const client = new FoundryChatClient({
+      projectEndpoint: PROJECT,
+      target: { modelDeployment: 'gpt-4o' },
+      client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
+    });
+
+    const request = client.buildRequest([{ role: 'user', contents: [textContent('hi')] }]);
+
+    expect('include' in request).toBe(false);
+  });
+
+  it('preserves an explicit encrypted reasoning opt-in', () => {
+    const client = new FoundryChatClient({
+      projectEndpoint: PROJECT,
+      target: { modelDeployment: 'gpt-4o' },
+      client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
+    });
+
+    const request = client.buildRequest([{ role: 'user', contents: [textContent('hi')] }], {
+      include: ['reasoning.encrypted_content'],
+    });
+
+    expect(request.include).toEqual(['reasoning.encrypted_content']);
+  });
+
+  // Nothing adds the entry back on Foundry, so an unrelated raw `include` — which replaces the
+  // typed list wholesale — would drop the opt-in and fail the stateless replay it was there for.
+  it('preserves an explicit opt-in that additionalProperties replaced', () => {
+    const client = new FoundryChatClient({
+      projectEndpoint: PROJECT,
+      target: { modelDeployment: 'gpt-4o' },
+      client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
+    });
+
+    const request = client.buildRequest([{ role: 'user', contents: [textContent('hi')] }], {
+      include: ['reasoning.encrypted_content'],
+      additionalProperties: { include: ['file_search_call.results'] },
+    });
+
+    expect(request.include).toEqual(['file_search_call.results', 'reasoning.encrypted_content']);
+  });
+
+  it('does not request encrypted reasoning on the request it actually sends', async () => {
+    const completed = { id: 'resp_1', object: 'response', status: 'completed', output: [] };
+    const create = vi.fn().mockResolvedValue(completed);
+    const client = new FoundryChatClient({
+      projectEndpoint: PROJECT,
+      target: { modelDeployment: 'gpt-4o' },
+      client: { responses: { create }, baseURL: PROJECT } as unknown as OpenAI,
+    });
+
+    await client.getResponse([{ role: 'user', contents: [textContent('hi')] }]);
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('include');
+  });
+
   it('sends the credential token as the bearer, to the target endpoint', async () => {
     const credential = fakeCredential();
     const seen: Array<{ url: string; authorization: string | null }> = [];

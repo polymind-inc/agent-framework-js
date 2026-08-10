@@ -51,6 +51,20 @@ contain breaking changes**; patch releases are fixes only.
   so their behavior is unchanged. **A custom `ChatClient` implementation that relied on the loop
   pinning `conv_…` ids must now declare the predicate on its `metadata`** — without it, every
   conversation id a round reports advances the chain, matching the .NET and Python loops.
+- **[BREAKING] `@polymind-inc/agent-framework-foundry`** — `FoundryChatClient` no longer asks for
+  `reasoning.encrypted_content` implicitly. Not every Foundry deployment supports encrypted
+  reasoning, and one that does not rejects a request that asks for it — which the client did on
+  every call without service-side storage, with no way to turn it off. **A caller whose deployment
+  does support encrypted reasoning, and who replays the transcript from their own side, must now
+  list `reasoning.encrypted_content` in `options.include`**; without it a reasoning model's
+  replayed transcript fails for missing reasoning content. Matches the upstream Python fix and the
+  function-calling loop specification, which make the request an explicit caller opt-in on
+  Foundry.
+- **`@polymind-inc/agent-framework-openai`** — new `includeReasoningEncryptedContent` construction
+  option (default `true`, so OpenAI and Azure OpenAI are unchanged). Setting it to `false`
+  suppresses the implicit `reasoning.encrypted_content` request for an endpoint that rejects it;
+  an entry the caller lists in `include` themselves is always sent either way. Mirrors the .NET
+  clients' option of the same name.
 
 ## 0.2.2
 
