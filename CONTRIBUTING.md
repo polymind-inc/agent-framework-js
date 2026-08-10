@@ -81,9 +81,9 @@ also carries an explicit **"Security considerations"** note, as the .NET impleme
 - One concern per pull request.
 - Commit subjects and pull request titles are plain English imperative sentences with no
   `type:` prefix — "Add the umbrella package", not "feat: add umbrella package". Pull requests
-  are squash-merged, so the title becomes the commit subject on the default branch. The
-  conventional-commit prefixes configured in `dependabot.yml` apply only to Dependabot's own
-  commits. Prefix a backward-incompatible change with `[BREAKING]`; automation keeps the
+  are squash-merged, so the title becomes the commit subject on the default branch.
+  Dependabot's default "Bump …" titles already follow this form.
+  Prefix a backward-incompatible change with `[BREAKING]`; automation keeps the
   `breaking change` label synchronized with the title and pull request template.
 - `pnpm check` passes.
 - Behaviour changes come with a test that fails without the change.
