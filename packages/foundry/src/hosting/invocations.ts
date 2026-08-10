@@ -20,36 +20,22 @@ export interface InvocationsHostServerConfig extends Pick<InvocationsServerConfi
   hosted?: boolean;
 }
 
-/** The session partition for one invocation: the map key, and the identity the session carries. */
-interface SessionPartition {
-  /**
-   * The key conversations are stored under.
-   *
-   * An injective encoding of the (session, user) pair, not a delimiter join: the session id is
-   * caller-supplied and may itself contain `:`, so `S:v` × user `u` and `S` × user `v:u` would
-   * otherwise collapse into one partition and hand one user another's conversation (the same
-   * delimiter-collision defect the Responses session store fixed).
-   */
-  readonly key: string;
-  /**
-   * What the session reports as its id — the reference's human-readable `sessionId:userId`
-   * spelling, kept so tools and middleware observe the same identity they would under the
-   * Python adapter.
-   */
-  readonly sessionId: string;
-}
-
 /**
- * The session partition for one invocation.
+ * The session partition key for one invocation — the map key *and* the session's own id.
  *
  * Hosted, the partition is per session *and* user: one container session serves several end
  * users under container protocol 2.0.0, so the session id alone would hand one user another's
  * conversation. Locally there is no platform to inject a user, and the session id is the whole
  * partition.
+ *
+ * One value serves both roles on purpose. `AgentSession.sessionId` is the conversation's stable
+ * identifier — an external store keyed by it partitions exactly as well as the id distinguishes,
+ * so a colliding spelling there would reopen the cross-user mix-up even with a distinct session
+ * object per pair.
  */
-function partitionKey(context: InvocationContext, hosted: boolean): SessionPartition {
+function partitionKey(context: InvocationContext, hosted: boolean): string {
   if (!hosted) {
-    return { key: context.sessionId, sessionId: context.sessionId };
+    return context.sessionId;
   }
   // The only runtime signal of the protocol version is whether the call id header is present.
   // Serving a v1.0.0 caller would run without the per-user partition this handler depends on,
@@ -72,10 +58,13 @@ function partitionKey(context: InvocationContext, hosted: boolean): SessionParti
       { code: 'missing_user_id', source: 'platform' },
     );
   }
-  return {
-    key: JSON.stringify([context.sessionId, userId]),
-    sessionId: `${context.sessionId}:${userId}`,
-  };
+  // The reference spells this `sessionId:userId`, but a bare join is not injective: the session
+  // id is caller-supplied and may itself contain `:`, so `S:v` × user `u` and `S` × user `v:u`
+  // would collapse into one identity (the same delimiter-collision defect the Responses session
+  // store fixed). URI-escaping the components keeps the join injective — the separator can never
+  // appear inside either side — and leaves ids without reserved characters spelled exactly as
+  // the reference spells them.
+  return `${encodeURIComponent(context.sessionId)}:${encodeURIComponent(userId)}`;
 }
 
 /** What a well-formed invocation body carries. */
@@ -100,7 +89,7 @@ function invocationHandler(agent: AgentLike, hosted: boolean): InvocationHandler
   const sessions = new Map<string, AgentSession>();
 
   return async (request: Request, context: InvocationContext): Promise<Response> => {
-    const partition = partitionKey(context, hosted);
+    const key = partitionKey(context, hosted);
 
     let payload: unknown;
     try {
@@ -110,13 +99,13 @@ function invocationHandler(agent: AgentLike, hosted: boolean): InvocationHandler
     }
     const { message, stream } = parseInvocation(payload);
 
-    let session = sessions.get(partition.key);
+    let session = sessions.get(key);
     if (session === undefined) {
-      // Under the partition's identity on purpose (the reference constructs
+      // Under the partition key on purpose (the reference constructs
       // `AgentSession(session_id=partition_key)`): tools, middleware and custom agents observe
       // the conversation's real identity through the session, not a throwaway UUID.
-      session = agent.createSession({ sessionId: partition.sessionId });
-      sessions.set(partition.key, session);
+      session = agent.createSession({ sessionId: key });
+      sessions.set(key, session);
     }
 
     if (!stream) {

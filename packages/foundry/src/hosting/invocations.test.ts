@@ -206,6 +206,33 @@ describe('InvocationsHostServer', () => {
     expect(JSON.stringify(client.calls[1]?.messages)).not.toContain('first secret');
   });
 
+  it('gives colliding partition spellings distinct session identities', async () => {
+    // Distinct session *objects* are not enough: `AgentSession.sessionId` is the conversation's
+    // stable identifier, and an external store keyed by it would merge the two users' histories
+    // if both sessions answered to the same 'S:v:u'.
+    const created: Array<string | undefined> = [];
+    const agent = new Agent({ client: new MockChatClient([say('one'), say('two')]), instructions: 'x' });
+    const app = new InvocationsHostServer({ agent: recording(agent, created), hosted: true });
+
+    await app.handle(
+      invoke(
+        { message: 'a' },
+        { [HEADERS.userId]: 'u', [HEADERS.foundryCallId]: 'c1' },
+        '?agent_session_id=S:v',
+      ),
+    );
+    await app.handle(
+      invoke(
+        { message: 'b' },
+        { [HEADERS.userId]: 'v:u', [HEADERS.foundryCallId]: 'c2' },
+        '?agent_session_id=S',
+      ),
+    );
+
+    expect(created).toHaveLength(2);
+    expect(created[0]).not.toBe(created[1]);
+  });
+
   it('streams only the non-empty update text', async () => {
     // Tool rounds surface as updates with no text; the body must carry the text and nothing else.
     const client = new MockChatClient([
