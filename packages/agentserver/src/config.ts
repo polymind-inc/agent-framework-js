@@ -123,8 +123,8 @@ export function stateRoot(): string {
 export const PACKAGE_VERSION = '0.2.2';
 
 /** The `x-platform-server` value: which SDK, which protocol, which runtime. */
-export function serverIdentity(): string {
-  return `agent-framework-js/${PACKAGE_VERSION} protocol/responses-2.0.0 node/${process.versions.node}`;
+export function serverIdentity(protocol: string = 'responses-2.0.0'): string {
+  return `agent-framework-js/${PACKAGE_VERSION} protocol/${protocol} node/${process.versions.node}`;
 }
 
 // --- Telemetry (consumed by ./observability) ---

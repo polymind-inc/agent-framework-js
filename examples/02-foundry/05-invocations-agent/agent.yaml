@@ -1,0 +1,21 @@
+# Foundry Hosted Agent definition.
+# Schema: microsoft/AgentSchema ContainerAgent.yaml
+kind: hosted
+name: invocations-agent
+description: An assistant built with agent-framework-js, served over the Invocations protocol.
+
+protocols:
+  # The container speaks Invocations container protocol 2.0.0 and nothing else. There is no
+  # version negotiation: this declaration is what makes the platform send
+  # `x-agent-foundry-call-id`, and the container fails closed with 501 if it ever arrives
+  # without one.
+  - protocol: invocations
+    version: 2.0.0
+
+resources:
+  cpu: '0.25'
+  memory: 0.5Gi
+
+environment_variables:
+  - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+    value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}

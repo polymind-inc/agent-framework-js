@@ -7,12 +7,14 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsdown --config 02-hosted-agent/tsdown.config.ts",
+    "build": "tsdown --config 02-hosted-agent/tsdown.config.ts && tsdown --config 05-invocations-agent/tsdown.config.ts",
     "chat": "tsx 01-foundry-chat.ts",
     "host": "node 02-hosted-agent/dist/main.mjs",
     "host:dev": "tsx 02-hosted-agent/main.ts",
     "approval": "tsx 03-tool-approval.ts",
     "toolbox": "tsx 04-toolbox.ts",
+    "invocations": "node 05-invocations-agent/dist/main.mjs",
+    "invocations:dev": "tsx 05-invocations-agent/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -7,11 +7,21 @@
 > version. Installing this package directly works and resolves to the same modules, but examples
 > and documentation import through the main package.
 
-The Microsoft Foundry Responses container protocol v2.0.0, as a server. Independent of the
-Agent Framework: routing, SSE framing and sequence numbers, the lifecycle contract, id
-generation, the header contract, storage abstractions, and error shapes, exposed as a
-Web-standard fetch handler with a Node adapter on the `./node` subpath. The Agent Framework
-adapter lives in `@polymind-inc/agent-framework-foundry/hosting`.
+The Microsoft Foundry hosted-agent container protocols, as servers. Independent of the
+Agent Framework; the Agent Framework adapters live in
+`@polymind-inc/agent-framework-foundry/hosting`. Both are exposed as Web-standard fetch handlers
+with a Node adapter on the `./node` subpath:
+
+- **`ResponsesServer`** — the Responses container protocol v2.0.0: routing, SSE framing and
+  sequence numbers, the lifecycle contract, id generation, the header contract, storage
+  abstractions, and error shapes.
+- **`InvocationsServer`** — the Invocations protocol, for callers that cannot speak the Responses
+  request shape. The payload is deliberately unprescribed: the request body reaches the handler
+  unread, and the handler's `Response` — its body, status and content type — is what the caller
+  gets. This layer owns the routes (`POST /invocations`, `GET /invocations/{id}`,
+  `POST /invocations/{id}/cancel`, `/readiness`), invocation and session id resolution and their
+  response headers, cancellation, error classification, SSE keep-alive injection, and trace
+  propagation.
 
 ```sh
 npm install @polymind-inc/agent-framework-agentserver

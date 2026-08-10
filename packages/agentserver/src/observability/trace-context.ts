@@ -100,6 +100,34 @@ export function withResponseBaggage(context: Context, turn: ResponseBaggage): Co
 }
 
 /**
+ * The baggage entries the Invocations server stamps on every request it dispatches, worded as
+ * both references word them (Python `_invocation.py`, .NET `InvocationsActivitySource`).
+ *
+ * Self-stamped for the same reason as {@link RESPONSE_BAGGAGE}: the calling service is not
+ * required to send anything, and these are what correlate the handler's spans with the
+ * invocation that caused them. No server span carries them — neither reference creates one.
+ */
+export const INVOCATION_BAGGAGE = {
+  invocationId: 'azure.ai.agentserver.invocation_id',
+  sessionId: 'azure.ai.agentserver.session_id',
+} as const;
+
+/** One invocation's identity, as the dispatch knows it. */
+export interface InvocationBaggage {
+  invocationId: string;
+  sessionId: string;
+}
+
+/** Adds the invocation baggage to `context`, keeping whatever the caller sent. */
+export function withInvocationBaggage(context: Context, turn: InvocationBaggage): Context {
+  let bag = propagation.getBaggage(context) ?? propagation.createBaggage();
+  bag = bag
+    .setEntry(INVOCATION_BAGGAGE.invocationId, { value: turn.invocationId })
+    .setEntry(INVOCATION_BAGGAGE.sessionId, { value: turn.sessionId });
+  return propagation.setBaggage(context, bag);
+}
+
+/**
  * Runs every pull of `iterable` through `run`, which re-enters whatever ambient scopes the turn
  * needs — the OTel context, the request's `AsyncLocalStorage`, or both composed.
  *

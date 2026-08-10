@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { ServerResponse } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { InvocationsServer } from './invocations.js';
 import type { RunningServer } from './node.js';
 import { serve } from './node.js';
 import { writeWebResponse } from './node-internals.js';
@@ -103,6 +104,63 @@ describe('node adapter', () => {
       error: { code: 'unsupported_parameter', param: 'background' },
     });
     expect(response.headers.get('x-platform-error-source')).toBe('user');
+  });
+
+  it('keeps a method-style fetch bound to its server instance', async () => {
+    // `ProtocolServer` is structural: a server whose `fetch` is an ordinary class method reading
+    // instance state qualifies, and must keep its receiver when the adapter calls it.
+    class MethodServer {
+      readonly #answer = 'bound';
+      fetch(request: Request): Promise<Response> {
+        void request;
+        return Promise.resolve(new Response(this.#answer));
+      }
+      drain(): Promise<void> {
+        return Promise.resolve();
+      }
+    }
+    const bound = await serve(new MethodServer(), {
+      port: 0,
+      host: '127.0.0.1',
+      handleSignals: false,
+      observability: false,
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${bound.port}/anything`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('bound');
+    } finally {
+      await bound.close();
+    }
+  });
+
+  it('serves an InvocationsServer over the same adapter', async () => {
+    const invocations = await serve(
+      new InvocationsServer({
+        handler: async (request, context) =>
+          new Response(`echo:${await request.text()}:${context.invocationId}`, {
+            headers: { 'content-type': 'text/plain' },
+          }),
+      }),
+      { port: 0, host: '127.0.0.1', handleSignals: false, observability: false },
+    );
+    try {
+      const probe = await fetch(`http://127.0.0.1:${invocations.port}/readiness`);
+      expect(await probe.json()).toEqual({ status: 'healthy' });
+
+      // curl -X POST :PORT/invocations -d '{"message": "Hi"}'
+      const response = await fetch(`http://127.0.0.1:${invocations.port}/invocations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-agent-invocation-id': 'inv_smoke' },
+        body: '{"message": "Hi"}',
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('echo:{"message": "Hi"}:inv_smoke');
+      expect(response.headers.get('x-agent-invocation-id')).toBe('inv_smoke');
+      expect(response.headers.get('x-agent-session-id')).toBeTruthy();
+    } finally {
+      await invocations.close();
+    }
   });
 
   it('removes its process signal handlers when closed', async () => {

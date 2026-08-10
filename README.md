@@ -90,7 +90,7 @@ bundler tree-shakes whatever you do not import.
 | `@polymind-inc/agent-framework/mcp`               | Model Context Protocol client integration — MCP server tools as framework tools                                                      |
 | `@polymind-inc/agent-framework/a2a`               | Agent2Agent (A2A) protocol client — a remote A2A agent used as an agent                                                              |
 | `@polymind-inc/agent-framework/foundry`           | Microsoft Foundry chat client, with the Hosted Agent adapter under `/foundry/hosting`                                                |
-| `@polymind-inc/agent-framework/agentserver`       | Foundry Responses container protocol v2.0.0 server, with `/agentserver/node` and `/agentserver/observability` companions             |
+| `@polymind-inc/agent-framework/agentserver`       | Foundry container protocol servers (Responses v2.0.0 and Invocations), with `/agentserver/node` and `/agentserver/observability` companions |
 | `@polymind-inc/agent-framework/testing`           | `MockChatClient` and friends for testing agents without a live provider                                                              |
 
 Under the hood the framework is developed and published as a family of
@@ -173,7 +173,7 @@ Deliberate divergences, and the reason for each:
 | Agent, sessions, tools, middleware, streaming                     | Implemented                                                      |
 | Function-calling loop, tool approval, continuation tokens          | Implemented                                                      |
 | OpenAI / Azure OpenAI, Anthropic and Microsoft Foundry providers   | Implemented                                                      |
-| Microsoft Foundry Hosted Agent hosting                            | Implemented                                                      |
+| Microsoft Foundry Hosted Agent hosting (Responses and Invocations protocols) | Implemented                                           |
 | `ContextProvider` / `HistoryProvider`                             | Implemented                                                      |
 | OpenTelemetry GenAI instrumentation                               | Implemented                                                      |
 | MCP client (tools)                                                | Implemented                                                      |

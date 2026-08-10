@@ -5,8 +5,16 @@ import { port as configuredPort, gracefulShutdownSeconds, UnsupportedOtlpProtoco
 import { writeWebResponse } from './node-internals.js';
 import { flushTelemetry } from './observability/flush.js';
 import type { HostObservabilityOptions } from './observability/setup.js';
-import type { ResponsesServer } from './server.js';
 import { raceTimeout } from './wait.js';
+
+/**
+ * What {@link serve} needs from a protocol server: a `fetch` handler to answer requests, and a
+ * `drain` to call on shutdown. `ResponsesServer` and `InvocationsServer` both qualify.
+ */
+export interface ProtocolServer {
+  readonly fetch: (request: Request) => Promise<Response>;
+  drain(): Promise<void>;
+}
 
 /** Options for {@link serve}. */
 export interface ServeOptions {
@@ -62,13 +70,13 @@ function toWebRequest(req: IncomingMessage, host: string, signal: AbortSignal): 
 }
 
 /**
- * Serves a {@link ResponsesServer} over `node:http`.
+ * Serves a {@link ProtocolServer} over `node:http`.
  *
  * Binds `0.0.0.0:${PORT:-8088}` — the container contract's requirement. Observability is
  * configured first, so the very first turn's spans have somewhere to go; see
  * {@link ServeOptions.observability}.
  */
-export async function serve(app: ResponsesServer, options: ServeOptions = {}): Promise<RunningServer> {
+export async function serve(app: ProtocolServer, options: ServeOptions = {}): Promise<RunningServer> {
   if (options.observability !== false) {
     try {
       // Imported here, not at the top: a `serve` that opted out never loads the SDK packages.
@@ -88,7 +96,6 @@ export async function serve(app: ResponsesServer, options: ServeOptions = {}): P
 
   const host = options.host ?? '0.0.0.0';
   const port = options.port ?? configuredPort();
-  const handler = app.fetch;
 
   const server = createServer((req, res) => {
     void (async (): Promise<void> => {
@@ -96,7 +103,9 @@ export async function serve(app: ResponsesServer, options: ServeOptions = {}): P
       const abort = new AbortController();
       res.on('close', () => abort.abort());
       try {
-        await writeWebResponse(await handler(toWebRequest(req, host, abort.signal)), res);
+        // Called through `app`, never detached: `ProtocolServer` is structural, and a server
+        // implementing `fetch` as an ordinary method would lose its instance state otherwise.
+        await writeWebResponse(await app.fetch(toWebRequest(req, host, abort.signal)), res);
       } catch {
         // The protocol layer answers its own errors; reaching here means the socket itself broke.
         if (!res.headersSent) {

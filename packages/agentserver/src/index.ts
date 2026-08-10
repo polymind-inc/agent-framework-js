@@ -36,6 +36,12 @@ export {
 } from './errors.js';
 export { ID_PREFIX, invalidIdReason, isValidId, newId, newResponseId, partitionKeyOf } from './ids.js';
 export type {
+  InvocationContext,
+  InvocationHandler,
+  InvocationsServerConfig,
+} from './invocations.js';
+export { INVOCATION_ID_HEADER, InvocationsServer } from './invocations.js';
+export type {
   AgentReference,
   ApiError,
   ApiErrorDetail,

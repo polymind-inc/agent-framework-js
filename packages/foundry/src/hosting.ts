@@ -57,6 +57,8 @@ export type { HostedAgentContext } from './hosting/hosted-context.js';
 // only writer, which is what keeps the ambient read-only for everything below it.
 export { getHostedAgentContext } from './hosting/hosted-context.js';
 
+export type { InvocationsHostServerConfig } from './hosting/invocations.js';
+export { InvocationsHostServer } from './hosting/invocations.js';
 export type { ResponsesHostServerConfig } from './hosting/server.js';
 export { defaultStore, ResponsesHostServer } from './hosting/server.js';
 
