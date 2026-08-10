@@ -32,7 +32,7 @@
     "publish:packages": "pnpm -r --filter \"./packages/*\" publish --access public --provenance --no-git-checks"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.6",
+    "@biomejs/biome": "^2.5.7",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "tsdown": "catalog:",
