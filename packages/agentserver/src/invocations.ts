@@ -396,7 +396,7 @@ export class InvocationsServer {
     const reader = response.body!.getReader();
     const keepAliveBytes = new TextEncoder().encode(SSE_KEEPALIVE);
 
-    let pending: Promise<ReadResult> | undefined;
+    let pending: PendingRead | undefined;
     let finished = false;
     const finish = async (): Promise<void> => {
       if (finished) {
@@ -409,36 +409,52 @@ export class InvocationsServer {
       await flushTelemetry();
     };
 
+    // Exactly one settlement observer per read. A keep-alive wait that simply raced the same
+    // promise again would register a fresh reaction every interval, and on a stream that stays
+    // silent for hours those reactions accumulate unboundedly — a promise offers no way to
+    // unsubscribe. So the read is observed once, into `state`, and each wait subscribes to the
+    // single `wake` slot instead (safe because the stream serializes pulls: at most one wait
+    // exists at a time).
+    const startRead = (): PendingRead => {
+      const state: PendingRead = {};
+      // The read starts inside the turn's scopes; `AsyncLocalStorage` and the OTel context
+      // follow the async flow from here into the handler's own pull callback.
+      otelContext
+        .with(turnContext, () => runWithRequestContext(context, () => reader.read()))
+        .then(
+          (result) => {
+            state.outcome = { ok: true, result };
+            state.wake?.();
+          },
+          (error: unknown) => {
+            state.outcome = { ok: false, error };
+            state.wake?.();
+          },
+        );
+      return state;
+    };
+
     return new ReadableStream<Uint8Array>({
       pull: async (controller): Promise<void> => {
-        // The read starts inside the turn's scopes; `AsyncLocalStorage` and the OTel context
-        // follow the async flow from here into the handler's own pull callback.
-        pending ??= otelContext.with(turnContext, () => runWithRequestContext(context, () => reader.read()));
-        let result: ReadResult;
-        try {
-          if (keepAliveMs > 0) {
-            const raced = await raceRead(pending, keepAliveMs);
-            if (raced === undefined) {
-              // Silence, not the end: comfort the proxies and keep waiting on the same read.
-              controller.enqueue(keepAliveBytes);
-              return;
-            }
-            result = raced;
-          } else {
-            result = await pending;
-          }
-        } catch (error) {
-          pending = undefined;
-          await finish();
-          throw error;
+        pending ??= startRead();
+        // Silence past the deadline is not the end: comfort the proxies and keep waiting on the
+        // same read next pull.
+        if (!(await settles(pending, keepAliveMs))) {
+          controller.enqueue(keepAliveBytes);
+          return;
         }
+        const outcome = pending.outcome;
         pending = undefined;
-        if (result.done) {
+        if (outcome === undefined || !outcome.ok) {
+          await finish();
+          throw outcome === undefined ? new Error('read settled without an outcome') : outcome.error;
+        }
+        if (outcome.result.done) {
           controller.close();
           await finish();
           return;
         }
-        controller.enqueue(result.value);
+        controller.enqueue(outcome.result.value);
       },
       cancel: async (reason: unknown): Promise<void> => {
         // The client hung up: stop the handler rather than let it stream to nobody. The cancel
@@ -456,25 +472,40 @@ export class InvocationsServer {
   }
 }
 
+/** One in-flight read, observed exactly once; waits go through the single `wake` slot. */
+interface PendingRead {
+  /** Set when the read settles; absent while it is in flight. */
+  outcome?: { ok: true; result: ReadResult } | { ok: false; error: unknown };
+  /** Wakes the wait in progress, if any. At most one exists at a time. */
+  wake?: (() => void) | undefined;
+}
+
 /**
- * `read`, or `undefined` when it has not settled within `ms`.
+ * Whether `state` settles within `timeoutMs` (`0` waits without a deadline).
  *
- * Losing the race abandons the wait, not the read: the caller keeps the same promise and waits
- * again, which is what makes the keep-alive loop read only one chunk ahead.
+ * A timeout abandons only the wait, never the read — the caller keeps the same `PendingRead` and
+ * waits again, which is what makes the keep-alive loop read only one chunk ahead. Each wait is a
+ * fresh short-lived promise resolved by the read's single observer, so a stream that stays
+ * silent across many keep-alive intervals accumulates nothing.
  */
-function raceRead<T>(read: Promise<T>, ms: number): Promise<T | undefined> {
-  return new Promise<T | undefined>((resolve, reject) => {
-    const timer = setTimeout(() => resolve(undefined), ms);
-    timer.unref?.();
-    read.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
+function settles(state: PendingRead, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    if (state.outcome !== undefined) {
+      resolve(true);
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        state.wake = undefined;
+        resolve(false);
+      }, timeoutMs);
+      timer.unref?.();
+    }
+    state.wake = (): void => {
+      clearTimeout(timer);
+      state.wake = undefined;
+      resolve(true);
+    };
   });
 }

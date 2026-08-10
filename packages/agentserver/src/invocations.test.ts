@@ -562,6 +562,67 @@ describe('SSE keep-alive', () => {
     }
   });
 
+  it('delivers the payload intact after many consecutive keep-alives', async () => {
+    // Hours of silence mean many intervals against one still-pending read; the wait must resolve
+    // through the read's single observer every time, and the eventual chunk must still arrive.
+    vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      const server = makeServer({ handler: sseHandler(gate.promise) });
+      const response = await server.handle(invoke());
+      const reader = must(response.body).getReader();
+      const decoder = new TextDecoder();
+
+      expect(decoder.decode((await reader.read()).value)).toBe('data: first\n\n');
+
+      for (let interval = 0; interval < 5; interval += 1) {
+        const next = reader.read();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(decoder.decode((await next).value), `interval ${interval}`).toBe(': keep-alive\n\n');
+      }
+
+      gate.resolve();
+      expect(decoder.decode((await reader.read()).value)).toBe('data: second\n\n');
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('propagates a stream failure that lands after keep-alives', async () => {
+    vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      const server = makeServer({
+        handler: () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller): Promise<void> {
+                controller.enqueue(new TextEncoder().encode('data: first\n\n'));
+                await gate.promise;
+                controller.error(new Error('source broke'));
+              },
+            }),
+            { headers: { 'content-type': 'text/event-stream' } },
+          ),
+      });
+      const response = await server.handle(invoke());
+      const reader = must(response.body).getReader();
+
+      await reader.read();
+      const next = reader.read();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(new TextDecoder().decode((await next).value)).toBe(': keep-alive\n\n');
+
+      gate.resolve();
+      await expect(reader.read()).rejects.toThrow('source broke');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('never injects comments into a non-SSE stream', async () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
