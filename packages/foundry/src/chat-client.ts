@@ -104,9 +104,16 @@ export class FoundryChatClient
         ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       });
 
-    this.#inner = new OpenAIChatClient(
-      model === undefined ? { client, endpointProvidesModel: true } : { client, model },
-    );
+    this.#inner = new OpenAIChatClient({
+      client,
+      // Not every Foundry deployment supports encrypted reasoning, and one that does not rejects
+      // a request that asks for it — so asking implicitly would make those deployments
+      // unreachable. A caller whose deployment does support it opts in per request by listing
+      // `reasoning.encrypted_content` in `include`, which is what a replayed transcript of a
+      // reasoning model needs.
+      includeReasoningEncryptedContent: false,
+      ...(model === undefined ? { endpointProvidesModel: true as const } : { model }),
+    });
     this.metadata = {
       providerName: 'azure.ai.foundry',
       ...(model === undefined ? {} : { modelId: model }),

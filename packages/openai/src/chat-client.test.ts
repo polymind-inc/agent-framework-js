@@ -432,6 +432,57 @@ describe('OpenAIChatClient request mapping', () => {
     expect(request.include).toEqual(['message.output_text.logprobs']);
   });
 
+  // Not every deployment behind a Responses endpoint supports encrypted reasoning, and a request
+  // that asks for it is rejected outright there. The flag turns off the *implicit* request only.
+  describe('with includeReasoningEncryptedContent: false', () => {
+    const optedOut = new OpenAIChatClient({
+      client: fakeClient(vi.fn()),
+      model: 'gpt-4o',
+      includeReasoningEncryptedContent: false,
+    });
+
+    it('leaves include off the request entirely', () => {
+      expect('include' in optedOut.buildRequest(HI)).toBe(false);
+    });
+
+    it('keeps an unrelated include list intact', () => {
+      expect(optedOut.buildRequest(HI, { include: ['file_search_call.results'] }).include).toEqual([
+        'file_search_call.results',
+      ]);
+    });
+
+    it('honours an explicit caller opt-in, through either include route', () => {
+      expect(optedOut.buildRequest(HI, { include: ['reasoning.encrypted_content'] }).include).toEqual([
+        'reasoning.encrypted_content',
+      ]);
+      expect(
+        optedOut.buildRequest(HI, {
+          additionalProperties: { include: ['reasoning.encrypted_content'] },
+        }).include,
+      ).toEqual(['reasoning.encrypted_content']);
+    });
+
+    // A raw `include` replaces the typed list wholesale, so with nothing adding the entry back an
+    // explicit opt-in would be dropped by an unrelated pass-through — silently disabling the
+    // replay of a reasoning model's transcript, which is what the opt-in exists for.
+    it('keeps an explicit opt-in that additionalProperties replaced', () => {
+      const request = optedOut.buildRequest(HI, {
+        include: ['reasoning.encrypted_content'],
+        additionalProperties: { include: ['file_search_call.results'] },
+      });
+      expect(request.include).toEqual(['file_search_call.results', 'reasoning.encrypted_content']);
+    });
+
+    it('keeps an explicit opt-in under service storage too', () => {
+      const request = optedOut.buildRequest(HI, {
+        conversationId: 'conv_1',
+        include: ['reasoning.encrypted_content'],
+        additionalProperties: { include: ['file_search_call.results'] },
+      });
+      expect(request.include).toEqual(['file_search_call.results', 'reasoning.encrypted_content']);
+    });
+  });
+
   it('passes additionalProperties through and lets rawRequestTransform have the last word', () => {
     const request = client.buildRequest(HI, {
       additionalProperties: { safety_identifier: 'abc' },
