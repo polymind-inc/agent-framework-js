@@ -216,6 +216,9 @@ export class FoundryMemoryProvider implements ContextProvider {
         state.staticMemories = contentsOf(result);
         state.initialized = true;
       } catch (error) {
+        // A cancelled call is the caller's decision, not a service failure: it is rethrown before
+        // any state is written or any failure is reported, whatever the failure mode.
+        ctx.signal?.throwIfAborted();
         // When failures are survivable, the failure is marked as initialization too: a store that
         // refused the profile search once will refuse it on every run of this session, and
         // retrying it per run only adds latency to each of them. A failure that throws instead
@@ -250,6 +253,7 @@ export class FoundryMemoryProvider implements ContextProvider {
           state.previousSearchId = result.search_id;
         }
       } catch (error) {
+        ctx.signal?.throwIfAborted();
         this.#failed('search', error);
       }
     }
@@ -303,6 +307,9 @@ export class FoundryMemoryProvider implements ContextProvider {
         this.#pendingUpdateId = result.update_id;
       }
     } catch (error) {
+      // A run whose memory write was cancelled must not read as one that succeeded and merely
+      // lost its memories: the cancellation propagates instead of being reported as a failure.
+      ctx.signal?.throwIfAborted();
       this.#failed('update', error);
     }
   }

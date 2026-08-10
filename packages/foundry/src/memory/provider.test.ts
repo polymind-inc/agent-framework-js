@@ -487,6 +487,91 @@ describe('FoundryMemoryProvider', () => {
     });
   });
 
+  describe('cancellation', () => {
+    /**
+     * A provider whose transport aborts `controller` the first time `route` is hit, rejecting the
+     * way `fetch` rejects — with the signal's own abort reason.
+     */
+    function abortingProvider(route: ':search_memories' | ':update_memories'): {
+      memory: FoundryMemoryProvider;
+      controller: AbortController;
+      calls: Call[];
+      failures: FoundryMemoryFailure[];
+    } {
+      const controller = new AbortController();
+      const calls: Call[] = [];
+      const failures: FoundryMemoryFailure[] = [];
+      let armed = true;
+      const fetchStub = (async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const target = String(url);
+        calls.push({ url: target, body: typeof init?.body === 'string' ? JSON.parse(init.body) : {} });
+        if (armed && target.includes(route)) {
+          armed = false;
+          controller.abort();
+          init?.signal?.throwIfAborted();
+        }
+        const payload = target.includes(':update_memories') ? { update_id: 'upd_1' } : { memories: [] };
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as typeof globalThis.fetch;
+      return {
+        memory: new FoundryMemoryProvider({
+          projectEndpoint: PROJECT,
+          credential,
+          memoryStoreName: 'my-store',
+          scope: 'user-1',
+          fetch: fetchStub,
+          onFailure: (failure) => failures.push(failure),
+        }),
+        controller,
+        calls,
+        failures,
+      };
+    }
+
+    it('lets an abort during the profile search fail the run without burning the session', async () => {
+      const { memory, controller, calls, failures } = abortingProvider(':search_memories');
+      const { agent } = agentWith(memory);
+      const session = agent.createSession();
+
+      let error: unknown;
+      try {
+        await agent.run('one', { session, signal: controller.signal });
+      } catch (e) {
+        error = e;
+      }
+
+      expect((error as Error).name).toBe('AbortError');
+      // The cancellation is the caller's, not the service's: nothing is reported, and the session
+      // is not marked as initialized with an empty profile.
+      expect(failures).toHaveLength(0);
+      expect(
+        (session.state.foundry_memory as { initialized?: boolean } | undefined)?.initialized,
+      ).toBeUndefined();
+
+      // The run that replaces the cancelled one asks for the profile again.
+      await agent.run('two', { session });
+      expect(searchCalls(calls).filter((call) => call.body.items === undefined)).toHaveLength(2);
+    });
+
+    it('does not report a run whose memory write was aborted as a success', async () => {
+      const { memory, controller, failures } = abortingProvider(':update_memories');
+      const { agent } = agentWith(memory);
+
+      let error: unknown;
+      try {
+        await agent.run('hello', { signal: controller.signal });
+      } catch (e) {
+        error = e;
+      }
+
+      expect((error as Error).name).toBe('AbortError');
+      expect(failures).toHaveLength(0);
+    });
+  });
+
   describe('store maintenance', () => {
     it('creates the store only when it is missing', async () => {
       const definition = {
