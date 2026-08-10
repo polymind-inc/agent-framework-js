@@ -20,16 +20,36 @@ export interface InvocationsHostServerConfig extends Pick<InvocationsServerConfi
   hosted?: boolean;
 }
 
+/** The session partition for one invocation: the map key, and the identity the session carries. */
+interface SessionPartition {
+  /**
+   * The key conversations are stored under.
+   *
+   * An injective encoding of the (session, user) pair, not a delimiter join: the session id is
+   * caller-supplied and may itself contain `:`, so `S:v` × user `u` and `S` × user `v:u` would
+   * otherwise collapse into one partition and hand one user another's conversation (the same
+   * delimiter-collision defect the Responses session store fixed).
+   */
+  readonly key: string;
+  /**
+   * What the session reports as its id — the reference's human-readable `sessionId:userId`
+   * spelling, kept so tools and middleware observe the same identity they would under the
+   * Python adapter.
+   */
+  readonly sessionId: string;
+}
+
 /**
- * The session partition key for one invocation.
+ * The session partition for one invocation.
  *
- * Hosted, the key is `sessionId:userId`: one container session serves several end users under
- * container protocol 2.0.0, so the session id alone would hand one user another's conversation.
- * Locally there is no platform to inject a user, and the session id is the whole key.
+ * Hosted, the partition is per session *and* user: one container session serves several end
+ * users under container protocol 2.0.0, so the session id alone would hand one user another's
+ * conversation. Locally there is no platform to inject a user, and the session id is the whole
+ * partition.
  */
-function partitionKey(context: InvocationContext, hosted: boolean): string {
+function partitionKey(context: InvocationContext, hosted: boolean): SessionPartition {
   if (!hosted) {
-    return context.sessionId;
+    return { key: context.sessionId, sessionId: context.sessionId };
   }
   // The only runtime signal of the protocol version is whether the call id header is present.
   // Serving a v1.0.0 caller would run without the per-user partition this handler depends on,
@@ -52,7 +72,10 @@ function partitionKey(context: InvocationContext, hosted: boolean): string {
       { code: 'missing_user_id', source: 'platform' },
     );
   }
-  return `${context.sessionId}:${userId}`;
+  return {
+    key: JSON.stringify([context.sessionId, userId]),
+    sessionId: `${context.sessionId}:${userId}`,
+  };
 }
 
 /** What a well-formed invocation body carries. */
@@ -77,7 +100,7 @@ function invocationHandler(agent: AgentLike, hosted: boolean): InvocationHandler
   const sessions = new Map<string, AgentSession>();
 
   return async (request: Request, context: InvocationContext): Promise<Response> => {
-    const key = partitionKey(context, hosted);
+    const partition = partitionKey(context, hosted);
 
     let payload: unknown;
     try {
@@ -87,13 +110,13 @@ function invocationHandler(agent: AgentLike, hosted: boolean): InvocationHandler
     }
     const { message, stream } = parseInvocation(payload);
 
-    let session = sessions.get(key);
+    let session = sessions.get(partition.key);
     if (session === undefined) {
-      // Under the partition key on purpose (the reference constructs
+      // Under the partition's identity on purpose (the reference constructs
       // `AgentSession(session_id=partition_key)`): tools, middleware and custom agents observe
       // the conversation's real identity through the session, not a throwaway UUID.
-      session = agent.createSession({ sessionId: key });
-      sessions.set(key, session);
+      session = agent.createSession({ sessionId: partition.sessionId });
+      sessions.set(partition.key, session);
     }
 
     if (!stream) {
@@ -112,13 +135,19 @@ function invocationHandler(agent: AgentLike, hosted: boolean): InvocationHandler
     return new Response(
       new ReadableStream<Uint8Array>({
         async pull(controller): Promise<void> {
-          const { done, value } = await iterator.next();
-          if (done === true) {
-            controller.close();
-            return;
-          }
-          if (value.text !== '') {
-            controller.enqueue(encoder.encode(value.text));
+          // Until something is enqueued or the run ends: a tool round surfaces as updates with
+          // no text, and returning empty-handed would just make the stream machinery re-enter
+          // immediately — the loop is the same consumption, without the churn.
+          for (;;) {
+            const { done, value } = await iterator.next();
+            if (done === true) {
+              controller.close();
+              return;
+            }
+            if (value.text !== '') {
+              controller.enqueue(encoder.encode(value.text));
+              return;
+            }
           }
         },
         async cancel(): Promise<void> {

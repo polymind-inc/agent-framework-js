@@ -182,6 +182,40 @@ describe('InvocationsHostServer', () => {
     expect(created).toEqual(['sess-a']);
   });
 
+  it('keeps colliding partition spellings apart', async () => {
+    // `S:v` × user `u` and `S` × user `v:u` both read `S:v:u` when naively joined with a colon;
+    // the partition must tell them apart or one caller reads another's conversation.
+    const client = new MockChatClient([say('one'), say('two')]);
+    const app = server(client, true);
+
+    await app.handle(
+      invoke(
+        { message: 'first secret' },
+        { [HEADERS.userId]: 'u', [HEADERS.foundryCallId]: 'c1' },
+        '?agent_session_id=S:v',
+      ),
+    );
+    await app.handle(
+      invoke(
+        { message: 'hello' },
+        { [HEADERS.userId]: 'v:u', [HEADERS.foundryCallId]: 'c2' },
+        '?agent_session_id=S',
+      ),
+    );
+
+    expect(JSON.stringify(client.calls[1]?.messages)).not.toContain('first secret');
+  });
+
+  it('streams only the non-empty update text', async () => {
+    // Tool rounds surface as updates with no text; the body must carry the text and nothing else.
+    const client = new MockChatClient([
+      { contents: [textContent(''), textContent('streamed'), textContent('')], finishReason: 'stop' },
+    ]);
+    const app = server(client);
+    const response = await app.handle(invoke({ message: 'Hi', stream: true }));
+    expect(await response.text()).toBe('streamed');
+  });
+
   it('creates the hosted session under the user-partitioned key', async () => {
     const created: Array<string | undefined> = [];
     const agent = new Agent({ client: new MockChatClient([say('ok')]), instructions: 'x' });
