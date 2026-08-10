@@ -23,7 +23,8 @@ if (memoryStoreName === undefined) {
 
 // The scope is irrelevant to provisioning — no run happens here — but it is a required part of the
 // provider's contract, so the script names the user it may also be asked to reset.
-const resetUser = process.argv[process.argv.indexOf('--reset') + 1];
+const resetIndex = process.argv.indexOf('--reset');
+const resetUser = resetIndex === -1 ? undefined : process.argv[resetIndex + 1];
 const memory = new FoundryMemoryProvider({
   projectEndpoint,
   memoryStoreName,
@@ -54,7 +55,7 @@ console.log(
     : `Memory store '${memoryStoreName}' already exists; left as-is.`,
 );
 
-if (process.argv.includes('--reset')) {
+if (resetIndex !== -1) {
   if (resetUser === undefined) {
     throw new Error('--reset needs the user id whose memories should be erased.');
   }

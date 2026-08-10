@@ -290,6 +290,22 @@ describe('FoundryMemoryProvider', () => {
       expect(updateCalls(calls)[1]?.body.previous_update_id).toBe('upd_a');
     });
 
+    it('stores a system message with its role preserved', async () => {
+      const { memory, calls } = provider();
+      const { agent } = agentWith(memory, 'noted');
+
+      await agent.run([
+        { role: 'system', contents: [textContent('The user is called Rin.')] },
+        { role: 'user', contents: [textContent('remember me')] },
+      ]);
+
+      expect(updateCalls(calls)[0]?.body.items).toEqual([
+        { type: 'message', role: 'system', content: 'The user is called Rin.' },
+        { type: 'message', role: 'user', content: 'remember me' },
+        { type: 'message', role: 'assistant', content: 'noted' },
+      ]);
+    });
+
     it('sends the configured update delay', async () => {
       const { memory, calls } = provider({ config: { updateDelay: 300 } });
 
@@ -396,6 +412,28 @@ describe('FoundryMemoryProvider', () => {
       expect(failures.map((failure) => failure.operation)).toEqual(['update']);
     });
 
+    it('retries the profile search on the next run when its failure failed the run', async () => {
+      const { memory, calls } = provider({
+        search: [
+          { status: 500 },
+          { body: memories(['likes black coffee'], 'srch_profile') },
+          { body: memories([], 'srch_ctx') },
+        ],
+        config: { failureMode: 'throw' },
+      });
+      const { agent, messagesOf } = agentWith(memory);
+      const session = agent.createSession();
+
+      await expect(agent.run('one', { session })).rejects.toBeInstanceOf(FoundryMemoryError);
+      await agent.run('two', { session });
+
+      // The failure failed the run, so the run that replaces it asks for the profile again.
+      expect(searchCalls(calls).filter((call) => call.body.items === undefined)).toHaveLength(2);
+      expect(injected(messagesOf(0))?.contents[0]).toMatchObject({
+        text: expect.stringContaining('likes black coffee'),
+      });
+    });
+
     it('does not retry the profile search on later runs of a session that already failed it', async () => {
       const { memory, calls } = provider({ search: [{ status: 500 }] });
       const { agent } = agentWith(memory);
@@ -461,6 +499,22 @@ describe('FoundryMemoryProvider', () => {
       await memory.whenUpdatesCompleted({ pollIntervalMs: 0 });
 
       expect(calls).toHaveLength(0);
+    });
+
+    it('stops waiting as soon as the caller aborts, not at the next poll', async () => {
+      const { memory } = provider({
+        update: [{ status: 202, body: { update_id: 'upd_a' } }],
+        store: [{ body: { update_id: 'upd_a', status: 'in_progress' } }],
+      });
+      await agentWith(memory).agent.run('hello');
+
+      const controller = new AbortController();
+      const started = Date.now();
+      const waiting = memory.whenUpdatesCompleted({ pollIntervalMs: 5_000, signal: controller.signal });
+      setTimeout(() => controller.abort(), 20);
+
+      await expect(waiting).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(2_000);
     });
 
     it('raises when the extraction failed', async () => {

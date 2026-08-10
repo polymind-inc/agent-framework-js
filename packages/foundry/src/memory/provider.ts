@@ -214,13 +214,18 @@ export class FoundryMemoryProvider implements ContextProvider {
           ctx.signal,
         );
         state.staticMemories = contentsOf(result);
-      } catch (error) {
-        state.staticMemories = [];
-        this.#failed('search', error);
-      } finally {
-        // Marked either way: a store that refused the profile search once will refuse it on every
-        // run of this session, and retrying it per run only adds latency to each of them.
         state.initialized = true;
+      } catch (error) {
+        // When failures are survivable, the failure is marked as initialization too: a store that
+        // refused the profile search once will refuse it on every run of this session, and
+        // retrying it per run only adds latency to each of them. A failure that throws instead
+        // fails the whole run — the run that replaces it deserves a fresh attempt, not a session
+        // quietly pinned to an empty profile.
+        if (this.#failureMode === 'continue') {
+          state.staticMemories = [];
+          state.initialized = true;
+        }
+        this.#failed('search', error);
       }
     }
 
@@ -379,7 +384,7 @@ export class FoundryMemoryProvider implements ContextProvider {
           `Foundry memory update '${updateId}' reported an unknown status '${String(result.status)}'.`,
         );
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, interval));
+      await sleep(interval, options.signal);
     }
   }
 
@@ -416,6 +421,25 @@ export class FoundryMemoryProvider implements ContextProvider {
       throw error;
     }
   }
+}
+
+/** Resolves after `ms`, or rejects the moment `signal` aborts instead of at the timer. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted === true) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /** The memory texts a search answered with, in order, dropping the blank ones. */
