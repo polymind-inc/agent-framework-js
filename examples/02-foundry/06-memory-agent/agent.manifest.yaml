@@ -1,0 +1,16 @@
+# azd manifest: the resources `azd ai agent init` provisions for this agent.
+name: memory-agent
+models:
+  - name: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    format: OpenAI
+    version: '2024-07-18'
+    sku:
+      name: GlobalStandard
+      capacity: 30
+  # The memory store extracts with the chat model and searches with this one.
+  - name: ${AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME}
+    format: OpenAI
+    version: '1'
+    sku:
+      name: GlobalStandard
+      capacity: 30

@@ -56,9 +56,9 @@ export type { HostedAgentContext } from './hosting/hosted-context.js';
 // The builder (hostedAgentContextOf) and the iteration wrapper stay internal: the handler is the
 // only writer, which is what keeps the ambient read-only for everything below it.
 export { getHostedAgentContext } from './hosting/hosted-context.js';
-
 export type { InvocationsHostServerConfig } from './hosting/invocations.js';
 export { InvocationsHostServer } from './hosting/invocations.js';
+export { hostedUserScope } from './hosting/memory-scope.js';
 export type { ResponsesHostServerConfig } from './hosting/server.js';
 export { defaultStore, ResponsesHostServer } from './hosting/server.js';
 

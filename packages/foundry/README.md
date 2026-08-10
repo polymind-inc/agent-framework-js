@@ -8,7 +8,8 @@
 > package.
 
 Microsoft Foundry provider for the Agent Framework: `FoundryChatClient` talks to a Foundry
-project (model deployments or server agents) with Microsoft Entra authentication, and the
+project (model deployments or server agents) with Microsoft Entra authentication,
+`FoundryMemoryProvider` gives an agent persistent memory backed by a Foundry Memory Store, and the
 `@polymind-inc/agent-framework-foundry/hosting` subpath publishes an `Agent` as a Foundry Hosted
 Agent — `ResponsesHostServer` over the Responses container protocol, `InvocationsHostServer` over
 the Invocations protocol — on the servers implemented by
@@ -26,6 +27,10 @@ needs it, so consumers using just `FoundryChatClient` can leave it uninstalled.
 
 Known limitations:
 
+- `FoundryMemoryProvider` targets the preview memory-store API (`Foundry-Features:
+  MemoryStores=V1Preview`) and implements the routes a context provider needs — search, update,
+  update-result polling, scope deletion, and store creation. Memory *items* have their own CRUD
+  routes, which are not covered.
 - `FoundryResponseStore` (the hosted default) keeps the response resource in the Foundry storage
   service and the background replay log beside the sandbox state — the storage service has no
   events API — so stream replay after a sandbox recycle fails closed rather than resuming.

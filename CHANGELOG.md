@@ -6,6 +6,21 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-foundry`** — new `FoundryMemoryProvider`: a `ContextProvider`
+  backed by a Microsoft Foundry Memory Store
+  ([#25](https://github.com/polymind-inc/agent-framework-js/issues/25)). It searches the store
+  before each run — once per session for the user's profile memories, then per turn for memories
+  relevant to the input — injects what it finds as a single user message under a configurable
+  context prompt, and sends the completed turn back for extraction afterwards. A failed run is not
+  stored. Memories are partitioned by a **required** `scope`, given as a value or as a function of
+  the run and pinned to the session on first use, so one provider instance can serve every user of
+  a hosted container; `hostedUserScope()` (exported from `/hosting`) resolves it from the platform
+  user id of the turn. Service failures default to `failureMode: 'continue'` — the run proceeds
+  without the memories — and `'throw'` fails the run instead; `onFailure` observes both. The
+  provider also carries the store operations a caller needs around it:
+  `ensureMemoryStoreCreated`, `getMemoryStore`, `deleteStoredMemories` and `whenUpdatesCompleted`.
+  The transport is `fetch` against the preview memory-store routes (`Foundry-Features:
+  MemoryStores=V1Preview`) and is overridable, so tests need no live credentials.
 - **`@polymind-inc/agent-framework-agentserver`** — new `InvocationsServer`: the Foundry
   Invocations protocol ([#29](https://github.com/polymind-inc/agent-framework-js/issues/29)),
   served alongside the existing Responses protocol. The protocol prescribes no payload — the

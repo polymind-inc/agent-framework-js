@@ -5,5 +5,5 @@
     "isolatedDeclarations": false,
     "noEmit": true
   },
-  "include": ["*.ts", "02-hosted-agent/*.ts"]
+  "include": ["*.ts", "*/*.ts"]
 }

@@ -36,9 +36,12 @@ Foundry chat examples use Azure credentials from `DefaultAzureCredential`. Set
 | Invocations Hosted Agent | Serving the same agent over the Invocations protocol | `pnpm --filter example-02-foundry build`, then `pnpm --filter example-02-foundry invocations` |
 | Tool approval | Pausing, persisting, approving, denying, and resuming locally | `pnpm --filter example-02-foundry approval` |
 | Foundry Toolbox | Calling tools exposed by a Foundry Toolbox MCP endpoint | `pnpm --filter example-02-foundry toolbox` |
+| Memory | Recalling facts across conversations, scoped per user | `pnpm --filter example-02-foundry memory:provision`, then `build` and `pnpm --filter example-02-foundry memory` |
 
 See [`02-foundry/02-hosted-agent/README.md`](02-foundry/02-hosted-agent/README.md) for container
-build and deployment instructions.
+build and deployment instructions, and
+[`02-foundry/06-memory-agent/README.md`](02-foundry/06-memory-agent/README.md) for the memory
+store the memory sample needs.
 
 ## Extensibility and providers
 
