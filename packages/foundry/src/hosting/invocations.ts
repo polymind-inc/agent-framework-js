@@ -89,7 +89,10 @@ function invocationHandler(agent: AgentLike, hosted: boolean): InvocationHandler
 
     let session = sessions.get(key);
     if (session === undefined) {
-      session = agent.createSession();
+      // Under the partition key on purpose (the reference constructs
+      // `AgentSession(session_id=partition_key)`): tools, middleware and custom agents observe
+      // the conversation's real identity through the session, not a throwaway UUID.
+      session = agent.createSession({ sessionId: key });
       sessions.set(key, session);
     }
 

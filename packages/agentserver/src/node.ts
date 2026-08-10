@@ -96,7 +96,6 @@ export async function serve(app: ProtocolServer, options: ServeOptions = {}): Pr
 
   const host = options.host ?? '0.0.0.0';
   const port = options.port ?? configuredPort();
-  const handler = app.fetch;
 
   const server = createServer((req, res) => {
     void (async (): Promise<void> => {
@@ -104,7 +103,9 @@ export async function serve(app: ProtocolServer, options: ServeOptions = {}): Pr
       const abort = new AbortController();
       res.on('close', () => abort.abort());
       try {
-        await writeWebResponse(await handler(toWebRequest(req, host, abort.signal)), res);
+        // Called through `app`, never detached: `ProtocolServer` is structural, and a server
+        // implementing `fetch` as an ordinary method would lose its instance state otherwise.
+        await writeWebResponse(await app.fetch(toWebRequest(req, host, abort.signal)), res);
       } catch {
         // The protocol layer answers its own errors; reaching here means the socket itself broke.
         if (!res.headersSent) {

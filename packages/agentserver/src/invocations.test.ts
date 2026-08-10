@@ -138,6 +138,57 @@ describe('routes', () => {
     }
   });
 
+  it('rejects lookalike paths that only share the prefix', async () => {
+    // `/invocationsfoo` must never alias `/invocations/foo`: with handlers registered on every
+    // route, each of these still falls outside the protocol.
+    const server = makeServer({ getHandler: echoHandler(), cancelHandler: echoHandler() });
+    const cases: Array<[string, string]> = [
+      ['GET', '/invocationsfoo'],
+      ['POST', '/invocationsfoo'],
+      ['POST', '/invocationsfoo/cancel'],
+    ];
+    for (const [method, path] of cases) {
+      const response = await server.handle(
+        new Request(`http://localhost:8088${path}`, {
+          method,
+          ...(method === 'POST' ? { body: 'x' } : {}),
+        }),
+      );
+      expect(response.status, `${method} ${path}`).toBe(404);
+    }
+  });
+
+  it('answers a unicode path id without crashing, degrading only the header echo', async () => {
+    const server = makeServer({ getHandler: (_request, context) => new Response(context.invocationId) });
+    const response = await server.handle(new Request('http://localhost:8088/invocations/%E2%98%83'));
+    expect(response.status).toBe(200);
+    // The handler still sees the id as the caller sent it; only the header echo degrades to a
+    // representable approximation instead of crashing the response.
+    expect(await response.text()).toBe('☃');
+    expect(response.headers.get(INVOCATION_ID_HEADER)).toBe('?');
+  });
+
+  it.each([
+    ['read', 'GET', ''],
+    ['cancel', 'POST', '/cancel'],
+  ])(
+    'stamps the resolved identity on the 404 for an unregistered %s route',
+    async (_name, method, suffix) => {
+      const response = await makeServer().handle(
+        new Request(`http://localhost:8088/invocations/inv_404${suffix}?agent_session_id=pin`, { method }),
+      );
+      expect(response.status).toBe(404);
+      expect(response.headers.get(INVOCATION_ID_HEADER)).toBe('inv_404');
+      expect(response.headers.get(HEADERS.sessionId)).toBe('pin');
+    },
+  );
+
+  it('generates the session id echoed on an unregistered-route 404 when nothing names one', async () => {
+    const response = await makeServer().handle(new Request('http://localhost:8088/invocations/inv_404'));
+    expect(response.status).toBe(404);
+    expect(must(response.headers.get(HEADERS.sessionId))).toMatch(UUID);
+  });
+
   it('mounts under a prefix without claiming sibling paths', async () => {
     const server = makeServer({ prefix: '/api' });
     const mounted = await server.handle(
@@ -287,6 +338,32 @@ describe('header contract', () => {
     });
     const response = await server.handle(invoke('x', { [HEADERS.foundryCallId]: 'call-7' }));
     expect(await response.text()).toBe('1:call-7;2:call-7;');
+  });
+});
+
+describe('body cancellation', () => {
+  it('keeps the request context for the upstream cancel when the caller abandons the body', async () => {
+    // A consumer cancels the body from outside every ambient scope; the handler's own stream
+    // teardown must still see the turn's request context.
+    let observed: string | undefined | null = null;
+    const server = makeServer({
+      handler: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller): void {
+              controller.enqueue(new TextEncoder().encode('first'));
+            },
+            cancel(): void {
+              observed = getRequestContext()?.requestId;
+            },
+          }),
+        ),
+    });
+    const response = await server.handle(invoke('x', { [HEADERS.requestId]: 'req-cancel' }));
+    const reader = must(response.body).getReader();
+    await reader.read();
+    await reader.cancel('abandoned');
+    expect(observed).toBe('req-cancel');
   });
 });
 

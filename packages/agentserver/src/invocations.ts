@@ -221,7 +221,8 @@ export class InvocationsServer {
     }
 
     const relative = stripPrefix(path, this.#prefix);
-    if (relative === undefined || !relative.startsWith('/invocations')) {
+    // Whole-segment match only: `/invocationsfoo` shares the prefix but is not this protocol.
+    if (relative === undefined || (relative !== '/invocations' && !relative.startsWith('/invocations/'))) {
       throw routeNotFound();
     }
 
@@ -235,7 +236,8 @@ export class InvocationsServer {
         throw methodNotAllowed('POST');
       }
       const invocationId = sanitizeId(request.headers.get(INVOCATION_ID_HEADER)) ?? crypto.randomUUID();
-      return this.#dispatch(this.#handler, request, url, context, turn, invocationId);
+      const sessionId = this.#resolveTurn(url, turn, invocationId);
+      return this.#dispatch(this.#handler, request, context, turn, invocationId, sessionId);
     }
 
     const segments = rest.split('/').filter((segment) => segment !== '');
@@ -267,6 +269,19 @@ export class InvocationsServer {
     return this.#dispatchOptional(this.#getHandler, 'get_invocation', request, url, context, turn, id);
   }
 
+  /**
+   * Resolves the turn's identity and records it for the response — including an error response.
+   *
+   * Resolved exactly once per turn: the session fallback is a generated UUID, so a second
+   * resolution would echo a different id than the one the handler saw.
+   */
+  #resolveTurn(url: URL, turn: TurnIdentity, invocationId: string): string {
+    const sessionId = resolveInvocationSessionId(url);
+    turn.invocationId = invocationId;
+    turn.sessionId = sessionId;
+    return sessionId;
+  }
+
   /** The read and cancel routes: registered handlers answer, unregistered ones are a 404. */
   #dispatchOptional(
     handler: InvocationHandler | undefined,
@@ -277,6 +292,9 @@ export class InvocationsServer {
     turn: TurnIdentity,
     invocationId: string,
   ): Promise<Response> {
+    // Resolved before the not-implemented check: the 404 carries the same identity headers as
+    // every other answer on these routes — the caller correlating a failure needs them most.
+    const sessionId = this.#resolveTurn(url, turn, invocationId);
     if (handler === undefined) {
       // 404 rather than 405: the route is defined by the protocol but not offered by this
       // container. `upstream` because what is missing is application code, not platform plumbing
@@ -287,23 +305,17 @@ export class InvocationsServer {
         source: 'upstream',
       });
     }
-    return this.#dispatch(handler, request, url, context, turn, invocationId);
+    return this.#dispatch(handler, request, context, turn, invocationId, sessionId);
   }
 
   async #dispatch(
     handler: InvocationHandler,
     request: Request,
-    url: URL,
     context: RequestContext,
     turn: TurnIdentity,
     invocationId: string,
+    sessionId: string,
   ): Promise<Response> {
-    const sessionId = resolveInvocationSessionId(url);
-    // Recorded before the handler runs, so the error path reports the resolved identity too —
-    // the caller correlating a failure needs these more than anyone.
-    turn.invocationId = invocationId;
-    turn.sessionId = sessionId;
-
     const abort = new AbortController();
     const onShutdown = (): void => abort.abort();
     this.#shutdown.signal.addEventListener('abort', onShutdown, { once: true });
@@ -342,7 +354,9 @@ export class InvocationsServer {
     // (one obtained from `fetch`, for instance), and the identity headers must win over anything
     // the handler set — the server's resolution is the one the platform routed by.
     const headers = new Headers(response.headers);
-    headers.set(INVOCATION_ID_HEADER, invocationId);
+    // `toHeaderValue` because a read route's id comes straight off the path: a value `Headers.set`
+    // cannot represent must degrade to a readable approximation rather than crash the response.
+    headers.set(INVOCATION_ID_HEADER, toHeaderValue(invocationId));
     headers.set(HEADERS.sessionId, toHeaderValue(sessionId));
 
     if (response.body === null) {
@@ -427,9 +441,13 @@ export class InvocationsServer {
         controller.enqueue(result.value);
       },
       cancel: async (reason: unknown): Promise<void> => {
-        // The client hung up: stop the handler rather than let it stream to nobody.
+        // The client hung up: stop the handler rather than let it stream to nobody. The cancel
+        // re-enters the turn's scopes for the same reason the pulls do — the handler's stream
+        // teardown runs from here, and it must still see the turn's trace and request context.
         try {
-          await reader.cancel(reason);
+          await otelContext.with(turnContext, () =>
+            runWithRequestContext(context, () => reader.cancel(reason)),
+          );
         } finally {
           await finish();
         }

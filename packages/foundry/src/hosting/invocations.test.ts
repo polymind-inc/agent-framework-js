@@ -1,4 +1,5 @@
 import { HEADERS, INVOCATION_ID_HEADER } from '@polymind-inc/agent-framework-agentserver';
+import type { AgentLike } from '@polymind-inc/agent-framework-core';
 import { Agent, textContent } from '@polymind-inc/agent-framework-core';
 import type { MockTurn } from '@polymind-inc/agent-framework-core/testing';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
@@ -153,5 +154,41 @@ describe('InvocationsHostServer', () => {
     await app.handle(invoke({ message: 'again' }, HOSTED_HEADERS, query));
 
     expect(JSON.stringify(client.calls[1]?.messages)).toContain('remember me');
+  });
+
+  // The reference adapter constructs `AgentSession(session_id=partition_key)`, so tools,
+  // middleware and custom agents observe the conversation's real identity rather than a
+  // throwaway UUID.
+  function recording(agent: Agent, created: Array<string | undefined>): AgentLike {
+    return {
+      id: agent.id,
+      run: agent.run.bind(agent),
+      createSession: (options) => {
+        created.push(options?.sessionId);
+        return agent.createSession(options);
+      },
+      deserializeSession: agent.deserializeSession.bind(agent),
+      asTool: agent.asTool.bind(agent),
+    };
+  }
+
+  it('creates the local session under the resolved session id', async () => {
+    const created: Array<string | undefined> = [];
+    const agent = new Agent({ client: new MockChatClient([say('ok')]), instructions: 'x' });
+    const app = new InvocationsHostServer({ agent: recording(agent, created), hosted: false });
+
+    await app.handle(invoke({ message: 'hi' }, {}, '?agent_session_id=sess-a'));
+
+    expect(created).toEqual(['sess-a']);
+  });
+
+  it('creates the hosted session under the user-partitioned key', async () => {
+    const created: Array<string | undefined> = [];
+    const agent = new Agent({ client: new MockChatClient([say('ok')]), instructions: 'x' });
+    const app = new InvocationsHostServer({ agent: recording(agent, created), hosted: true });
+
+    await app.handle(invoke({ message: 'hi' }, HOSTED_HEADERS, '?agent_session_id=shared-sandbox'));
+
+    expect(created).toEqual(['shared-sandbox:user-1']);
   });
 });
