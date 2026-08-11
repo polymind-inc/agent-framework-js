@@ -110,7 +110,10 @@ export interface McpConnectionConfig {
    *
    * A function is called **once per request**, so a credential that expires — or one that varies
    * with ambient request context — is read at the moment it is sent. A plain record is read once.
-   * Headers are attached only to requests whose origin matches `url`, and only the built-in
+   * A header the transport itself sets is not overridden; a configured header fills gaps.
+   *
+   * Headers are attached only to requests whose origin matches `url`, with redirects followed
+   * one hop at a time so the origin decision is re-made for every hop. Only the built-in
    * transport carries them: a custom `transport` owns its own fetch, so combining the two is
    * refused rather than silently ignored.
    */

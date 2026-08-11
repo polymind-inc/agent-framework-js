@@ -68,10 +68,15 @@ export interface MCPClientConfig {
    * Only applies to the `url` form. A `transport` or `transportFactory` you build yourself owns
    * its own headers.
    *
+   * A header the transport itself sets — the content type, the session id, an `authorization`
+   * from the SDK's auth support — is not overridden; a configured header fills gaps.
+   *
    * ## Security considerations
    *
-   * Headers are attached only to requests whose origin matches `url`, so a redirect to another
-   * host does not carry them along. Anything here is disclosed to the server at `url` itself.
+   * Headers are attached only to requests whose origin matches `url`. Redirects are followed one
+   * hop at a time so that this holds for every hop, not merely the first request: a hop that
+   * leaves the origin carries none of these headers, and a hop that returns to it gets fresh
+   * ones. Anything here is disclosed to the server at `url` itself.
    */
   headers?: Record<string, string> | McpHeaderProvider;
   /** Replaces the transport's `fetch`, for proxies and tests. */
