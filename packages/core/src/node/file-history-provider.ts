@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import type { AgentSession } from '../agent/session.js';
 import type {
   HistoryProvider,
@@ -13,6 +13,7 @@ import { ConfigurationError } from '../errors.js';
 import type { Message } from '../types/message.js';
 import type { SerializedMessage } from '../types/serialization.js';
 import { deserializeMessage, serializeMessage } from '../types/serialization.js';
+import { isWithin } from './paths.js';
 
 /** Options for {@link FileHistoryProvider}. */
 export interface FileHistoryProviderConfig extends HistoryStoreOptions {
@@ -83,6 +84,42 @@ async function sha256Hex(value: string): Promise<string> {
 }
 
 /**
+ * One promise chain per file, shared by every provider in the process.
+ *
+ * Appends to one session must not interleave their lines, and a read must not observe an append
+ * that is partway through being flushed — it would see a line that ends mid-JSON and report a
+ * healthy transcript as corrupted. Both orderings have to hold across provider instances too,
+ * since nothing stops two of them from pointing at the same directory, so the chains are keyed by
+ * resolved file path at module level rather than held per instance. Processes are another matter:
+ * nothing here coordinates two of them writing the same file.
+ */
+const fileChains = new Map<string, Promise<unknown>>();
+
+/**
+ * Runs `operation` after everything already queued for `path`.
+ *
+ * The queued link swallows failures so one failed operation does not wedge every later one, and
+ * the entry is dropped when nothing is queued behind it, so the map does not grow with every
+ * session the process ever sees.
+ */
+async function enqueueFileOperation<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const previous = fileChains.get(path) ?? Promise.resolve();
+  const run = previous.then(operation, operation);
+  const link = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  fileChains.set(path, link);
+  try {
+    return await run;
+  } finally {
+    if (fileChains.get(path) === link) {
+      fileChains.delete(path);
+    }
+  }
+}
+
+/**
  * Persists one session per file, appending as the conversation grows.
  *
  * Each line is one message in the same wire form the rest of the framework serializes, so a
@@ -107,13 +144,18 @@ async function sha256Hex(value: string): Promise<string> {
  *   path cannot address a file elsewhere.
  * - **History is replayed verbatim into every later model call.** A transcript an attacker can
  *   write to is a prompt-injection channel; treat the directory as trusted input.
+ *
+ * ## Concurrency
+ *
+ * Reads and appends to one session's file are ordered within the process, across provider
+ * instances included, so overlapping runs of a session cannot interleave lines or observe a
+ * half-flushed one. Nothing coordinates two *processes* sharing a directory — give each its own,
+ * or put external locking around the shared one.
  */
 export class FileHistoryProvider implements HistoryProvider {
   readonly sourceId: string;
   readonly #storagePath: string;
   readonly #options: ResolvedHistoryStoreOptions;
-  /** One promise chain per file, so concurrent appends cannot interleave partial lines. */
-  readonly #writes = new Map<string, Promise<unknown>>();
   #directoryReady: Promise<unknown> | undefined;
 
   constructor(config: FileHistoryProviderConfig) {
@@ -132,35 +174,37 @@ export class FileHistoryProvider implements HistoryProvider {
 
   async getMessages(session: AgentSession, _state: Record<string, unknown>): Promise<Message[]> {
     const path = await this.#sessionFile(session);
-    let contents: string;
-    try {
-      contents = await readFile(path, 'utf8');
-    } catch (error) {
-      // A session that has never been written has no file, which is not an error: it is an empty
-      // transcript. Anything else — a permission problem, a directory in the way — is real and is
-      // surfaced rather than reported as "no history".
-      if ((error as { code?: string }).code === 'ENOENT') {
-        return [];
-      }
-      throw error;
-    }
-
-    const messages: Message[] = [];
-    const lines = contents.split('\n');
-    for (const [index, line] of lines.entries()) {
-      // Trailing newline, and any blank line a partially written file left behind.
-      if (line.trim() === '') {
-        continue;
-      }
-      let parsed: unknown;
+    // Queued behind any append in flight for the same file: a read overlapping an append could
+    // otherwise observe a partially flushed line and report a healthy transcript as corrupted.
+    return await enqueueFileOperation(path, async () => {
+      let contents: string;
       try {
-        parsed = JSON.parse(line);
+        contents = await readFile(path, 'utf8');
       } catch (error) {
-        throw new Error(`Failed to read history line ${index + 1} of '${path}'.`, { cause: error });
+        // A session that has never been written has no file, which is not an error: it is an empty
+        // transcript. Anything else — a permission problem, a directory in the way — is real and
+        // is surfaced rather than reported as "no history".
+        if ((error as { code?: string }).code === 'ENOENT') {
+          return [];
+        }
+        throw error;
       }
-      messages.push(deserializeMessage(parsed as SerializedMessage));
-    }
-    return messages;
+
+      const messages: Message[] = [];
+      const lines = contents.split('\n');
+      for (const [index, line] of lines.entries()) {
+        // Trailing newline, and any blank line a partially written file left behind.
+        if (line.trim() === '') {
+          continue;
+        }
+        try {
+          messages.push(deserializeMessage(JSON.parse(line) as SerializedMessage));
+        } catch (error) {
+          throw new Error(`Failed to read history line ${index + 1} of '${path}'.`, { cause: error });
+        }
+      }
+      return messages;
+    });
   }
 
   async saveMessages(
@@ -181,7 +225,8 @@ export class FileHistoryProvider implements HistoryProvider {
       return line;
     });
     const path = await this.#sessionFile(session);
-    await this.#serialized(path, async () => {
+    await this.#ensureDirectory();
+    await enqueueFileOperation(path, async () => {
       await appendFile(path, `${lines.join('\n')}\n`, 'utf8');
     });
   }
@@ -200,28 +245,6 @@ export class FileHistoryProvider implements HistoryProvider {
     }
   }
 
-  /**
-   * Runs `write` after every append already queued for `path`.
-   *
-   * Two runs of the same session finishing at once would otherwise both append to the same file
-   * and interleave their lines. The queued link swallows failures so one failed append does not
-   * wedge every later one, and the entry is dropped when nothing is queued behind it, so the map
-   * does not grow with every session the process ever sees.
-   */
-  async #serialized(path: string, write: () => Promise<void>): Promise<void> {
-    const previous = this.#writes.get(path) ?? Promise.resolve();
-    const run = previous.then(write, write);
-    const link = run.catch(() => undefined);
-    this.#writes.set(path, link);
-    try {
-      await run;
-    } finally {
-      if (this.#writes.get(path) === link) {
-        this.#writes.delete(path);
-      }
-    }
-  }
-
   async #sessionFile(session: AgentSession): Promise<string> {
     const stem = isLiteralStemSafe(session.sessionId)
       ? session.sessionId
@@ -235,7 +258,6 @@ export class FileHistoryProvider implements HistoryProvider {
         `Session '${session.sessionId}' does not map to a file inside storagePath.`,
       );
     }
-    await this.#ensureDirectory();
     return path;
   }
 
@@ -255,13 +277,4 @@ export class FileHistoryProvider implements HistoryProvider {
     });
     await this.#directoryReady;
   }
-}
-
-/** Whether `path` is `directory` itself or something under it. */
-function isWithin(directory: string, path: string): boolean {
-  if (!isAbsolute(path)) {
-    return false;
-  }
-  const root = directory.endsWith(sep) ? directory : `${directory}${sep}`;
-  return path === directory || path.startsWith(root);
 }
