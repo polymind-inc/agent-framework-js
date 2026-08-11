@@ -1,6 +1,5 @@
 import type { AgentSession } from '../agent/session.js';
-import type { Message, MessageFilter } from '../types/message.js';
-import { notSourceTypes, passThrough } from '../types/message.js';
+import type { Message } from '../types/message.js';
 import type { SerializedMessage } from '../types/serialization.js';
 import { deserializeMessages, serializeMessages } from '../types/serialization.js';
 import type {
@@ -9,7 +8,8 @@ import type {
   ProviderAfterRunContext,
   ProviderRunContext,
 } from './context-provider.js';
-import { selectContextMessages } from './context-provider.js';
+import type { ResolvedHistoryStoreOptions } from './history-store.js';
+import { messagesToStore, resolveHistoryStoreOptions } from './history-store.js';
 
 const MESSAGES_KEY = 'messages';
 
@@ -41,15 +41,11 @@ export interface InMemoryHistoryProviderConfig extends HistoryStoreOptions {
  */
 export class InMemoryHistoryProvider implements HistoryProvider {
   readonly sourceId: string;
-  readonly #provideFilter: MessageFilter;
-  readonly #storeFilter: MessageFilter;
-  readonly #storeContextMessages: boolean | readonly string[];
+  readonly #options: ResolvedHistoryStoreOptions;
 
   constructor(options?: InMemoryHistoryProviderConfig) {
     this.sourceId = options?.sourceId ?? 'in_memory';
-    this.#provideFilter = options?.provideFilter ?? passThrough;
-    this.#storeFilter = options?.storeFilter ?? notSourceTypes('ChatHistory');
-    this.#storeContextMessages = options?.storeContextMessages ?? false;
+    this.#options = resolveHistoryStoreOptions(options);
   }
 
   async getMessages(_session: AgentSession, state: Record<string, unknown>): Promise<Message[]> {
@@ -70,23 +66,14 @@ export class InMemoryHistoryProvider implements HistoryProvider {
   }
 
   async beforeRun(ctx: ProviderRunContext): Promise<void> {
-    const history = this.#provideFilter(await this.getMessages(ctx.session, ctx.state));
+    const history = this.#options.provideFilter(await this.getMessages(ctx.session, ctx.state));
     if (history.length > 0) {
       ctx.extendMessages(history);
     }
   }
 
   async afterRun(ctx: ProviderAfterRunContext): Promise<void> {
-    // A run that failed produced no exchange to append. Storing its input alone would leave the
-    // transcript with a question the model never answered, which the next run would replay.
-    if (ctx.response === undefined) {
-      return;
-    }
-    const toSave = this.#storeFilter([
-      ...selectContextMessages(ctx.contextMessages, this.#storeContextMessages),
-      ...ctx.inputMessages,
-      ...ctx.response.messages,
-    ]);
+    const toSave = messagesToStore(ctx, this.#options);
     if (toSave.length > 0) {
       await this.saveMessages(ctx.session, toSave, ctx.state);
     }

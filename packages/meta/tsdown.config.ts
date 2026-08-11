@@ -4,6 +4,7 @@ export default defineConfig({
   entry: [
     'src/index.ts',
     'src/testing.ts',
+    'src/node.ts',
     'src/openai.ts',
     'src/anthropic.ts',
     'src/mcp.ts',

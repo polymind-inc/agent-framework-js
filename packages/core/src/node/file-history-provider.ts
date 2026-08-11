@@ -1,0 +1,267 @@
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { isAbsolute, resolve, sep } from 'node:path';
+import type { AgentSession } from '../agent/session.js';
+import type {
+  HistoryProvider,
+  HistoryStoreOptions,
+  ProviderAfterRunContext,
+  ProviderRunContext,
+} from '../context/context-provider.js';
+import type { ResolvedHistoryStoreOptions } from '../context/history-store.js';
+import { messagesToStore, resolveHistoryStoreOptions } from '../context/history-store.js';
+import { ConfigurationError } from '../errors.js';
+import type { Message } from '../types/message.js';
+import type { SerializedMessage } from '../types/serialization.js';
+import { deserializeMessage, serializeMessage } from '../types/serialization.js';
+
+/** Options for {@link FileHistoryProvider}. */
+export interface FileHistoryProviderConfig extends HistoryStoreOptions {
+  /**
+   * Directory holding one file per session. Created when it does not exist.
+   *
+   * Treat it as application storage, not as a secret store: transcripts are written as plain text
+   * and are readable by anything that can read the directory.
+   */
+  storagePath: string;
+  /**
+   * Defaults to `'file_history'` (Python `FileHistoryProvider.DEFAULT_SOURCE_ID`, which also names
+   * the session-state partition). Override when running several history providers side by side.
+   */
+  sourceId?: string;
+}
+
+/** Filenames Windows refuses whatever the extension is. */
+const WINDOWS_RESERVED_STEMS = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  ...Array.from({ length: 9 }, (_, index) => `COM${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `LPT${index + 1}`),
+]);
+
+/** Beyond this an encoded stem risks the platform's own path limits, so it is hashed instead. */
+const MAX_ENCODED_STEM_LENGTH = 180;
+const ENCODED_STEM_PREFIX = '~session-';
+
+/**
+ * Whether a session id can be used as a filename as it stands.
+ *
+ * Session ids are opaque: a caller may use a UUID, but also a path, an email address or a
+ * Windows-reserved word. Anything that is not plainly portable is encoded rather than rejected, so
+ * a working session never becomes unusable because of how it was named.
+ */
+function isLiteralStemSafe(sessionId: string): boolean {
+  if (sessionId === '' || sessionId.startsWith('.') || /[ .]$/.test(sessionId)) {
+    return false;
+  }
+  const windowsStem = (sessionId.split('.')[0] ?? '').toUpperCase();
+  if (WINDOWS_RESERVED_STEMS.has(windowsStem)) {
+    return false;
+  }
+  // Control characters, non-ASCII and anything outside the portable set are encoded: a filesystem
+  // that normalizes them (macOS's Unicode folding, a case-insensitive volume) would otherwise let
+  // two distinct session ids collide onto one file.
+  return /^[A-Za-z0-9._-]+$/.test(sessionId);
+}
+
+/** Base64url without padding, which `~session-` stems use. */
+function encodeStem(sessionId: string): string {
+  const bytes = new TextEncoder().encode(sessionId);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Persists one session per file, appending as the conversation grows.
+ *
+ * Each line is one message in the same wire form the rest of the framework serializes, so a
+ * transcript written here can be read by anything that understands JSON Lines — including
+ * implementations of this interface backed by other storage, which is why the layout is part of
+ * the contract rather than an internal detail.
+ *
+ * ```ts
+ * const agent = new Agent({
+ *   client,
+ *   historyProvider: new FileHistoryProvider({ storagePath: './sessions' }),
+ * });
+ * ```
+ *
+ * ## Security considerations
+ *
+ * - **Transcripts are stored in the clear.** They routinely contain whatever a user typed and
+ *   whatever a tool returned. Put `storagePath` somewhere with access controls that match the
+ *   conversation's, and consider encryption at rest.
+ * - **A session id never escapes `storagePath`.** Ids that are not portable filenames are encoded,
+ *   and the resolved path is checked against the directory, so an id carrying `../` or an absolute
+ *   path cannot address a file elsewhere.
+ * - **History is replayed verbatim into every later model call.** A transcript an attacker can
+ *   write to is a prompt-injection channel; treat the directory as trusted input.
+ */
+export class FileHistoryProvider implements HistoryProvider {
+  readonly sourceId: string;
+  readonly #storagePath: string;
+  readonly #options: ResolvedHistoryStoreOptions;
+  /** One promise chain per file, so concurrent appends cannot interleave partial lines. */
+  readonly #writes = new Map<string, Promise<unknown>>();
+  #directoryReady: Promise<unknown> | undefined;
+
+  constructor(config: FileHistoryProviderConfig) {
+    if (config.storagePath === '') {
+      throw new ConfigurationError('FileHistoryProvider needs a storagePath.');
+    }
+    this.sourceId = config.sourceId ?? 'file_history';
+    this.#storagePath = resolve(config.storagePath);
+    this.#options = resolveHistoryStoreOptions(config);
+  }
+
+  /** The directory this provider writes to, resolved to an absolute path. */
+  get storagePath(): string {
+    return this.#storagePath;
+  }
+
+  async getMessages(session: AgentSession, _state: Record<string, unknown>): Promise<Message[]> {
+    const path = await this.#sessionFile(session);
+    let contents: string;
+    try {
+      contents = await readFile(path, 'utf8');
+    } catch (error) {
+      // A session that has never been written has no file, which is not an error: it is an empty
+      // transcript. Anything else — a permission problem, a directory in the way — is real and is
+      // surfaced rather than reported as "no history".
+      if ((error as { code?: string }).code === 'ENOENT') {
+        return [];
+      }
+      throw error;
+    }
+
+    const messages: Message[] = [];
+    const lines = contents.split('\n');
+    for (const [index, line] of lines.entries()) {
+      // Trailing newline, and any blank line a partially written file left behind.
+      if (line.trim() === '') {
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch (error) {
+        throw new Error(`Failed to read history line ${index + 1} of '${path}'.`, { cause: error });
+      }
+      messages.push(deserializeMessage(parsed as SerializedMessage));
+    }
+    return messages;
+  }
+
+  async saveMessages(
+    session: AgentSession,
+    messages: Message[],
+    _state: Record<string, unknown>,
+  ): Promise<void> {
+    if (messages.length === 0) {
+      return;
+    }
+    const lines = messages.map((message) => {
+      const line = JSON.stringify(serializeMessage(message));
+      if (line.includes('\n')) {
+        // `JSON.stringify` escapes newlines, so reaching this means a custom serializer produced
+        // something that would split one message across two lines and corrupt every later read.
+        throw new Error('A serialized message contains a raw newline, which would break the JSONL file.');
+      }
+      return line;
+    });
+    const path = await this.#sessionFile(session);
+    await this.#serialized(path, async () => {
+      await appendFile(path, `${lines.join('\n')}\n`, 'utf8');
+    });
+  }
+
+  async beforeRun(ctx: ProviderRunContext): Promise<void> {
+    const history = this.#options.provideFilter(await this.getMessages(ctx.session, ctx.state));
+    if (history.length > 0) {
+      ctx.extendMessages(history);
+    }
+  }
+
+  async afterRun(ctx: ProviderAfterRunContext): Promise<void> {
+    const toSave = messagesToStore(ctx, this.#options);
+    if (toSave.length > 0) {
+      await this.saveMessages(ctx.session, toSave, ctx.state);
+    }
+  }
+
+  /**
+   * Runs `write` after every append already queued for `path`.
+   *
+   * Two runs of the same session finishing at once would otherwise both append to the same file
+   * and interleave their lines. The queued link swallows failures so one failed append does not
+   * wedge every later one, and the entry is dropped when nothing is queued behind it, so the map
+   * does not grow with every session the process ever sees.
+   */
+  async #serialized(path: string, write: () => Promise<void>): Promise<void> {
+    const previous = this.#writes.get(path) ?? Promise.resolve();
+    const run = previous.then(write, write);
+    const link = run.catch(() => undefined);
+    this.#writes.set(path, link);
+    try {
+      await run;
+    } finally {
+      if (this.#writes.get(path) === link) {
+        this.#writes.delete(path);
+      }
+    }
+  }
+
+  async #sessionFile(session: AgentSession): Promise<string> {
+    const stem = isLiteralStemSafe(session.sessionId)
+      ? session.sessionId
+      : await this.#encodedStem(session.sessionId);
+    const path = resolve(this.#storagePath, `${stem}.jsonl`);
+    // The stem is derived, never taken verbatim from an untrusted id, so this cannot fail today.
+    // It is checked anyway: the encoding is the only thing standing between an opaque session id
+    // and the filesystem, and a future change to it must not silently become a path traversal.
+    if (!isWithin(this.#storagePath, path)) {
+      throw new ConfigurationError(
+        `Session '${session.sessionId}' does not map to a file inside storagePath.`,
+      );
+    }
+    await this.#ensureDirectory();
+    return path;
+  }
+
+  async #encodedStem(sessionId: string): Promise<string> {
+    const encoded = `${ENCODED_STEM_PREFIX}${encodeStem(sessionId)}`;
+    if (encoded.length <= MAX_ENCODED_STEM_LENGTH) {
+      return encoded;
+    }
+    return `${ENCODED_STEM_PREFIX}sha256-${await sha256Hex(sessionId)}`;
+  }
+
+  async #ensureDirectory(): Promise<void> {
+    // Created once per provider rather than per write, and retried on the next call if it failed.
+    this.#directoryReady ??= mkdir(this.#storagePath, { recursive: true }).catch((error: unknown) => {
+      this.#directoryReady = undefined;
+      throw error;
+    });
+    await this.#directoryReady;
+  }
+}
+
+/** Whether `path` is `directory` itself or something under it. */
+function isWithin(directory: string, path: string): boolean {
+  if (!isAbsolute(path)) {
+    return false;
+  }
+  const root = directory.endsWith(sep) ? directory : `${directory}${sep}`;
+  return path === directory || path.startsWith(root);
+}

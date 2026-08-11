@@ -6,6 +6,7 @@ import * as sourceAgentserverNode from '@polymind-inc/agent-framework-agentserve
 import * as sourceAgentserverObservability from '@polymind-inc/agent-framework-agentserver/observability';
 import * as sourceAnthropic from '@polymind-inc/agent-framework-anthropic';
 import * as sourceCore from '@polymind-inc/agent-framework-core';
+import * as sourceNode from '@polymind-inc/agent-framework-core/node';
 import * as sourceTesting from '@polymind-inc/agent-framework-core/testing';
 import * as sourceFoundry from '@polymind-inc/agent-framework-foundry';
 import * as sourceFoundryHosting from '@polymind-inc/agent-framework-foundry/hosting';
@@ -21,6 +22,7 @@ import * as metaFoundryHosting from './foundry/hosting.js';
 import * as metaFoundry from './foundry.js';
 import * as metaRoot from './index.js';
 import * as metaMcp from './mcp.js';
+import * as metaNode from './node.js';
 import * as metaOpenai from './openai.js';
 import * as metaTesting from './testing.js';
 
@@ -28,6 +30,7 @@ describe('every entry re-exports its package exactly', () => {
   const entries: ReadonlyArray<[subpath: string, meta: object, source: object]> = [
     ['.', metaRoot, sourceCore],
     ['./testing', metaTesting, sourceTesting],
+    ['./node', metaNode, sourceNode],
     ['./openai', metaOpenai, sourceOpenai],
     ['./anthropic', metaAnthropic, sourceAnthropic],
     ['./mcp', metaMcp, sourceMcp],

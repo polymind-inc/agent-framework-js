@@ -12,6 +12,7 @@ export default defineConfig({
       // Subpath aliases must come before their bare package name: a bare prefix match would
       // otherwise rewrite the subpath into a path inside the package's index.ts.
       '@polymind-inc/agent-framework-core/testing': src('../core/src/testing.ts'),
+      '@polymind-inc/agent-framework-core/node': src('../core/src/node.ts'),
       '@polymind-inc/agent-framework-core': src('../core/src/index.ts'),
       '@polymind-inc/agent-framework-foundry/hosting': src('../foundry/src/hosting.ts'),
       '@polymind-inc/agent-framework-foundry': src('../foundry/src/index.ts'),
