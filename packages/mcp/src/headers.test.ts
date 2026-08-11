@@ -206,11 +206,11 @@ describe('headerInjectingFetch', () => {
   });
 
   describe('redirects', () => {
-    it('does not carry injected headers across a cross-origin redirect', async () => {
+    it('refuses a cross-origin redirect instead of deciding where the credential goes', async () => {
       // The platform fetch strips `authorization` on its own when a redirect changes origin, but
       // forwards every custom header — an API key or a platform identity header would arrive at
-      // whatever host the first server named. Redirects are followed here instead, one hop at a
-      // time, so the origin decision is re-made for every hop.
+      // whatever host the first server named. With headers configured, a redirect fails loudly
+      // instead, and nothing reaches the host the server pointed at.
       const elsewhere = await liveServer();
       const origin = await liveServer();
       origin.handle = (_request, response) => {
@@ -223,50 +223,40 @@ describe('headerInjectingFetch', () => {
         globalThis.fetch,
       );
 
-      const response = await send(`${origin.origin}/mcp`);
+      await expect(send(`${origin.origin}/mcp`)).rejects.toThrow(/redirect/);
 
-      expect(response.status).toBe(200);
       expect(origin.seen[0]?.headers['x-api-key']).toBe('secret-key');
-      expect(elsewhere.seen).toHaveLength(1);
-      expect(elsewhere.seen[0]?.headers['x-api-key']).toBeUndefined();
-      expect(elsewhere.seen[0]?.headers.authorization).toBeUndefined();
+      expect(elsewhere.seen).toHaveLength(0);
     });
 
-    it('follows a same-origin redirect, consulting the provider for each hop', async () => {
+    it('refuses a same-origin redirect too, naming the endpoint to configure', async () => {
+      // MCP has no redirect in its protocol flow, so a redirecting endpoint is a configuration
+      // problem; the error says where the server pointed so the configuration can be fixed.
       const origin = await liveServer();
-      origin.handle = (request, response) => {
-        if (request.url === '/mcp') {
-          response.writeHead(307, { location: '/moved' });
-          response.end();
-          return;
-        }
-        response.writeHead(200, { 'content-type': 'application/json' });
-        response.end('{}');
+      origin.handle = (_request, response) => {
+        response.writeHead(307, { location: '/moved' });
+        response.end();
       };
-      let issued = 0;
       const send = headerInjectingFetch(
         new URL(`${origin.origin}/mcp`),
-        () => {
-          issued += 1;
-          return { authorization: `Bearer token-${issued}` };
-        },
+        { authorization: 'Bearer t' },
         globalThis.fetch,
       );
 
-      const response = await send(`${origin.origin}/mcp`, {
-        method: 'POST',
-        body: '{"jsonrpc":"2.0"}',
-        headers: { 'content-type': 'application/json' },
-      });
+      await expect(send(`${origin.origin}/mcp`, { method: 'POST', body: '{}' })).rejects.toThrow(/\/moved/);
 
-      expect(response.status).toBe(200);
-      // 307 preserves the method and the body, and the second hop carries a fresh credential —
-      // the same per-hop behaviour as an httpx event hook.
-      expect(origin.seen.map((call) => [call.path, call.method, call.headers.authorization])).toEqual([
-        ['/mcp', 'POST', 'Bearer token-1'],
-        ['/moved', 'POST', 'Bearer token-2'],
-      ]);
-      expect(origin.seen[1]?.body).toBe('{"jsonrpc":"2.0"}');
+      expect(origin.seen).toHaveLength(1);
+    });
+
+    it('returns a redirect status without a Location as the final response', async () => {
+      // The platform fetch treats it the same way: with nowhere to go, the response is the answer.
+      const noLocation = (async (): Promise<Response> =>
+        new Response(null, { status: 302 })) as unknown as typeof globalThis.fetch;
+      const send = headerInjectingFetch(SERVER, { authorization: 'Bearer t' }, noLocation);
+
+      const response = await send(SERVER);
+
+      expect(response.status).toBe(302);
     });
 
     it('leaves redirect handling to a caller who asked for manual', async () => {

@@ -73,10 +73,10 @@ export interface MCPClientConfig {
    *
    * ## Security considerations
    *
-   * Headers are attached only to requests whose origin matches `url`. Redirects are followed one
-   * hop at a time so that this holds for every hop, not merely the first request: a hop that
-   * leaves the origin carries none of these headers, and a hop that returns to it gets fresh
-   * ones. Anything here is disclosed to the server at `url` itself.
+   * Headers are attached only to requests whose origin matches `url`, and a redirect is refused
+   * rather than followed — following one would have to decide which origins may see the
+   * credential. A server that redirects is a configuration problem: set `url` to the endpoint it
+   * redirects to. Anything here is disclosed to the server at `url` itself.
    */
   headers?: Record<string, string> | McpHeaderProvider;
   /** Replaces the transport's `fetch`, for proxies and tests. */
