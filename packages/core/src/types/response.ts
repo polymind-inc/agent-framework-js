@@ -68,6 +68,15 @@ export interface ResponseBase<T> {
   /** ISO 8601 timestamp. */
   createdAt?: string;
   finishReason?: FinishReason;
+  /**
+   * Token usage, summed across every model call the response covers — including each round of a
+   * tool loop.
+   *
+   * Available from the response of an awaited run, and from `finalResponse()` after a stream has
+   * been read to the end. A stream abandoned partway reports only the usage the provider had
+   * already sent, which for most providers means none: usage typically arrives on the final
+   * update of a turn.
+   */
   usageDetails?: UsageDetails;
   continuationToken?: ContinuationToken;
   additionalProperties?: Record<string, unknown>;
