@@ -1,0 +1,9 @@
+# azd manifest: the resources `azd ai agent init` provisions for this agent.
+name: toolbox-skills-agent
+models:
+  - name: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    format: OpenAI
+    version: '2024-07-18'
+    sku:
+      name: GlobalStandard
+      capacity: 30

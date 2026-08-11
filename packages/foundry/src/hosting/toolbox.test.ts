@@ -6,7 +6,8 @@ import {
   HEADERS,
   runWithRequestContext,
 } from '@polymind-inc/agent-framework-agentserver';
-import { ConfigurationError, isFunctionTool } from '@polymind-inc/agent-framework-core';
+import type { ContextProvider, Tool } from '@polymind-inc/agent-framework-core';
+import { AgentSession, ConfigurationError, isFunctionTool } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolboxConsentRequiredError } from './consent.js';
 import { FoundryToolbox } from './toolbox.js';
@@ -54,7 +55,11 @@ function stubToolbox(
     /** 1-based `tools/call` indices answered with HTTP 404 — the expired-session signal. */
     dieOnToolCalls?: readonly number[];
     /** Answer this MCP method with the gateway's JSON-RPC `-32006` CONSENT_REQUIRED error. */
-    consentOn?: 'tools/list' | 'tools/call';
+    consentOn?: 'tools/list' | 'tools/call' | 'resources/read';
+    /** Resources the toolbox serves over `resources/read`, keyed by URI. */
+    resources?: Record<string, string>;
+    /** Passed straight to the toolbox; `false` hides its tools from the model. */
+    loadTools?: boolean;
     /** The first request awaits this before reaching the stub, so a test can race `close()` in. */
     holdFirstRequest?: Promise<void>;
     /** `tools/call` requests await this forever, so a test can abort one in flight. */
@@ -121,11 +126,24 @@ function stubToolbox(
       );
     }
 
+    if (request.method === 'resources/read') {
+      const uri = String((request as { params?: { uri?: unknown } }).params?.uri);
+      const text = options.resources?.[uri];
+      const answer =
+        text === undefined
+          ? { error: { code: -32602, message: `Resource not found: ${uri}`, data: { uri } } }
+          : { result: { contents: [{ uri, mimeType: 'text/plain', text }] } };
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...answer }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
     const result =
       request.method === 'initialize'
         ? {
             protocolVersion: '2024-11-05',
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, resources: {} },
             serverInfo: { name: 'stub-toolbox', version: '1.0.0' },
           }
         : request.method === 'tools/list'
@@ -147,6 +165,7 @@ function stubToolbox(
       credential,
       fetch: fetchStub,
       ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
+      ...(options.loadTools === undefined ? {} : { loadTools: options.loadTools }),
     }),
     calls,
   };
@@ -363,6 +382,119 @@ describe('FoundryToolbox OAuth consent', () => {
     await expect(failure).rejects.toMatchObject({
       consents: [{ serverLabel: 'github', consentLink: 'https://consent.example.com/auth' }],
     });
+    await toolbox.close();
+  });
+});
+
+describe('FoundryToolbox skills', () => {
+  const INDEX = 'skill://index.json';
+  const catalogue = JSON.stringify({
+    skills: [
+      {
+        name: 'escalation-policy',
+        type: 'skill-md',
+        description: 'When to escalate a ticket.',
+        url: 'skill://escalation-policy/SKILL.md',
+      },
+    ],
+  });
+  const body = [
+    '---',
+    'name: escalation-policy',
+    'description: When to escalate a ticket.',
+    '---',
+    'Escalate after two failed attempts.',
+  ].join('\n');
+
+  /** Runs the provider's `beforeRun` and returns what it contributed. */
+  async function contribute(provider: ContextProvider): Promise<{ instructions: string[]; tools: Tool[] }> {
+    const instructions: string[] = [];
+    const tools: Tool[] = [];
+    await provider.beforeRun?.({
+      agent: { id: 'agent-1' },
+      session: new AgentSession(),
+      state: {},
+      inputMessages: [],
+      extendMessages: () => {},
+      extendInstructions: (text) => instructions.push(text),
+      extendTools: (added) => tools.push(...added),
+    });
+    return { instructions, tools };
+  }
+
+  it('discovers the toolbox skills over the same authenticated connection as its tools', async () => {
+    const { toolbox, calls } = stubToolbox({
+      resources: { [INDEX]: catalogue, 'skill://escalation-policy/SKILL.md': body },
+    });
+
+    const contributed = await asPlatformRequest({ [HEADERS.foundryCallId]: 'call-1' }, () =>
+      contribute(toolbox.asSkillsProvider()),
+    );
+
+    expect(contributed.instructions.join('\n')).toContain('escalation-policy');
+    expect(contributed.tools.map((entry) => entry.name)).toContain('load_skill');
+    // Nothing new is authenticated: the discovery request carries the same per-call token and
+    // call id every `tools/call` does.
+    const read = must(calls.find((call) => call.method === 'resources/read'));
+    expect(read.headers.authorization).toMatch(/^Bearer token-/);
+    expect(read.headers[HEADERS.foundryCallId]).toBe('call-1');
+    await toolbox.close();
+  });
+
+  it('loads a skill body through the load_skill tool', async () => {
+    const { toolbox } = stubToolbox({
+      resources: { [INDEX]: catalogue, 'skill://escalation-policy/SKILL.md': body },
+    });
+
+    const contributed = await contribute(
+      toolbox.asSkillsProvider({ approvals: { loadSkill: 'never_require' } }),
+    );
+    const loadSkill = must(contributed.tools.filter(isFunctionTool).find((t) => t.name === 'load_skill'));
+    const content = await (loadSkill.execute as (i: unknown, c: { callId: string }) => Promise<string>)(
+      { skill_name: 'escalation-policy' },
+      { callId: 'c1' },
+    );
+
+    expect(content).toContain('Escalate after two failed attempts.');
+    expect(loadSkill.approvalMode).toBe('never_require');
+    await toolbox.close();
+  });
+
+  it('hides the toolbox tools when loadTools is off, without asking the gateway to list them', async () => {
+    const { toolbox, calls } = stubToolbox({
+      loadTools: false,
+      resources: { [INDEX]: catalogue, 'skill://escalation-policy/SKILL.md': body },
+    });
+
+    expect(await toolbox.getTools()).toEqual([]);
+    await contribute(toolbox.asSkillsProvider());
+
+    expect(calls.filter((call) => call.method === 'tools/list')).toHaveLength(0);
+    expect(calls.filter((call) => call.method === 'resources/read')).toHaveLength(1);
+    await toolbox.close();
+  });
+
+  it('retypes a -32006 answer to resources/read as ToolboxConsentRequiredError', async () => {
+    // The skills path goes through the same gateway as the tools, so a consent refusal reaches it
+    // the same way and must arrive typed rather than as a bare JSON-RPC error.
+    const { toolbox } = stubToolbox({ consentOn: 'resources/read', resources: { [INDEX]: catalogue } });
+
+    const failure = contribute(toolbox.asSkillsProvider());
+
+    await expect(failure).rejects.toBeInstanceOf(ToolboxConsentRequiredError);
+    await expect(failure).rejects.toMatchObject({
+      consents: [{ serverLabel: 'github', consentLink: 'https://consent.example.com/auth' }],
+    });
+    await toolbox.close();
+  });
+
+  it('contributes nothing when the toolbox publishes no skills', async () => {
+    const { toolbox } = stubToolbox({ resources: {} });
+
+    const contributed = await contribute(toolbox.asSkillsProvider());
+
+    expect(contributed.instructions).toEqual([]);
+    expect(contributed.tools).toEqual([]);
     await toolbox.close();
   });
 });

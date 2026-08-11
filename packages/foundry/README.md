@@ -25,8 +25,22 @@ npm install @polymind-inc/agent-framework-agentserver
 `@polymind-inc/agent-framework-agentserver` is an optional peer dependency: only the `./hosting` subpath
 needs it, so consumers using just `FoundryChatClient` can leave it uninstalled.
 
+The hosting subpath also carries `FoundryToolbox`, which reaches a toolbox registered in the
+project over MCP. A toolbox publishes two independent things and the class exposes both:
+`getTools()` for its tools, and `asSkillsProvider()` for the **Agent Skills** it serves. Both ride
+the same connection, so skills need no separate credential — and `loadTools: false` gives an agent
+the skills without exposing the tools.
+
 Known limitations:
 
+- `FoundryToolbox.asSkillsProvider()` discovers skills inside the run rather than while the agent
+  is being built, so a `CONSENT_REQUIRED` refusal raised by discovery fails the turn instead of
+  becoming an `oauth_consent_request` item. Wiring the toolbox's tools as well — `tools: await
+  toolbox.getTools()` in the hosted handler's agent factory — makes `tools/list` meet the same
+  gate during construction, where the host does surface it.
+- Skills served by a toolbox (or any MCP server) carry no runnable scripts: there is no
+  remote-execution protocol behind `run_skill_script`, so calling it on one answers
+  `Script not found`.
 - `FoundryMemoryProvider` targets the preview memory-store API (`Foundry-Features:
   MemoryStores=V1Preview`) and implements the routes a context provider needs — search, update,
   update-result polling, scope deletion, and store creation. Memory *items* have their own CRUD

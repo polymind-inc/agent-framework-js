@@ -1,4 +1,9 @@
-import type { CallToolResult, ListToolsResult, Transport } from '@modelcontextprotocol/client';
+import type {
+  CallToolResult,
+  ListToolsResult,
+  ReadResourceResult,
+  Transport,
+} from '@modelcontextprotocol/client';
 import { Client, SdkError, SdkErrorCode, SdkHttpError } from '@modelcontextprotocol/client';
 import { GEN_AI, MCP, setMcpSpanError, withMcpClientSpan } from '@polymind-inc/agent-framework-core';
 
@@ -266,6 +271,34 @@ export class McpConnection {
           setMcpSpanError(span, 'tool_error', text === '' ? undefined : text);
         }
         return result;
+      },
+    );
+  }
+
+  /**
+   * Reads a resource, as `resources/read` returns it.
+   *
+   * Retried once on a fresh connection under the same rule as `callTool`: a dead connection is
+   * replaced, an answered request — including a "resource not found" error — is not replayed.
+   */
+  async readResource(uri: string, options?: McpCallToolOptions): Promise<ReadResourceResult> {
+    return withMcpClientSpan(
+      'resources/read',
+      undefined,
+      { ...this.#spanAttributes(), [MCP.resourceUri]: uri },
+      async () => {
+        const requestOptions = options?.signal === undefined ? undefined : { signal: options.signal };
+        const client = await this.#connect();
+        try {
+          return await client.readResource({ uri }, requestOptions);
+        } catch (error) {
+          if (!this.#shouldReconnect(error)) {
+            throw error;
+          }
+          this.#discard(client);
+          const fresh = await this.#connect();
+          return await fresh.readResource({ uri }, requestOptions);
+        }
       },
     );
   }

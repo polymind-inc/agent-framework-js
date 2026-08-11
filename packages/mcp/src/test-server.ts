@@ -15,24 +15,36 @@ export interface TestTool {
   };
 }
 
+/** A resource a {@link TestMcpServer} answers `resources/read` with. */
+export interface TestResource {
+  uri: string;
+  mimeType?: string;
+  /** Text content, or a base64 blob. Exactly one of the two. */
+  text?: string;
+  blob?: string;
+}
+
 interface JsonRpcMessage {
   jsonrpc: '2.0';
   id?: string | number;
   method?: string;
   params?: Record<string, unknown>;
   result?: unknown;
-  error?: { code: number; message: string };
+  error?: { code: number; message: string; data?: unknown };
 }
 
 /**
  * A minimal in-process MCP server, as a {@link Transport}.
  *
- * Enough of the protocol to exercise the client: `initialize`, `tools/list` and `tools/call`. A
- * real server package would pull an extra dependency into the test graph for no extra coverage of
- * *this* package — what is under test is the framework's side of the conversation.
+ * Enough of the protocol to exercise the client: `initialize`, `tools/list`, `tools/call` and
+ * `resources/read`. A real server package would pull an extra dependency into the test graph for
+ * no extra coverage of *this* package — what is under test is the framework's side of the
+ * conversation.
  */
 export class TestMcpServer implements Transport {
   readonly calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+  /** Every `resources/read` URI requested, in order. */
+  readonly reads: string[] = [];
   /** The `initialize` params of the most recent connection, capabilities included. */
   initializeParams: Record<string, unknown> | undefined;
   /** How many times the transport has been (re)started — one per connection. */
@@ -43,12 +55,21 @@ export class TestMcpServer implements Transport {
   closed = false;
 
   readonly #tools: TestTool[];
+  readonly #resources: TestResource[];
   readonly #protocolVersion: string;
   readonly #dieOnCalls: ReadonlySet<number>;
   #toolCallCount = 0;
 
-  constructor(tools: TestTool[], options?: { protocolVersion?: string; dieOnCalls?: readonly number[] }) {
+  constructor(
+    tools: TestTool[],
+    options?: {
+      protocolVersion?: string;
+      dieOnCalls?: readonly number[];
+      resources?: readonly TestResource[];
+    },
+  ) {
     this.#tools = tools;
+    this.#resources = [...(options?.resources ?? [])];
     this.#protocolVersion = options?.protocolVersion ?? '2025-06-18';
     this.#dieOnCalls = new Set(options?.dieOnCalls ?? []);
   }
@@ -97,7 +118,9 @@ export class TestMcpServer implements Transport {
         this.initializeParams = request.params ?? {};
         return respond({
           protocolVersion: this.#protocolVersion,
-          capabilities: { tools: {} },
+          // Declared only when the server actually serves resources, so a client that checks
+          // capabilities before asking sees what a real server would show it.
+          capabilities: { tools: {}, ...(this.#resources.length === 0 ? {} : { resources: {} }) },
           serverInfo: { name: 'test-mcp-server', version: '1.0.0' },
         });
       case 'tools/list':
@@ -130,6 +153,22 @@ export class TestMcpServer implements Transport {
             error: { code: -32603, message: error instanceof Error ? error.message : String(error) },
           };
         }
+      }
+      case 'resources/read': {
+        const uri = String(request.params?.uri);
+        this.reads.push(uri);
+        const found = this.#resources.find((entry) => entry.uri === uri);
+        if (found === undefined) {
+          // What a compliant server answers for a URI it does not serve: Invalid Params with the
+          // requested URI echoed in `data`, which is how the SDK reconstructs its typed error.
+          return {
+            jsonrpc: '2.0',
+            id: request.id as string | number,
+            error: { code: -32602, message: `Resource not found: ${uri}`, data: { uri } },
+          };
+        }
+        const { uri: _uri, ...contents } = found;
+        return respond({ contents: [{ uri, ...contents }] });
       }
       case 'ping':
         return respond({});

@@ -1,6 +1,12 @@
 import type { FetchLike, Transport } from '@modelcontextprotocol/client';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import type { ApprovalMode, Content, FunctionTool, ToolContext } from '@polymind-inc/agent-framework-core';
+import type {
+  ApprovalMode,
+  Content,
+  FunctionTool,
+  SkillsSource,
+  ToolContext,
+} from '@polymind-inc/agent-framework-core';
 import {
   ConfigurationError,
   ToolInvocationError,
@@ -9,6 +15,8 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import { McpConnection } from './connection.js';
 import { fromMcpContents, mcpMetaProperties } from './content.js';
+import type { McpSkillsSourceConfig } from './skills.js';
+import { mcpSkillsSource } from './skills.js';
 
 /** How a tool's `approvalMode` is decided when its MCP server declares nothing. */
 export type ApprovalPolicy = ApprovalMode | ((toolName: string) => ApprovalMode);
@@ -166,6 +174,20 @@ export class MCPClient {
     return declared
       .filter((entry) => this.#allowedTools?.has(entry.name) ?? true)
       .map((entry) => this.#toFunctionTool(entry));
+  }
+
+  /**
+   * Discovers the server's Agent Skills, for `skillsProvider`.
+   *
+   * Skills and tools are independent: a server may publish either, both or neither, and this
+   * shares the same connection as {@link MCPClient.getTools} rather than opening a second one.
+   *
+   * ```ts
+   * const agent = new Agent({ client, contextProviders: [skillsProvider(mcp.skillsSource())] });
+   * ```
+   */
+  skillsSource(config?: McpSkillsSourceConfig): SkillsSource {
+    return mcpSkillsSource(this.#connection, config);
   }
 
   #toFunctionTool(declared: DeclaredTool): FunctionTool<Record<string, unknown>, unknown> {

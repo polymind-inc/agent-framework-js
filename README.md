@@ -177,6 +177,7 @@ Deliberate divergences, and the reason for each:
 | `ContextProvider` / `HistoryProvider`                             | Implemented                                                      |
 | OpenTelemetry GenAI instrumentation                               | Implemented                                                      |
 | MCP client (tools)                                                | Implemented                                                      |
+| Agent Skills (progressive disclosure), including skills served over MCP and by a Foundry toolbox | Implemented                       |
 | A2A client                                                        | Implemented                                                      |
 | Workflows (graph/superstep engine, checkpointing, orchestrations) | Designed, not implemented — the next milestone                   |
 | History compaction                                                | Planned                                                          |
@@ -203,7 +204,12 @@ environment variables each one needs.
 - `OpenAIChatClient` supports the **Responses API only**. `api: 'chat_completions'` is permanently
   out of scope; point a Chat Completions-only provider at a Responses-compatible endpoint, or
   implement the `ChatClient` interface directly.
-- The MCP integration covers **tools only** — no sampling, elicitation or prompts.
+- The MCP integration covers **tools, and resources for skill discovery** — no sampling,
+  elicitation or prompts.
+- Agent Skills are served from code, from a `SKILL.md` document you supply, or over MCP. Walking a
+  directory of `SKILL.md` files is a recipe in the examples rather than an API, because the core
+  has no filesystem; MCP `archive` skills, resource templates and direct `skill://` references are
+  not implemented.
 - The A2A package is a **client**. Serving a framework agent over A2A, push notifications, task
   listing and cancellation are not covered; use [`@a2a-js/sdk`][a2a-sdk] directly for those.
 - A hosted container persists responses in the Foundry storage service by default (matching the

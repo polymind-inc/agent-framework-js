@@ -6,6 +6,40 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-core`** — new **Agent Skills** support
+  ([#21](https://github.com/polymind-inc/agent-framework-js/issues/21)): `skillsProvider()` is a
+  `ContextProvider` that advertises each available skill's name and description in the system
+  prompt and registers the three tools the model uses to pull one in on demand — `load_skill`,
+  `read_skill_resource` and `run_skill_script`. Skills are declared in code with `inlineSkill()`
+  (with `skillResource()` and `skillScript()`, the latter taking a Standard Schema it also
+  validates against), or built from a `SKILL.md` document with `markdownSkill()`;
+  `parseSkillMarkdown()` exposes the frontmatter parser on its own. Sources come from
+  `inMemorySkillsSource()` or any object implementing `SkillsSource`, and compose through
+  `aggregateSkills()`, `filterSkills()`, `deduplicateSkills()` and `cacheSkills()`. Skills passed
+  to the provider directly are cached and deduplicated for you; a source you supply is used exactly
+  as given, because caching one that varies per agent or tenant would replay one run's skills for
+  another. Every skill tool requires approval by default — `approvals` relaxes it per tool, and a
+  `toolApprovalMiddleware` rule over the `SKILL_TOOL_NAMES` constant can reimpose it selectively
+  on a relaxed tool (a middleware `'allow'` cannot bypass a tool's own approval requirement). A skill or
+  resource the model asks for and does not exist comes back as a message it can correct rather than
+  a failed run; a skill a source cannot load is skipped and reported through `onSkillError`.
+  Walking a directory of `SKILL.md` files is deliberately not part of the core, which has no
+  filesystem; the extensibility examples show the recipe.
+- **`@polymind-inc/agent-framework-mcp`** — new `mcpSkillsSource()`, also reachable as
+  `MCPClient.skillsSource()`: discovers the Agent Skills an MCP server publishes by reading the
+  well-known `skill://index.json` catalogue, fetching each `SKILL.md` body and any document it
+  refers to only when the model asks. `McpConnection.readResource()` is exposed for it, with the
+  same reconnect-once behaviour as `callTool` and a `resources/read` client span. A server with no
+  catalogue contributes no skills; an index entry the framework cannot use — an `archive` skill, a
+  malformed name — is skipped and named, while a server that *refuses* the request surfaces the
+  failure rather than being read as an empty catalogue.
+- **`@polymind-inc/agent-framework-foundry`** — `FoundryToolbox` now serves the toolbox's Agent
+  Skills as well as its tools: `asSkillsProvider()` returns a ready-made provider (and
+  `skillsSource()` the source alone) over the connection the tools already use, so discovery
+  carries the same per-call Entra token and `x-agent-foundry-call-id`, and a `CONSENT_REQUIRED`
+  refusal arrives as the same typed `ToolboxConsentRequiredError`. The new `loadTools: false`
+  option hides the toolbox's tools entirely — the gateway is never asked to list them — for an
+  agent that wants only its skills.
 - **`@polymind-inc/agent-framework-foundry`** — new `FoundryMemoryProvider`: a `ContextProvider`
   backed by a Microsoft Foundry Memory Store
   ([#25](https://github.com/polymind-inc/agent-framework-js/issues/25)). It searches the store
