@@ -1,7 +1,6 @@
 import type { TokenCredential } from '@azure/identity';
 import { DefaultAzureCredential } from '@azure/identity';
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { platformHeaders, projectEndpoint } from '@polymind-inc/agent-framework-agentserver';
 import type {
   Content,
@@ -19,7 +18,7 @@ import {
   tool,
 } from '@polymind-inc/agent-framework-core';
 import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
-import { headerInjectingFetch, McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
+import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
 import { tokenProvider } from '../credential.js';
 import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
@@ -102,23 +101,15 @@ export class FoundryToolbox {
     this.#loadTools = options.loadTools ?? true;
 
     const getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
-    const inner = options.fetch ?? globalThis.fetch;
-    const mcpEndpoint = new URL(this.url);
     this.#connection = new McpConnection({
       url: this.url,
-      transport: () =>
-        new StreamableHTTPClientTransport(mcpEndpoint, {
-          // Per-request rather than per-connection: see the class note on why this cannot be a
-          // static header set.
-          fetch: headerInjectingFetch(
-            mcpEndpoint,
-            async () => ({
-              authorization: `Bearer ${await getToken()}`,
-              ...platformHeaders(),
-            }),
-            inner,
-          ),
-        }),
+      // Per-request rather than per-connection: see the class note on why this cannot be a
+      // static header set.
+      headers: async () => ({
+        authorization: `Bearer ${await getToken()}`,
+        ...platformHeaders(),
+      }),
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
   }
 

@@ -40,8 +40,8 @@ export function headerInjectingFetch(
   inner: typeof globalThis.fetch,
 ): FetchLike {
   return async (target: string | URL, init?: RequestInit): Promise<Response> => {
-    // The MCP transport passes a string or URL, but this is exported as a drop-in fetch, and a
-    // fetch also accepts a Request — whose URL is a property, not its stringification.
+    // The MCP transport passes a string or URL, but this is handed around as a drop-in fetch, and
+    // a fetch also accepts a Request — whose URL is a property, not its stringification.
     const request = target instanceof Request ? target : undefined;
     if (new URL(request?.url ?? String(target)).origin !== url.origin) {
       return await inner(target, init);

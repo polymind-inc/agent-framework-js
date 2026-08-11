@@ -99,8 +99,8 @@ describe('headerInjectingFetch', () => {
   });
 
   it('accepts a Request object, keeping its headers under the injected ones', async () => {
-    // The MCP transport only passes a URL, but the wrapper is exported as a drop-in fetch and a
-    // Request is a legal first argument to one — it must not be stringified into a bogus URL.
+    // The MCP transport only passes a URL, but the wrapper is handed around as a drop-in fetch
+    // and a Request is a legal first argument to one — it must not be stringified into a bogus URL.
     const { fetch, calls } = recorder();
     const send = headerInjectingFetch(SERVER, { authorization: 'Bearer t' }, fetch);
 

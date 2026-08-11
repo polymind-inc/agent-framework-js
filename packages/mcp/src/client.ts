@@ -1,5 +1,4 @@
 import type { Transport } from '@modelcontextprotocol/client';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type {
   ApprovalMode,
   Content,
@@ -16,7 +15,6 @@ import {
 import { McpConnection } from './connection.js';
 import { fromMcpContents, mcpMetaProperties } from './content.js';
 import type { McpHeaderProvider } from './headers.js';
-import { headerInjectingFetch } from './headers.js';
 import type { McpSkillsSourceConfig } from './skills.js';
 import { mcpSkillsSource } from './skills.js';
 
@@ -149,13 +147,14 @@ export class MCPClient {
     const suppliedTransport = config.transport;
     const transportFactory =
       config.transportFactory ??
-      (suppliedTransport === undefined
-        ? (): Transport => this.#httpTransport()
-        : (): Transport => suppliedTransport);
+      (suppliedTransport === undefined ? undefined : (): Transport => suppliedTransport);
     this.#connection = new McpConnection({
-      transport: transportFactory,
+      // The `url` form is the connection's own: it builds the transport and carries the headers.
+      ...(transportFactory === undefined ? {} : { transport: transportFactory }),
       ...(config.clientInfo === undefined ? {} : { clientInfo: config.clientInfo }),
       ...(config.url === undefined ? {} : { url: config.url }),
+      ...(config.url === undefined || config.headers === undefined ? {} : { headers: config.headers }),
+      ...(config.url === undefined || config.fetch === undefined ? {} : { fetch: config.fetch }),
       // A supplied instance may be one-shot (the SDK's HTTP and in-memory transports are), so a
       // connection-loss retry must not call start() on it again. Factory-backed sources can
       // satisfy McpConnection's fresh-transport contract and keep its default retry predicate.
@@ -166,18 +165,6 @@ export class MCPClient {
   /** Whether the connection has been opened. Exposed so callers can assert it stays lazy. */
   get connected(): boolean {
     return this.#connection.connected;
-  }
-
-  /**
-   * Builds the Streamable HTTP transport.
-   *
-   * The caller's `fetch` is wrapped from the outside, so replacing it cannot drop the headers.
-   */
-  #httpTransport(): Transport {
-    const url = new URL(String(this.#config.url));
-    return new StreamableHTTPClientTransport(url, {
-      fetch: headerInjectingFetch(url, this.#config.headers, this.#config.fetch ?? globalThis.fetch),
-    });
   }
 
   /**

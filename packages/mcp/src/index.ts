@@ -9,8 +9,9 @@ export type { ApprovalPolicy, MCPClientConfig } from './client.js';
 export { MCPClient } from './client.js';
 export type { McpCallToolOptions, McpConnectionConfig } from './connection.js';
 export { McpConnection } from './connection.js';
+// headers.ts (origin-scoped header injection) is internal: consumers configure `headers` on
+// MCPClient or McpConnection rather than building the fetch wrapper themselves.
 export type { McpHeaderProvider } from './headers.js';
-export { headerInjectingFetch } from './headers.js';
 export type { McpResourceReader, McpSkillsSourceConfig } from './skills.js';
 export { mcpSkillsSource } from './skills.js';
 // content.ts (MCP block → Content conversion) is internal — Python keeps the equivalent

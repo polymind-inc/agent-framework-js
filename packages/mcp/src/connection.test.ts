@@ -7,6 +7,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
+import { ConfigurationError } from '@polymind-inc/agent-framework-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCP_CLIENT_VERSION, McpConnection } from './connection.js';
 import type { TestTool } from './test-server.js';
@@ -24,6 +25,45 @@ function echoTool(): TestTool {
 function connectionTo(transport: TestMcpServer): McpConnection {
   return new McpConnection({ transport: () => transport });
 }
+
+describe('url-driven construction', () => {
+  it('builds its own transport, attaching the configured headers per request', async () => {
+    const seen: Array<Record<string, string>> = [];
+    let issued = 0;
+    const stub = (async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(Object.fromEntries(new Headers(init?.headers).entries()));
+      return new Response('nope', { status: 500 });
+    }) as unknown as typeof globalThis.fetch;
+    const connection = new McpConnection({
+      url: 'https://mcp.example.com/mcp',
+      headers: () => {
+        issued += 1;
+        return { authorization: `Bearer token-${issued}` };
+      },
+      fetch: stub,
+    });
+
+    await expect(connection.listTools()).rejects.toThrow();
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]?.authorization).toBe('Bearer token-1');
+  });
+
+  it('needs a transport or a url to build one from', () => {
+    expect(() => new McpConnection({})).toThrow(ConfigurationError);
+  });
+
+  it('refuses headers or fetch alongside a custom transport, which owns both', () => {
+    // Silently ignoring them would look like a working credential that never reaches the wire.
+    const stub = (async (): Promise<Response> => new Response('{}')) as unknown as typeof globalThis.fetch;
+    expect(
+      () => new McpConnection({ transport: () => new TestMcpServer([]), headers: { 'x-api-key': 'k' } }),
+    ).toThrow(ConfigurationError);
+    expect(() => new McpConnection({ transport: () => new TestMcpServer([]), fetch: stub })).toThrow(
+      ConfigurationError,
+    );
+  });
+});
 
 describe('handshake identity', () => {
   it('reports the package version, verbatim from package.json', () => {
