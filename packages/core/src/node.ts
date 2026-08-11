@@ -6,5 +6,11 @@
  * such a runtime is what fails, rather than importing the framework at all.
  */
 
+export type {
+  DirectorySkillScript,
+  DirectorySkillScriptRunner,
+  DirectorySkillsSourceConfig,
+} from './node/directory-skills-source.js';
+export { directorySkillsSource } from './node/directory-skills-source.js';
 export type { FileHistoryProviderConfig } from './node/file-history-provider.js';
 export { FileHistoryProvider } from './node/file-history-provider.js';
