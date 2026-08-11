@@ -19,7 +19,7 @@ import {
   tool,
 } from '@polymind-inc/agent-framework-core';
 import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
-import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
+import { headerInjectingFetch, McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
 import { tokenProvider } from '../credential.js';
 import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
@@ -103,20 +103,21 @@ export class FoundryToolbox {
 
     const getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
     const inner = options.fetch ?? globalThis.fetch;
+    const mcpEndpoint = new URL(this.url);
     this.#connection = new McpConnection({
       url: this.url,
       transport: () =>
-        new StreamableHTTPClientTransport(new URL(this.url), {
+        new StreamableHTTPClientTransport(mcpEndpoint, {
           // Per-request rather than per-connection: see the class note on why this cannot be a
           // static header set.
-          fetch: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-            const headers = new Headers(init?.headers);
-            headers.set('authorization', `Bearer ${await getToken()}`);
-            for (const [name, value] of Object.entries(platformHeaders())) {
-              headers.set(name, value);
-            }
-            return inner(input, { ...init, headers });
-          },
+          fetch: headerInjectingFetch(
+            mcpEndpoint,
+            async () => ({
+              authorization: `Bearer ${await getToken()}`,
+              ...platformHeaders(),
+            }),
+            inner,
+          ),
         }),
     });
   }

@@ -123,6 +123,30 @@ describe('tool enumeration', () => {
     await mcp.close();
   });
 
+  it('puts the configured headers on the requests it makes', async () => {
+    // Reaching the wire is the part the helper's own tests cannot show: it proves the transport is
+    // actually built around the wrapper rather than the transport's one-time request options.
+    const seen: Array<Record<string, string>> = [];
+    const stub = (async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(Object.fromEntries(new Headers(init?.headers).entries()));
+      return new Response('nope', { status: 500 });
+    }) as unknown as typeof globalThis.fetch;
+    let issued = 0;
+    const mcp = new MCPClient({
+      url: 'https://mcp.example.com/mcp',
+      headers: () => {
+        issued += 1;
+        return { authorization: `Bearer token-${issued}` };
+      },
+      fetch: stub,
+    });
+
+    await expect(mcp.getTools()).rejects.toThrow();
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]?.authorization).toBe('Bearer token-1');
+  });
+
   it('refuses a configuration without exactly one connection source', () => {
     expect(() => new MCPClient({})).toThrow(ConfigurationError);
     expect(() => new MCPClient({ url: 'https://example.com/mcp', transport: server() })).toThrow(

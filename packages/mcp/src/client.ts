@@ -1,4 +1,4 @@
-import type { FetchLike, Transport } from '@modelcontextprotocol/client';
+import type { Transport } from '@modelcontextprotocol/client';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type {
   ApprovalMode,
@@ -15,6 +15,8 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import { McpConnection } from './connection.js';
 import { fromMcpContents, mcpMetaProperties } from './content.js';
+import type { McpHeaderProvider } from './headers.js';
+import { headerInjectingFetch } from './headers.js';
 import type { McpSkillsSourceConfig } from './skills.js';
 import { mcpSkillsSource } from './skills.js';
 
@@ -58,8 +60,22 @@ export interface MCPClientConfig {
    * `'always_require'` for a server you do not operate.
    */
   approvalMode?: ApprovalPolicy;
-  /** Extra headers for every request, for example an authorization token. */
-  headers?: Record<string, string>;
+  /**
+   * Extra headers for every request, for example an authorization token.
+   *
+   * A function is called **once per request**, so a credential that expires can be refreshed
+   * without writing a transport: return the current value and let whatever produced it do its own
+   * caching. A plain record is read once, at construction.
+   *
+   * Only applies to the `url` form. A `transport` or `transportFactory` you build yourself owns
+   * its own headers.
+   *
+   * ## Security considerations
+   *
+   * Headers are attached only to requests whose origin matches `url`, so a redirect to another
+   * host does not carry them along. Anything here is disclosed to the server at `url` itself.
+   */
+  headers?: Record<string, string> | McpHeaderProvider;
   /** Replaces the transport's `fetch`, for proxies and tests. */
   fetch?: typeof globalThis.fetch;
 }
@@ -152,12 +168,15 @@ export class MCPClient {
     return this.#connection.connected;
   }
 
+  /**
+   * Builds the Streamable HTTP transport.
+   *
+   * The caller's `fetch` is wrapped from the outside, so replacing it cannot drop the headers.
+   */
   #httpTransport(): Transport {
-    const headers = this.#config.headers;
-    const inner = this.#config.fetch;
-    return new StreamableHTTPClientTransport(new URL(String(this.#config.url)), {
-      ...(headers === undefined ? {} : { requestInit: { headers } }),
-      ...(inner === undefined ? {} : { fetch: inner as FetchLike }),
+    const url = new URL(String(this.#config.url));
+    return new StreamableHTTPClientTransport(url, {
+      fetch: headerInjectingFetch(url, this.#config.headers, this.#config.fetch ?? globalThis.fetch),
     });
   }
 
