@@ -30,11 +30,15 @@ function readEnv(name: string): string | undefined {
   }
 }
 
+/** The spellings Python's own environment reader accepts as true, plus their negatives. */
+const TRUE_VALUES = new Set(['true', '1', 'yes', 'on']);
+const FALSE_VALUES = new Set(['false', '0', 'no', 'off', '']);
+
 function parseBool(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
-  if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === '') return false;
+  if (TRUE_VALUES.has(normalized)) return true;
+  if (FALSE_VALUES.has(normalized)) return false;
   return undefined;
 }
 

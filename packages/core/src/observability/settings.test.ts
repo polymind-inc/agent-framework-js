@@ -41,10 +41,29 @@ describe('captureMessageContent', () => {
       ['false', false],
       ['0', false],
       ['no', false],
+      ['on', true],
+      ['off', false],
       ['', false],
       ['  True  ', true],
     ] as const) {
       vi.stubEnv(OTEL_ENV, value);
+      expect(captureMessageContent(), `value ${JSON.stringify(value)}`).toBe(expected);
+    }
+  });
+
+  // Python's own reader accepts `on`, so a deployment that sets one variable for a polyglot
+  // fleet has to be read the same way here or the opt-in silently applies to only half of it.
+  it('accepts every spelling Python accepts for the Python-named env var', () => {
+    for (const [value, expected] of [
+      ['true', true],
+      ['1', true],
+      ['yes', true],
+      ['on', true],
+      ['ON', true],
+      ['off', false],
+      ['false', false],
+    ] as const) {
+      vi.stubEnv(PYTHON_ENV, value);
       expect(captureMessageContent(), `value ${JSON.stringify(value)}`).toBe(expected);
     }
   });
