@@ -1,8 +1,9 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { Skill, SkillResource, SkillScript, SkillScriptArguments } from '../skills/skill.js';
 import { markdownSkill, skillResource } from '../skills/skill.js';
 import type { SkillsSource, SkillsSourceContext } from '../skills/source.js';
+import { isWithin } from './paths.js';
 
 /** The document that makes a directory a skill. */
 const SKILL_FILE = 'SKILL.md';
@@ -278,11 +279,6 @@ async function refuseLinks(directory: string, path: string): Promise<void> {
       throw new Error('A skill resource may not be reached through a symbolic link.');
     }
   }
-}
-
-function isWithin(directory: string, path: string): boolean {
-  const root = directory.endsWith(sep) ? directory : `${directory}${sep}`;
-  return path === directory || path.startsWith(root);
 }
 
 async function isReadableFile(path: string): Promise<boolean> {
