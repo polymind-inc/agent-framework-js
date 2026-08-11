@@ -118,6 +118,15 @@ describe('FileHistoryProvider', () => {
     await expect(provider.getMessages(session, NO_STATE)).rejects.toThrow(/line 2/);
   });
 
+  it('reports the line when a record is valid JSON but not a message', async () => {
+    const session = new AgentSession({ sessionId: 'not-a-message' });
+    const provider = new FileHistoryProvider({ storagePath });
+    await provider.saveMessages(session, [userMessage('fine')], NO_STATE);
+    await writeFile(join(storagePath, 'not-a-message.jsonl'), 'null\n', { flag: 'a' });
+
+    await expect(provider.getMessages(session, NO_STATE)).rejects.toThrow(/line 2/);
+  });
+
   it('skips blank lines rather than failing on them', async () => {
     const session = new AgentSession({ sessionId: 'blanks' });
     const provider = new FileHistoryProvider({ storagePath });
