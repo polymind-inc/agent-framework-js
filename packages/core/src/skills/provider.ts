@@ -167,8 +167,11 @@ function sourceContext(
 
 /** Renders the prompt that lists the available skills, sorted by name so the output is stable. */
 function renderInstructions(template: string, skills: readonly Skill[]): string {
+  // Code-unit comparison rather than localeCompare, so the order matches the reference
+  // implementations and never varies with the host locale. Returning 0 on equal names keeps the
+  // sort stable for a source that serves duplicates.
   const listing = [...skills]
-    .sort((left, right) => (left.frontmatter.name < right.frontmatter.name ? -1 : 1))
+    .sort((left, right) => compareNames(left.frontmatter.name, right.frontmatter.name))
     .flatMap((skill) => [
       '  <skill>',
       `    <name>${xmlEscape(skill.frontmatter.name)}</name>`,
@@ -312,6 +315,13 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
   });
 
   return [loadSkill, readSkillResource, runSkillScript];
+}
+
+function compareNames(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
 }
 
 function accessOptions(toolCtx: ToolContext): SkillAccessOptions | undefined {

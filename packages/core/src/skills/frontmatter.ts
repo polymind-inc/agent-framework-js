@@ -96,19 +96,59 @@ export interface ParsedSkillMarkdown {
 const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 /**
- * Top-level `key: value` lines. Group 2 is a quoted value, group 3 an unquoted one.
+ * Top-level `key:` lines. Group 2 is the raw remainder of the line, which {@link entryValue}
+ * resolves — trimming, quote-stripping and block scalars are handled in code, so the pattern is
+ * free of the overlapping quantifiers a crafted document could make backtrack.
  *
- * Anchored at column 0 so indented children — the entries under `metadata:` — are not mistaken for
- * top-level fields. A key with no value (`metadata:` itself) does not match, which is what keeps
- * the block header out of the scalar fields.
+ * Anchored at column 0 so indented children — the entries under `metadata:` — are not mistaken
+ * for top-level fields.
  */
-const TOP_LEVEL_ENTRY = /^([\w-]+)[ \t]*:[ \t]*(?:["'](.+?)["']|(.+?))[ \t]*$/gm;
+const TOP_LEVEL_ENTRY = /^([\w-]+)[ \t]*:([^\n\r]*)\r?$/gm;
 
 /** A `metadata:` key followed by its indented block. */
 const METADATA_BLOCK = /^metadata[ \t]*:[ \t]*\r?\n((?:[ \t]+\S.*(?:\r?\n|$))+)/m;
 
-/** `key: value` lines inside an indented block. */
-const INDENTED_ENTRY = /^[ \t]+([\w-]+)[ \t]*:[ \t]*(?:["'](.+?)["']|(.+?))[ \t]*$/gm;
+/** `key:` lines inside an indented block, in the same raw-remainder shape. */
+const INDENTED_ENTRY = /^[ \t]+([\w-]+)[ \t]*:([^\n\r]*)\r?$/gm;
+
+/** Trims spaces and tabs — and nothing else — from both ends. */
+function trimSpaces(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && (text[start] === ' ' || text[start] === '\t')) {
+    start += 1;
+  }
+  while (end > start && (text[end - 1] === ' ' || text[end - 1] === '\t')) {
+    end -= 1;
+  }
+  return text.slice(start, end);
+}
+
+/**
+ * Strips a surrounding quote pair, or returns `undefined` for an unquoted value.
+ *
+ * The pair may mix `"` and `'`, and needs an inner character — matching what the previous
+ * pattern-based parser accepted, so `""` stays a literal two-character value.
+ */
+function unquote(value: string): string | undefined {
+  const isQuote = (char: string | undefined): boolean => char === '"' || char === "'";
+  if (value.length >= 3 && isQuote(value[0]) && isQuote(value[value.length - 1])) {
+    return value.slice(1, -1);
+  }
+  return undefined;
+}
+
+/**
+ * Resolves an entry's raw remainder: `undefined` for a bare key — the `metadata:` block header —
+ * a quoted value verbatim, or an unquoted one with any block scalar it opens expanded.
+ */
+function entryValue(block: string, entry: RegExpMatchArray): string | undefined {
+  const trimmed = trimSpaces(entry[2] ?? '');
+  if (trimmed === '') {
+    return undefined;
+  }
+  return unquote(trimmed) ?? blockScalarValue(block, entry, trimmed);
+}
 
 /**
  * Parses a `SKILL.md` document into its frontmatter and body.
@@ -144,7 +184,10 @@ export function parseSkillMarkdown(markdown: string): ParsedSkillMarkdown {
     // A quoted value is taken verbatim; an unquoted one may open a block scalar that continues
     // over the following indented lines. A duplicated key keeps its last value, like the
     // metadata block below.
-    fields.set(key, entry[2] ?? blockScalarValue(block, entry));
+    const value = entryValue(block, entry);
+    if (value !== undefined) {
+      fields.set(key, value);
+    }
   }
 
   const config: Partial<SkillFrontmatterConfig> = {
@@ -175,8 +218,10 @@ function parseMetadata(block: string): Record<string, string> | undefined {
   const entries: Record<string, string> = {};
   for (const entry of (match[1] ?? '').matchAll(INDENTED_ENTRY)) {
     const key = entry[1];
-    if (key !== undefined) {
-      entries[key] = entry[2] ?? entry[3] ?? '';
+    const trimmed = trimSpaces(entry[2] ?? '');
+    if (key !== undefined && trimmed !== '') {
+      // No block scalars here: a metadata value is a flat string, so a `|` stays literal.
+      entries[key] = unquote(trimmed) ?? trimmed;
     }
   }
   return entries;
@@ -193,8 +238,7 @@ const BLOCK_SCALAR_INDICATORS = ['|', '>'];
  * a folded block none). Explicit indentation indicators such as `|2` are not supported; the
  * indentation is taken from the shallowest line of the block.
  */
-function blockScalarValue(block: string, entry: RegExpExecArray | RegExpMatchArray): string {
-  const value = entry[3] ?? '';
+function blockScalarValue(block: string, entry: RegExpMatchArray, value: string): string {
   const indicator = value[0];
   if (indicator === undefined || !BLOCK_SCALAR_INDICATORS.includes(indicator)) {
     return value;

@@ -120,6 +120,18 @@ describe('skillsProvider advertising', () => {
     );
   });
 
+  it('keeps skills with equal names in source order, per the sort contract', async () => {
+    // A caller-supplied source is not deduplicated, so equal names can reach the sort. A
+    // comparator that never returns 0 makes their order engine-dependent.
+    const twin = (description: string): Skill => ({
+      frontmatter: { name: 'twin', description },
+      getContent: () => 'x',
+    });
+    const source: SkillsSource = { getSkills: async () => [twin('first'), twin('second')] };
+    const prompt = (await runProvider(skillsProvider(source))).instructions.join('\n');
+    expect(prompt.indexOf('first')).toBeLessThan(prompt.indexOf('second'));
+  });
+
   it('names its own partition of the session state', () => {
     expect(skillsProvider([escalation]).sourceId).toBe('agent_skills');
     expect(skillsProvider([escalation], { sourceId: 'my_skills' }).sourceId).toBe('my_skills');

@@ -15,7 +15,7 @@
  * Run: `OPENAI_API_KEY=... pnpm --filter example-03-extensibility skills`
  */
 import { readdir, readFile } from 'node:fs/promises';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Skill } from '@polymind-inc/agent-framework';
 import {
@@ -62,7 +62,9 @@ async function skillsFromDirectory(root: string): Promise<Skill[]> {
           name,
           read: async () => {
             const path = join(directory, name);
-            if (relative(directory, path).startsWith('..')) {
+            // A `..` *segment* is the escape; a filename that merely starts with dots is fine.
+            const inside = relative(directory, path);
+            if (isAbsolute(inside) || inside === '..' || inside.startsWith(`..${sep}`)) {
               throw new Error(`Refusing to read '${name}': outside the skill directory.`);
             }
             return await readFile(path, 'utf8');

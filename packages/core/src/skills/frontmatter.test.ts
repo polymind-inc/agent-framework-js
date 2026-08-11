@@ -151,6 +151,23 @@ describe('parseSkillMarkdown', () => {
     expect(parsed.body).toBe('body\r\n');
   });
 
+  it('trims surrounding spaces and tabs from an unquoted value', () => {
+    const parsed = parseSkillMarkdown('---\nname: a\ndescription: \t padded \t \n---\nbody');
+    expect(parsed.frontmatter.description).toBe('padded');
+  });
+
+  it('parses a pathological header in linear time', () => {
+    // A key-like CRLF line holding tens of thousands of tabs made the previous entry pattern
+    // backtrack polynomially: `.` cannot match the `\r`, so the lazy value and the trailing
+    // whitespace run re-scanned the tab run against each other. The document is caller-supplied
+    // input, so parsing must stay linear.
+    const hostile = `---\nname: a\n-:${'\t'.repeat(50_000)}\r\ndescription: x\n---\nbody`;
+    const startedAt = performance.now();
+    const parsed = parseSkillMarkdown(hostile);
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(parsed.frontmatter).toEqual({ name: 'a', description: 'x' });
+  });
+
   it('refuses a document with no frontmatter block', () => {
     expect(() => parseSkillMarkdown('# Just markdown')).toThrow(ConfigurationError);
   });
