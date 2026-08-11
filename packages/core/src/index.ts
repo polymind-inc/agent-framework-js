@@ -46,11 +46,12 @@ export { APPROVAL_STATE_KEY, sessionApprovalStore, withToolApproval } from './cl
 export type {
   ContextProvider,
   HistoryProvider,
+  HistoryStoreOptions,
   ProviderAfterRunContext,
   ProviderAgentInfo,
   ProviderRunContext,
 } from './context/context-provider.js';
-export { isHistoryProvider } from './context/context-provider.js';
+export { isHistoryProvider, selectContextMessages } from './context/context-provider.js';
 export type { InMemoryHistoryProviderConfig } from './context/in-memory-history-provider.js';
 export { InMemoryHistoryProvider } from './context/in-memory-history-provider.js';
 // errors
