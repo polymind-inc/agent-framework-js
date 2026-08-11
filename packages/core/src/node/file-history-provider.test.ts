@@ -195,6 +195,58 @@ describe('FileHistoryProvider', () => {
       expect(await readdir(storagePath)).toHaveLength(2);
     });
 
+    it('keeps ids apart when they differ only by case, wherever the volume folds case', async () => {
+      // Two files named `abc.jsonl` and `ABC.jsonl` are one file on Windows and macOS, so distinct
+      // sessions would silently share — and leak — a transcript. Only an all-lowercase id may use
+      // its own name; anything with an uppercase letter is hashed.
+      const provider = new FileHistoryProvider({ storagePath });
+      const lower = new AgentSession({ sessionId: 'abc' });
+      const upper = new AgentSession({ sessionId: 'ABC' });
+
+      await provider.saveMessages(lower, [userMessage('lower')], NO_STATE);
+      await provider.saveMessages(upper, [userMessage('upper')], NO_STATE);
+
+      expect(await readdir(storagePath)).toHaveLength(2);
+      expect((await provider.getMessages(lower, NO_STATE)).map((m) => m.contents[0])).toEqual([
+        { type: 'text', text: 'lower' },
+      ]);
+      expect((await provider.getMessages(upper, NO_STATE)).map((m) => m.contents[0])).toEqual([
+        { type: 'text', text: 'upper' },
+      ]);
+    });
+
+    it("keeps '/' apart from an id that spells out an encoded stem", async () => {
+      // An id like '~session-Lw' is not a portable name (`~`), so it is hashed like any other —
+      // it cannot collide with the file the encoding chose for '/'.
+      const provider = new FileHistoryProvider({ storagePath });
+      const slash = new AgentSession({ sessionId: '/' });
+      const impostor = new AgentSession({ sessionId: '~session-Lw' });
+
+      await provider.saveMessages(slash, [userMessage('slash')], NO_STATE);
+      await provider.saveMessages(impostor, [userMessage('impostor')], NO_STATE);
+
+      expect(await readdir(storagePath)).toHaveLength(2);
+      expect((await provider.getMessages(slash, NO_STATE)).map((m) => m.contents[0])).toEqual([
+        { type: 'text', text: 'slash' },
+      ]);
+      expect((await provider.getMessages(impostor, NO_STATE)).map((m) => m.contents[0])).toEqual([
+        { type: 'text', text: 'impostor' },
+      ]);
+    });
+
+    it('hashes a long ASCII id instead of handing the filesystem an overlong name', async () => {
+      const provider = new FileHistoryProvider({ storagePath });
+      const session = new AgentSession({ sessionId: 'a'.repeat(300) });
+
+      await provider.saveMessages(session, [userMessage('long')], NO_STATE);
+
+      const written = await readdir(storagePath);
+      expect(written[0]).toMatch(/^~session-sha256-[0-9a-f]{64}\.jsonl$/);
+      expect((await provider.getMessages(session, NO_STATE)).map((m) => m.contents[0])).toEqual([
+        { type: 'text', text: 'long' },
+      ]);
+    });
+
     it('hashes an id too long to encode into a filename', async () => {
       const provider = new FileHistoryProvider({ storagePath });
       const session = new AgentSession({ sessionId: `../${'x'.repeat(500)}` });
