@@ -97,4 +97,27 @@ describe('headerInjectingFetch', () => {
 
     expect(calls).toHaveLength(1);
   });
+
+  it('accepts a Request object, keeping its headers under the injected ones', async () => {
+    // The MCP transport only passes a URL, but the wrapper is exported as a drop-in fetch and a
+    // Request is a legal first argument to one — it must not be stringified into a bogus URL.
+    const { fetch, calls } = recorder();
+    const send = headerInjectingFetch(SERVER, { authorization: 'Bearer t' }, fetch);
+
+    await send(new Request(SERVER, { headers: { accept: 'text/event-stream' } }) as unknown as URL);
+
+    expect(calls[0]?.headers).toMatchObject({
+      accept: 'text/event-stream',
+      authorization: 'Bearer t',
+    });
+  });
+
+  it('does not decorate a Request aimed at another origin', async () => {
+    const { fetch, calls } = recorder();
+    const send = headerInjectingFetch(SERVER, { authorization: 'Bearer t' }, fetch);
+
+    await send(new Request('https://elsewhere.example.com/mcp') as unknown as URL);
+
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+  });
 });

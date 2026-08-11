@@ -40,10 +40,15 @@ export function headerInjectingFetch(
   inner: typeof globalThis.fetch,
 ): FetchLike {
   return async (target: string | URL, init?: RequestInit): Promise<Response> => {
-    if (new URL(String(target)).origin !== url.origin) {
+    // The MCP transport passes a string or URL, but this is exported as a drop-in fetch, and a
+    // fetch also accepts a Request — whose URL is a property, not its stringification.
+    const request = target instanceof Request ? target : undefined;
+    if (new URL(request?.url ?? String(target)).origin !== url.origin) {
       return await inner(target, init);
     }
-    const merged = new Headers(init?.headers);
+    // An `init.headers` replaces a Request's own headers entirely — the platform rule — so the
+    // Request's are the base only when the caller did not pass any.
+    const merged = new Headers(init?.headers ?? request?.headers);
     for (const [name, value] of Object.entries(await resolveHeaders(headers))) {
       merged.set(name, value);
     }
