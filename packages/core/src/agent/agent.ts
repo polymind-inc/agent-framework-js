@@ -74,8 +74,10 @@ import { AgentSession } from './session.js';
  *   response, so a history provider that stores only completed exchanges — the default — writes
  *   nothing for that turn, and the span carries the error.
  *
- * Either way {@link ResponseStream.finalResponse} still returns what was collected, and the
- * teardown runs exactly once no matter which path got there first.
+ * The two also differ in what {@link ResponseStream.finalResponse} does afterwards: after a
+ * `break` it returns the partial response that was collected, while after an abort it rejects
+ * with the abort error — the stream failed, and a failed stream has no result to hand back.
+ * Either way the teardown runs exactly once no matter which path got there first.
  */
 export type AgentRunStream<T = undefined> = ResponseStream<AgentResponseUpdate, AgentResponse<T>>;
 
