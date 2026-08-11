@@ -41,39 +41,36 @@ const WINDOWS_RESERVED_STEMS = new Set([
   ...Array.from({ length: 9 }, (_, index) => `LPT${index + 1}`),
 ]);
 
-/** Beyond this an encoded stem risks the platform's own path limits, so it is hashed instead. */
-const MAX_ENCODED_STEM_LENGTH = 180;
-const ENCODED_STEM_PREFIX = '~session-';
+/** Beyond this a stem risks the platform's own filename limits, so the id is hashed instead. */
+const MAX_LITERAL_STEM_LENGTH = 180;
+const HASHED_STEM_PREFIX = '~session-sha256-';
 
 /**
  * Whether a session id can be used as a filename as it stands.
  *
  * Session ids are opaque: a caller may use a UUID, but also a path, an email address or a
- * Windows-reserved word. Anything that is not plainly portable is encoded rather than rejected, so
+ * Windows-reserved word. Anything that is not plainly portable is hashed rather than rejected, so
  * a working session never becomes unusable because of how it was named.
+ *
+ * The mapping has to be injective on every platform, including volumes that fold case (Windows,
+ * macOS) — `abc.jsonl` and `ABC.jsonl` are one file there, and two sessions sharing a file means
+ * each replays the other's transcript. So a literal stem must be entirely lowercase; distinct
+ * all-lowercase names stay distinct under case folding, and everything else maps to a lowercase
+ * hex digest, where the same holds.
  */
 function isLiteralStemSafe(sessionId: string): boolean {
-  if (sessionId === '' || sessionId.startsWith('.') || /[ .]$/.test(sessionId)) {
+  if (
+    sessionId === '' ||
+    sessionId.length > MAX_LITERAL_STEM_LENGTH ||
+    sessionId.startsWith('.') ||
+    /[ .]$/.test(sessionId)
+  ) {
     return false;
   }
-  const windowsStem = (sessionId.split('.')[0] ?? '').toUpperCase();
-  if (WINDOWS_RESERVED_STEMS.has(windowsStem)) {
+  if (WINDOWS_RESERVED_STEMS.has((sessionId.split('.')[0] ?? '').toUpperCase())) {
     return false;
   }
-  // Control characters, non-ASCII and anything outside the portable set are encoded: a filesystem
-  // that normalizes them (macOS's Unicode folding, a case-insensitive volume) would otherwise let
-  // two distinct session ids collide onto one file.
-  return /^[A-Za-z0-9._-]+$/.test(sessionId);
-}
-
-/** Base64url without padding, which `~session-` stems use. */
-function encodeStem(sessionId: string): string {
-  const bytes = new TextEncoder().encode(sessionId);
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+  return /^[a-z0-9._-]+$/.test(sessionId);
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -139,9 +136,10 @@ async function enqueueFileOperation<T>(path: string, operation: () => Promise<T>
  * - **Transcripts are stored in the clear.** They routinely contain whatever a user typed and
  *   whatever a tool returned. Put `storagePath` somewhere with access controls that match the
  *   conversation's, and consider encryption at rest.
- * - **A session id never escapes `storagePath`.** Ids that are not portable filenames are encoded,
- *   and the resolved path is checked against the directory, so an id carrying `../` or an absolute
- *   path cannot address a file elsewhere.
+ * - **A session id never escapes `storagePath`.** An id that is not a portable all-lowercase
+ *   filename is replaced by its SHA-256 digest, and the resolved path is checked against the
+ *   directory, so an id carrying `../` or an absolute path cannot address a file elsewhere — and
+ *   two ids differing only by case cannot share a file on a volume that folds case.
  * - **History is replayed verbatim into every later model call.** A transcript an attacker can
  *   write to is a prompt-injection channel; treat the directory as trusted input.
  *
@@ -246,9 +244,11 @@ export class FileHistoryProvider implements HistoryProvider {
   }
 
   async #sessionFile(session: AgentSession): Promise<string> {
+    // A literal id cannot begin with `~`, so an id that spells out a hashed stem cannot collide
+    // with the file the hash chose for another id.
     const stem = isLiteralStemSafe(session.sessionId)
       ? session.sessionId
-      : await this.#encodedStem(session.sessionId);
+      : `${HASHED_STEM_PREFIX}${await sha256Hex(session.sessionId)}`;
     const path = resolve(this.#storagePath, `${stem}.jsonl`);
     // The stem is derived, never taken verbatim from an untrusted id, so this cannot fail today.
     // It is checked anyway: the encoding is the only thing standing between an opaque session id
@@ -259,14 +259,6 @@ export class FileHistoryProvider implements HistoryProvider {
       );
     }
     return path;
-  }
-
-  async #encodedStem(sessionId: string): Promise<string> {
-    const encoded = `${ENCODED_STEM_PREFIX}${encodeStem(sessionId)}`;
-    if (encoded.length <= MAX_ENCODED_STEM_LENGTH) {
-      return encoded;
-    }
-    return `${ENCODED_STEM_PREFIX}sha256-${await sha256Hex(sessionId)}`;
   }
 
   async #ensureDirectory(): Promise<void> {
