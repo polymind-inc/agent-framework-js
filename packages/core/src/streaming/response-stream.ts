@@ -80,6 +80,19 @@ export interface ResponseStreamInit<TUpdate, TFinal> {
  * `await` or `for await` throws {@link StreamConsumedError} synchronously. After iterating,
  * {@link ResponseStream.finalResponse} returns the folded result.
  *
+ * ## Stopping early is supported
+ *
+ * A consumer may abandon the stream — `break` out of the `for await`, or call `return()` on the
+ * iterator — without leaking anything and without needing a `close()` of its own. The abandoned
+ * source is closed first, which propagates inward through every layer to the provider SDK stream,
+ * and the `cleanup` and `onResult` hooks then run exactly once, so whatever they hold is released
+ * at the point the caller stopped rather than whenever the object is collected.
+ *
+ * The folded result stays available from {@link ResponseStream.finalResponse}; it describes the
+ * part of the run that was actually produced, and `onResult` hooks are told so through
+ * {@link StreamResultContext.abandoned}. An aborted signal is a failure rather than an
+ * abandonment: the hooks still run, but the stream reports the abort.
+ *
  * ## Failure is permanent
  *
  * A stream that failed stays failed. Whatever killed it — the source, an abort, a consumer
