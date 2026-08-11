@@ -3,14 +3,23 @@ import { DefaultAzureCredential } from '@azure/identity';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { platformHeaders, projectEndpoint } from '@polymind-inc/agent-framework-agentserver';
-import type { Content, FunctionTool, ToolContext } from '@polymind-inc/agent-framework-core';
+import type {
+  Content,
+  ContextProvider,
+  FunctionTool,
+  SkillsProviderConfig,
+  SkillsSource,
+  ToolContext,
+} from '@polymind-inc/agent-framework-core';
 import {
   ConfigurationError,
+  skillsProvider,
   ToolInvocationError,
   textOfContents,
   tool,
 } from '@polymind-inc/agent-framework-core';
-import { McpConnection } from '@polymind-inc/agent-framework-mcp';
+import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
+import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
 import { tokenProvider } from '../credential.js';
 import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
@@ -40,6 +49,16 @@ export interface FoundryToolboxConfig {
   /** Restricts which of the toolbox's tools are exposed to the model. */
   allowedTools?: string[];
   /**
+   * Whether {@link FoundryToolbox.getTools} serves the toolbox's tools. Defaults to `true`.
+   *
+   * Set it to `false` for a toolbox you are consuming only for its Agent Skills: `getTools()` then
+   * answers with nothing and the gateway is never asked to list tools, leaving
+   * {@link FoundryToolbox.asSkillsProvider} as the only thing the model sees of it. The flag only
+   * matters where `getTools()` is actually wired into an agent — the toolbox's tools reach a model
+   * through that call and no other way.
+   */
+  loadTools?: boolean;
+  /**
    * Replaces the transport's `fetch`, for proxies and tests.
    *
    * The per-call authorization wrapper is applied *around* whatever is supplied here, so a
@@ -67,6 +86,7 @@ export class FoundryToolbox {
   readonly #name: string;
   readonly #endpoint: string;
   readonly #allowedTools: ReadonlySet<string> | undefined;
+  readonly #loadTools: boolean;
   readonly #connection: McpConnection;
 
   constructor(options: FoundryToolboxConfig) {
@@ -79,6 +99,7 @@ export class FoundryToolbox {
     this.#name = options.name;
     this.#endpoint = normalizeProjectEndpoint(endpoint);
     this.#allowedTools = options.allowedTools === undefined ? undefined : new Set(options.allowedTools);
+    this.#loadTools = options.loadTools ?? true;
 
     const getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
     const inner = options.fetch ?? globalThis.fetch;
@@ -118,6 +139,11 @@ export class FoundryToolbox {
    * instead of failing the one request that needed it.
    */
   async getTools(): Promise<Array<FunctionTool<Record<string, unknown>, unknown>>> {
+    if (!this.#loadTools) {
+      // Not just a filter over the result: the point of `loadTools: false` is that a
+      // skills-only toolbox never asks the gateway to list tools at all.
+      return [];
+    }
     // The gateway signals "consent required" on `tools/list` (Python hits it on lazy agent
     // entry); retyped so the hosting handler can surface an `oauth_consent_request` item
     // instead of failing the turn.
@@ -167,6 +193,62 @@ export class FoundryToolbox {
           },
         }),
       );
+  }
+
+  /**
+   * Discovers the toolbox's Agent Skills, as a source `skillsProvider` can serve.
+   *
+   * A Foundry toolbox publishes skills the same way any other MCP server does — a
+   * `skill://index.json` catalogue with a `SKILL.md` behind each entry — so this reads them over
+   * the connection the tools already use. Nothing new is authenticated, configured or opened: the
+   * per-call bearer token and call id ride along exactly as they do on `tools/call`.
+   */
+  skillsSource(config?: McpSkillsSourceConfig): SkillsSource {
+    return mcpSkillsSource(
+      {
+        readResource: async (uri: string, options?: { signal?: AbortSignal }) => {
+          try {
+            return await this.#connection.readResource(uri, options);
+          } catch (error) {
+            throw withConsentTyped(error);
+          }
+        },
+      },
+      { origin: `toolbox '${this.#name}'`, ...config },
+    );
+  }
+
+  /**
+   * Serves the toolbox's Agent Skills to an agent.
+   *
+   * ```ts
+   * const toolbox = new FoundryToolbox({ name: 'support', loadTools: false });
+   * const agent = new Agent({
+   *   client,
+   *   instructions: 'You are a support assistant.',
+   *   contextProviders: [toolbox.asSkillsProvider({ approvals: { loadSkill: 'never_require' } })],
+   * });
+   * ```
+   *
+   * Skill tools require approval by default, like every other skill tool. A hosted agent that runs
+   * unattended has to relax at least `loadSkill`, since there is no one on the other end of the
+   * approval request.
+   *
+   * ## Security considerations
+   *
+   * The skills come from the toolbox, which means from whatever tool sources the project has
+   * configured. Their instructions enter the model's context verbatim — see {@link skillsProvider}.
+   *
+   * A gateway that answers with `CONSENT_REQUIRED` during discovery is retyped to
+   * {@link ToolboxConsentRequiredError}, but discovery happens inside the run rather than while the
+   * agent is being built, so the hosted handler surfaces it as a failed turn rather than as an
+   * `oauth_consent_request` item. To meet the gate somewhere the handler can turn it into a
+   * consent prompt, wire the toolbox's tools as well: an agent built in the hosted handler's
+   * factory with `tools: await toolbox.getTools()` runs `tools/list` during construction, and a
+   * refusal there does become an `oauth_consent_request` item.
+   */
+  asSkillsProvider(config?: SkillsProviderConfig & McpSkillsSourceConfig): ContextProvider {
+    return skillsProvider(this.skillsSource(config), config);
   }
 
   /** Closes the MCP connection. */

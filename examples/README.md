@@ -37,11 +37,13 @@ Foundry chat examples use Azure credentials from `DefaultAzureCredential`. Set
 | Tool approval | Pausing, persisting, approving, denying, and resuming locally | `pnpm --filter example-02-foundry approval` |
 | Foundry Toolbox | Calling tools exposed by a Foundry Toolbox MCP endpoint | `pnpm --filter example-02-foundry toolbox` |
 | Memory | Recalling facts across conversations, scoped per user | `pnpm --filter example-02-foundry memory:provision`, then `build` and `pnpm --filter example-02-foundry memory` |
+| Toolbox MCP Skills | Serving a hosted agent the Agent Skills a toolbox publishes | Set `FOUNDRY_TOOLBOX_NAME`, then `build` and `pnpm --filter example-02-foundry toolbox-skills` |
 
 See [`02-foundry/02-hosted-agent/README.md`](02-foundry/02-hosted-agent/README.md) for container
 build and deployment instructions, and
 [`02-foundry/06-memory-agent/README.md`](02-foundry/06-memory-agent/README.md) for the memory
-store the memory sample needs.
+store the memory sample needs. The Toolbox MCP Skills sample has its own
+[`README.md`](02-foundry/07-toolbox-skills/README.md).
 
 ## Extensibility and providers
 
@@ -52,6 +54,7 @@ store the memory sample needs.
 | Anthropic | Tools, streaming, thinking, and structured output with Claude | `ANTHROPIC_API_KEY=... pnpm --filter example-03-extensibility anthropic` |
 | MCP | Discovering and invoking remote MCP tools with approval | Set `OPENAI_API_KEY` and `MCP_SERVER_URL`, then run `pnpm --filter example-03-extensibility mcp` |
 | OpenAI hosted tools | Provider-hosted web search and Code Interpreter | Set `OPENAI_API_KEY` and `OPENAI_MODEL`, then run `pnpm --filter example-03-extensibility hosted-tools` |
+| Agent Skills | Progressive disclosure of `SKILL.md` and code-defined skills | `OPENAI_API_KEY=... pnpm --filter example-03-extensibility skills` |
 
 ## Agent2Agent (A2A)
 

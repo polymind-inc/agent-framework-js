@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsdown --config 02-hosted-agent/tsdown.config.ts && tsdown --config 05-invocations-agent/tsdown.config.ts && tsdown --config 06-memory-agent/tsdown.config.ts",
+    "build": "tsdown --config 02-hosted-agent/tsdown.config.ts && tsdown --config 05-invocations-agent/tsdown.config.ts && tsdown --config 06-memory-agent/tsdown.config.ts && tsdown --config 07-toolbox-skills/tsdown.config.ts",
     "chat": "tsx 01-foundry-chat.ts",
     "host": "node 02-hosted-agent/dist/main.mjs",
     "host:dev": "tsx 02-hosted-agent/main.ts",
@@ -18,6 +18,8 @@
     "memory": "node 06-memory-agent/dist/main.mjs",
     "memory:dev": "tsx 06-memory-agent/main.ts",
     "memory:provision": "tsx 06-memory-agent/provision.ts",
+    "toolbox-skills": "node 07-toolbox-skills/dist/main.mjs",
+    "toolbox-skills:dev": "tsx 07-toolbox-skills/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

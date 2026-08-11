@@ -89,6 +89,8 @@ export const MCP = {
   protocolVersion: 'mcp.protocol.version',
   serverAddress: 'server.address',
   serverPort: 'server.port',
+  /** The resource a `resources/read` span was for. Python has no equivalent constant yet. */
+  resourceUri: 'mcp.resource.uri',
 } as const;
 
 /** GenAI operation names, used both as `gen_ai.operation.name` and as the span-name prefix. */

@@ -8,9 +8,9 @@
 
 Runtime-agnostic core of the Agent Framework for TypeScript: `Agent`, `AgentSession`, the
 `Message` / `Content` model, `tool()` with Standard Schema support, the function-calling loop,
-and the `ChatClient` seam that providers implement. ESM only; the sole runtime dependency is
-`@opentelemetry/api`. Semantics follow the Microsoft Agent Framework reference implementations
-(.NET / Python / Go).
+Agent Skills, and the `ChatClient` seam that providers implement. ESM only; the sole runtime
+dependency is `@opentelemetry/api`. Semantics follow the Microsoft Agent Framework reference
+implementations (.NET / Python / Go).
 
 ```sh
 npm install @polymind-inc/agent-framework-core
@@ -34,6 +34,10 @@ Known limitations:
   planned for a future release).
 - The core runs in browsers, but calling model providers directly from a browser exposes your
   API key — run agents server-side.
+- Agent Skills come from code (`inlineSkill`), from a `SKILL.md` document you supply
+  (`markdownSkill`, with `parseSkillMarkdown` for the header alone), or from a `SkillsSource` you
+  implement. **Walking a directory of `SKILL.md` files is not part of this package** — the core has
+  no filesystem, by design; the extensibility examples show the dozen lines of `node:fs` it takes.
 - `agent.run()` returns a hybrid thenable/async-iterable stream. Type-aware lint rules such as
   `@typescript-eslint/no-floating-promises` will flag a deliberately unconsumed `run()` call;
   consume the stream or `void` it explicitly.

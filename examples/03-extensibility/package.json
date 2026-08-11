@@ -12,6 +12,7 @@
     "anthropic": "tsx 03-anthropic.ts",
     "mcp": "tsx 04-mcp.ts",
     "hosted-tools": "tsx 05-openai-hosted-tools.ts",
+    "skills": "tsx 06-agent-skills.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

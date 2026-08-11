@@ -96,6 +96,45 @@ export type { ObservabilitySettings } from './observability/settings.js';
 export { captureMessageContent, configureObservability, getTracer } from './observability/settings.js';
 export type { AgentRunSpan, AgentRunSpanInfo } from './observability/tracing.js';
 export { setMcpSpanError, startAgentRunSpan, withMcpClientSpan } from './observability/tracing.js';
+// skills
+export type {
+  ParsedSkillMarkdown,
+  SkillFrontmatter,
+  SkillFrontmatterConfig,
+} from './skills/frontmatter.js';
+export { parseSkillMarkdown, skillFrontmatter } from './skills/frontmatter.js';
+export type {
+  SkillApprovalModes,
+  SkillsProviderConfig,
+} from './skills/provider.js';
+export { SKILL_TOOL_NAMES, skillsProvider } from './skills/provider.js';
+export type {
+  InlineSkillConfig,
+  MarkdownSkillConfig,
+  Skill,
+  SkillAccessOptions,
+  SkillInvocationContext,
+  SkillResource,
+  SkillResourceConfig,
+  SkillScript,
+  SkillScriptArguments,
+  SkillScriptConfig,
+} from './skills/skill.js';
+export { inlineSkill, markdownSkill, skillResource, skillScript } from './skills/skill.js';
+export type {
+  CacheSkillsOptions,
+  DeduplicateSkillsOptions,
+  SkillLoadFailure,
+  SkillsSource,
+  SkillsSourceContext,
+} from './skills/source.js';
+export {
+  aggregateSkills,
+  cacheSkills,
+  deduplicateSkills,
+  filterSkills,
+  inMemorySkillsSource,
+} from './skills/source.js';
 // streaming
 export { abortErrorFrom, isAbortError } from './streaming/abort.js';
 export type {
