@@ -358,6 +358,28 @@ function updatesFromMessage(message: A2AMessage): AgentResponseUpdate[] {
   ];
 }
 
+/** Records the remote conversation shared by every payload kind, ignoring its absent wire form. */
+function observeContext(observed: ObservedTaskState, contextId: string | undefined): void {
+  observed.contextId = omitEmpty(contextId) ?? observed.contextId;
+}
+
+/** Records a payload's task identity without changing a state that payload did not report. */
+function observeTask(observed: ObservedTaskState, contextId: string | undefined, taskId: string): void {
+  observeContext(observed, contextId);
+  observed.taskId = taskId;
+}
+
+/** Records a task payload that owns the current state, including resetting an omitted status. */
+function observeTaskStatus(
+  observed: ObservedTaskState,
+  contextId: string | undefined,
+  taskId: string,
+  state: TaskState | undefined,
+): void {
+  observeTask(observed, contextId, taskId);
+  observed.taskState = state === undefined ? undefined : taskStateToJSON(state);
+}
+
 /**
  * Converts one A2A payload into response updates, recording what it says about the conversation.
  *
@@ -370,22 +392,17 @@ export function updatesFromPayload(payload: A2APayload, observed: ObservedTaskSt
   switch (payload.$case) {
     case 'task': {
       const task = payload.value;
-      observed.contextId = omitEmpty(task.contextId) ?? observed.contextId;
-      observed.taskId = task.id;
-      observed.taskState = task.status === undefined ? undefined : taskStateToJSON(task.status.state);
+      observeTaskStatus(observed, task.contextId, task.id, task.status?.state);
       return updatesFromTask(task);
     }
     case 'statusUpdate': {
       const event = payload.value;
-      observed.contextId = omitEmpty(event.contextId) ?? observed.contextId;
-      observed.taskId = event.taskId;
-      observed.taskState = event.status === undefined ? undefined : taskStateToJSON(event.status.state);
+      observeTaskStatus(observed, event.contextId, event.taskId, event.status?.state);
       return updatesFromStatusUpdate(event);
     }
     case 'artifactUpdate': {
       const event = payload.value;
-      observed.contextId = omitEmpty(event.contextId) ?? observed.contextId;
-      observed.taskId = event.taskId;
+      observeTask(observed, event.contextId, event.taskId);
       const artifact = event.artifact;
       if (artifact === undefined) {
         throw new A2AAgentError('The A2A agent sent an artifact update with no artifact.');
@@ -398,7 +415,7 @@ export function updatesFromPayload(payload: A2APayload, observed: ObservedTaskSt
     }
     case 'message': {
       const message = payload.value;
-      observed.contextId = omitEmpty(message.contextId) ?? observed.contextId;
+      observeContext(observed, message.contextId);
       return updatesFromMessage(message);
     }
     default:

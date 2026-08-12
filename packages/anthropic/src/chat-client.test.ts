@@ -462,6 +462,34 @@ describe('response parsing', () => {
     expect(response.usageDetails).toEqual({ inputTokenCount: 10, outputTokenCount: 5 });
   });
 
+  it('extracts the same message fields from a complete response and message_start', () => {
+    const wireMessage = {
+      id: 'msg_shared',
+      model: 'claude-sonnet-4-5',
+      stop_reason: 'max_tokens',
+      content: [{ type: 'text', text: 'same fields' }],
+      usage: { input_tokens: 4, output_tokens: 2 },
+    };
+    const event = { type: 'message_start', message: wireMessage };
+
+    const complete = parseMessage(wireMessage);
+    const started = parseStreamEvent(event, createStreamParseState());
+    const streamedContents = started?.contents.filter((content) => content.type !== 'usage');
+
+    expect(started).toMatchObject({
+      responseId: complete.responseId,
+      model: complete.model,
+      finishReason: complete.finishReason,
+    });
+    expect(streamedContents).toEqual(complete.messages[0]?.contents);
+    expect(started?.contents.find((content) => content.type === 'usage')).toMatchObject({
+      usageDetails: complete.usageDetails,
+    });
+    // The shared field parser must not erase the path-specific raw provider object.
+    expect(complete.rawRepresentation).toBe(wireMessage);
+    expect(started?.rawRepresentation).toBe(event);
+  });
+
   it('maps cache counters onto the framework usage names', () => {
     const response = parseMessage({
       id: 'msg_1',

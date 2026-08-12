@@ -126,13 +126,13 @@ export interface McpConnectionConfig {
    */
   fetch?: typeof globalThis.fetch;
   /**
-   * Whether an error from `tools/call` means the connection is gone, so the call should be
-   * retried once on a fresh connection.
+   * Whether an MCP request error means the connection is gone, so the request should be retried
+   * once on a fresh connection.
    *
-   * Defaults to detecting a transport that died mid-call, one the SDK had already dropped, and
+   * Defaults to detecting a transport that died mid-request, one the SDK had already dropped, and
    * an expired Streamable HTTP session (HTTP 404). A JSON-RPC error *answer* is a verdict on the
-   * call, not a lost connection, and is never retried by the default; override this to narrow
-   * the retry further — never to retry answered calls.
+   * request, not a lost connection, and is never retried by the default; override this to narrow
+   * the retry further — never to retry answered requests.
    */
   shouldReconnect?: (error: unknown) => boolean;
 }
@@ -153,15 +153,15 @@ export interface McpCallToolOptions {
  * that speak MCP without the framework-tool packaging. Results come back as raw
  * `@modelcontextprotocol/client` types; converting them is the caller's responsibility.
  *
- * - **Lazy** — nothing touches the network until the first `listTools()` or `callTool()`, and
- *   concurrent first callers share a single connection attempt.
- * - **Self-healing** — a `callTool` that fails because the connection is gone is retried once on
- *   a fresh connection ({@link McpConnectionConfig.shouldReconnect}); any other failure, and a
+ * - **Lazy** — nothing touches the network until the first `listTools()`, `callTool()` or
+ *   `readResource()`, and concurrent first callers share a single connection attempt.
+ * - **Self-healing** — a request that fails because the connection is gone is retried once on a
+ *   fresh connection ({@link McpConnectionConfig.shouldReconnect}); any other failure, and a
  *   failure of the retry itself, surfaces unchanged.
- * - **Traced** — `initialize`, `tools/list` and `tools/call` are recorded as MCP client spans per
- *   the OTel MCP semantic conventions. A result that reports `isError` marks its span with
- *   `error.type = 'tool_error'` while still being returned, since whether to raise is the
- *   caller's decision.
+ * - **Traced** — `initialize`, `tools/list`, `tools/call` and `resources/read` are recorded as MCP
+ *   client spans per the OTel MCP semantic conventions. A tool result that reports `isError`
+ *   marks its span with `error.type = 'tool_error'` while still being returned, since whether to
+ *   raise is the caller's decision.
  *
  * ```ts
  * const connection = new McpConnection({
@@ -265,46 +265,42 @@ export class McpConnection {
   }
 
   /**
-   * Calls a tool on the live connection, reconnecting once if that connection turns out dead.
+   * Runs one request on the live connection, reconnecting once if that connection turns out dead.
    *
-   * Callers can resolve through here on every call rather than closing over the client that
-   * existed earlier, so a reconnect swaps the connection under tools that were handed out before
-   * it died. Matches the reference implementation's single-retry semantics
-   * (`_call_tool_with_retries` in Python's `_mcp.py`): one reconnect, then the failure surfaces.
+   * Resolving the client on every attempt lets a reconnect swap the connection under tools and
+   * resource readers that were handed out before it died. Matches the reference implementation's
+   * single-retry semantics (`_call_tool_with_retries` in Python's `_mcp.py`): one reconnect, then
+   * the failure surfaces.
    *
-   * The reconnect retry reuses the caller's signal because it is the same logical call; a fresh
-   * one would leave the surviving attempt uncancellable. The signal is deliberately *not* passed
-   * to the connect itself: the connection is shared by every caller of this instance, so one
-   * caller's abort must not tear it down under the others.
+   * Per-request state — most importantly the caller's signal — belongs in `request`, so both
+   * attempts use the same value. It is deliberately *not* passed to the connect itself: the
+   * connection is shared by every caller of this instance, so one caller's abort must not tear it
+   * down under the others.
    */
-  async #callToolWithRetry(
-    name: string,
-    args: Record<string, unknown>,
-    signal: AbortSignal | undefined,
-  ): Promise<CallToolResult> {
-    const options = signal === undefined ? undefined : { signal };
+  async #withReconnect<T>(request: (client: Client) => Promise<T>): Promise<T> {
     const client = await this.#connect();
     try {
-      return await client.callTool({ name, arguments: args }, options);
+      return await request(client);
     } catch (error) {
       if (!this.#shouldReconnect(error)) {
         throw error;
       }
       this.#discard(client);
       const fresh = await this.#connect();
-      return fresh.callTool({ name, arguments: args }, options);
+      return request(fresh);
     }
   }
 
   /**
    * Lists the server's tools, as `tools/list` reports them.
    *
-   * Connects on first use; a failed connection is surfaced to this caller and retried by the
-   * next one.
+   * Connects on first use and retries once on a fresh connection when the live connection dies,
+   * under the same rule as `callTool` and `readResource`.
    */
   async listTools(): Promise<ListToolsResult> {
-    const client = await this.#connect();
-    return withMcpClientSpan('tools/list', undefined, this.#spanAttributes(), async () => client.listTools());
+    return withMcpClientSpan('tools/list', undefined, this.#spanAttributes(), async () =>
+      this.#withReconnect((client) => client.listTools()),
+    );
   }
 
   /**
@@ -326,7 +322,10 @@ export class McpConnection {
       name,
       { ...this.#spanAttributes(), [GEN_AI.toolName]: name, [GEN_AI.toolType]: 'mcp' },
       async (span) => {
-        const result = await this.#callToolWithRetry(name, args, options?.signal);
+        const requestOptions = options?.signal === undefined ? undefined : { signal: options.signal };
+        const result = await this.#withReconnect((client) =>
+          client.callTool({ name, arguments: args }, requestOptions),
+        );
         if (result.isError === true) {
           const text = textOfBlocks(result.content);
           setMcpSpanError(span, 'tool_error', text === '' ? undefined : text);
@@ -349,17 +348,7 @@ export class McpConnection {
       { ...this.#spanAttributes(), [MCP.resourceUri]: uri },
       async () => {
         const requestOptions = options?.signal === undefined ? undefined : { signal: options.signal };
-        const client = await this.#connect();
-        try {
-          return await client.readResource({ uri }, requestOptions);
-        } catch (error) {
-          if (!this.#shouldReconnect(error)) {
-            throw error;
-          }
-          this.#discard(client);
-          const fresh = await this.#connect();
-          return await fresh.readResource({ uri }, requestOptions);
-        }
+        return this.#withReconnect((client) => client.readResource({ uri }, requestOptions));
       },
     );
   }

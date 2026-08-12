@@ -12,9 +12,9 @@
 //
 // Usage: node scripts/set-version.mjs 0.2.0
 
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { readPackageManifests, workspaceRoot } from './workspace.mjs';
 
 const version = process.argv[2];
 
@@ -23,9 +23,6 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version ?? '')) {
   process.exit(1);
 }
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const packagesDir = join(root, 'packages');
-
 /** Source constants that mirror package.json's version, as [path, exported name] pairs. */
 const VERSION_CONSTANTS = [
   ['packages/core/src/observability/version.ts', 'INSTRUMENTATION_VERSION'],
@@ -33,18 +30,16 @@ const VERSION_CONSTANTS = [
   ['packages/mcp/src/connection.ts', 'MCP_CLIENT_VERSION'],
 ];
 
-for (const dir of readdirSync(packagesDir)) {
-  const manifestPath = join(packagesDir, dir, 'package.json');
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+for (const { path, manifest } of readPackageManifests()) {
   const previous = manifest.version;
 
   manifest.version = version;
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`${manifest.name}: ${previous} -> ${version}`);
 }
 
 for (const [relativePath, name] of VERSION_CONSTANTS) {
-  const path = join(root, relativePath);
+  const path = join(workspaceRoot, relativePath);
   const source = readFileSync(path, 'utf8');
   const pattern = new RegExp(`(export const ${name} = ')[^']*(')`);
 

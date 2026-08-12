@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,12 +72,13 @@ describe('directorySkillsSource', () => {
     await writeFile(join(path, 'references/pricing.csv'), 'plan,price', 'utf8');
 
     const [skill] = await directorySkillsSource({ paths: [path] }).getSkills(context());
+    assert(skill !== undefined);
     const content = await skill?.getContent();
 
     expect(content).toContain('<resource name="style-guide.md"/>');
     expect(content).toContain('<resource name="references/pricing.csv"/>');
     const resource = await skill?.getResource?.('references/pricing.csv');
-    expect(await resource?.read({ skill: skill!, callId: 'c1' })).toBe('plan,price');
+    expect(await resource?.read({ skill, callId: 'c1' })).toBe('plan,price');
   });
 
   it('leaves files outside the resource extensions alone', async () => {
@@ -124,6 +126,7 @@ describe('directorySkillsSource', () => {
       await writeFile(join(path, 'public.md'), 'fine', 'utf8');
 
       const [skill] = await directorySkillsSource({ paths: [path] }).getSkills(context());
+      assert(skill !== undefined);
 
       // Resources are served by name from what discovery found, so a name that climbs out of the
       // directory resolves to nothing — there is no path for it to be joined onto.
@@ -131,7 +134,7 @@ describe('directorySkillsSource', () => {
         expect(await skill?.getResource?.(name), name).toBeUndefined();
       }
       const allowed = await skill?.getResource?.('public.md');
-      expect(await allowed?.read({ skill: skill!, callId: 'c1' })).toBe('fine');
+      expect(await allowed?.read({ skill, callId: 'c1' })).toBe('fine');
     });
 
     it('does not serve a file reached through a symbolic link', async () => {
@@ -158,6 +161,7 @@ describe('directorySkillsSource', () => {
       await writeFile(join(path, 'notes.md'), 'ordinary', 'utf8');
 
       const [skill] = await directorySkillsSource({ paths: [path] }).getSkills(context());
+      assert(skill !== undefined);
       const resource = await skill?.getResource?.('notes.md');
       expect(resource).toBeDefined();
 
@@ -168,7 +172,7 @@ describe('directorySkillsSource', () => {
         return;
       }
 
-      await expect(resource?.read({ skill: skill!, callId: 'c1' })).rejects.toThrow(/symbolic link/);
+      await expect(resource?.read({ skill, callId: 'c1' })).rejects.toThrow(/symbolic link/);
     });
 
     it('does not treat a directory whose SKILL.md is a link as a skill', async () => {
@@ -247,9 +251,10 @@ describe('directorySkillsSource', () => {
           return 'ran';
         },
       }).getSkills(context());
+      assert(skill !== undefined);
 
       const script = await skill?.getScript?.('run.py');
-      expect(await script?.run({ length: 24 }, { skill: skill!, callId: 'c1' })).toBe('ran');
+      expect(await script?.run({ length: 24 }, { skill, callId: 'c1' })).toBe('ran');
       expect(seen).toEqual([{ name: 'run.py', skillName: 'summarize', args: { length: 24 } }]);
     });
   });
