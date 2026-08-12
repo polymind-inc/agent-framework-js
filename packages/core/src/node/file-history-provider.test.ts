@@ -182,7 +182,7 @@ describe('FileHistoryProvider', () => {
         const written = await readdir(storagePath);
         expect(written).toHaveLength(1);
         expect(written[0]).toMatch(/^~session-[\w-]+\.jsonl$/);
-        // And the encoding is reversible enough to find the transcript again.
+        // And the mapping is deterministic — the same id finds its transcript again.
         expect(await provider.getMessages(session, NO_STATE)).toHaveLength(1);
       });
     }
