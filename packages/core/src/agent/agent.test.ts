@@ -117,6 +117,39 @@ describe('Agent.run', () => {
     expect(stored.filter((m) => m.role === 'user')).toHaveLength(1);
   });
 
+  it('totals the usage of every round of a streamed run', async () => {
+    // The whole-run total is what a caller logs once per run, so it has to survive both the tool
+    // loop (several model calls) and streaming consumption (usage arrives as a trailing content).
+    const weather = tool({
+      name: 'get_weather',
+      description: 'd',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'sunny',
+    });
+    const mock = new MockChatClient([
+      {
+        contents: [{ type: 'function_call', callId: 'c1', name: 'get_weather', arguments: '{}' }],
+        finishReason: 'tool_calls',
+        usage: { inputTokenCount: 10, outputTokenCount: 4 },
+      },
+      {
+        contents: [textContent('It is sunny.')],
+        finishReason: 'stop',
+        usage: { inputTokenCount: 20, outputTokenCount: 6 },
+      },
+    ]);
+    const stream = new Agent({ client: mock, tools: [weather] }).run('weather?');
+
+    for await (const _ of stream) {
+      // Drained to the end: the total is only complete once the last update has been seen.
+    }
+
+    expect((await stream.finalResponse()).usageDetails).toEqual({
+      inputTokenCount: 30,
+      outputTokenCount: 10,
+    });
+  });
+
   it('merges options run-first with agent options filling the blanks', async () => {
     const mock = client('x');
     const agent = new Agent({
