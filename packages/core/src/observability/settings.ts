@@ -30,11 +30,17 @@ function readEnv(name: string): string | undefined {
   }
 }
 
+// The truthy spellings are exactly what Python's own environment reader accepts; the falsy set is
+// their negatives plus the empty (or whitespace-only) string, so a variable that is explicitly
+// blanked or turned off does not fall through to the other variable name.
+const TRUE_VALUES = new Set(['true', '1', 'yes', 'on']);
+const FALSE_VALUES = new Set(['false', '0', 'no', 'off', '']);
+
 function parseBool(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
-  if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === '') return false;
+  if (TRUE_VALUES.has(normalized)) return true;
+  if (FALSE_VALUES.has(normalized)) return false;
   return undefined;
 }
 
