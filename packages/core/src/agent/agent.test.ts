@@ -217,6 +217,31 @@ describe('Agent.run', () => {
     expect(afterRun.mock.calls[0]?.[0].response).toBeUndefined();
   });
 
+  it('resolves finalResponse with the partial response after a break, but rejects it after an abort', async () => {
+    // The two ways of stopping early differ here: a break is a decision, so the collected part is
+    // the answer; an abort is a failure, and a failed stream has no result to hand back.
+    const stopped = new Agent({
+      client: new MockChatClient([{ contents: [textContent('a'), textContent('b')] }]),
+    }).run('hi');
+    for await (const _ of stopped) {
+      break;
+    }
+    expect((await stopped.finalResponse()).text).toBe('a');
+
+    const controller = new AbortController();
+    const aborted = new Agent({
+      client: new MockChatClient([{ contents: [textContent('a'), textContent('b')] }]),
+    }).run('hi', { signal: controller.signal });
+    await expect(
+      (async () => {
+        for await (const _ of aborted) {
+          controller.abort();
+        }
+      })(),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(aborted.finalResponse()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('calls afterRun with the error when the consumer throws into the stream', async () => {
     const afterRun = vi.fn();
     const agent = new Agent({

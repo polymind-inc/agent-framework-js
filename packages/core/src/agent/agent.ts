@@ -53,7 +53,32 @@ import { agentAsTool } from './as-tool.js';
 import { parseContinuationToken, wrapContinuationToken } from './continuation.js';
 import { AgentSession } from './session.js';
 
-/** The hybrid stream returned by {@link Agent.run}: awaitable and iterable. */
+/**
+ * The hybrid stream returned by {@link Agent.run}: awaitable and iterable.
+ *
+ * ## Stopping early
+ *
+ * A caller may stop reading at any point — `break` out of the `for await`, or abort the run's
+ * signal. Relaying a run to an HTTP client makes that the normal case rather than the exceptional
+ * one, so what each does is part of the contract:
+ *
+ * - **`break`** closes the underlying provider stream, so the connection is released rather than
+ *   left to drain. The run then ends the way a finished one does: context providers get their
+ *   `afterRun`, the history provider persists the exchange *as far as it got*, and the
+ *   `invoke_agent` span is ended. Structured output is **not** parsed — the text stops wherever
+ *   the `break` landed, so parsing it would turn a legitimate `break` into an error. This follows
+ *   Go, whose run loop falls through to its `Invoked` calls after the consumer stops; .NET
+ *   abandons the run without notifying its providers, so a caller porting between the two should
+ *   not assume the transcript matches.
+ * - **Abort** ends the run as a failure instead. Providers are told with the error rather than a
+ *   response, so a history provider that stores only completed exchanges — the default — writes
+ *   nothing for that turn, and the span carries the error.
+ *
+ * The two also differ in what {@link ResponseStream.finalResponse} does afterwards: after a
+ * `break` it returns the partial response that was collected, while after an abort it rejects
+ * with the abort error — the stream failed, and a failed stream has no result to hand back.
+ * Either way the teardown runs exactly once no matter which path got there first.
+ */
 export type AgentRunStream<T = undefined> = ResponseStream<AgentResponseUpdate, AgentResponse<T>>;
 
 /** Maps a `responseFormat` to the type of `response.value`. */
