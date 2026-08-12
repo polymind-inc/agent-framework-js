@@ -171,6 +171,21 @@ describe('directorySkillsSource', () => {
       await expect(resource?.read({ skill: skill!, callId: 'c1' })).rejects.toThrow(/symbolic link/);
     });
 
+    it('does not treat a directory whose SKILL.md is a link as a skill', async () => {
+      await writeFile(join(root, 'secret.md'), '---\nname: secret\ndescription: Outside.\n---\n', 'utf8');
+      const skillDir = join(root, 'linked-skill');
+      await mkdir(skillDir, { recursive: true });
+      try {
+        await symlink(join(root, 'secret.md'), join(skillDir, 'SKILL.md'));
+      } catch {
+        return;
+      }
+
+      const skills = await directorySkillsSource({ paths: [skillDir] }).getSkills(context());
+
+      expect(skills).toEqual([]);
+    });
+
     it('does not descend into a linked directory', async () => {
       const path = await writeSkill('summarize', 'summarize');
       await mkdir(join(root, 'elsewhere'), { recursive: true });

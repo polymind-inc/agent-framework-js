@@ -91,9 +91,11 @@ export interface DirectorySkillsSourceConfig {
  * - **A read never escapes the skill directory.** Resources are discovered up front and served by
  *   name, so a path from the model never reaches the filesystem; the resolved path is checked
  *   against the skill directory as well, and any symbolic link or reparse point along the way is
- *   refused rather than followed. .NET and Python refuse links the same way — resolving them first
- *   and then checking the prefix would accept a link that happens to point back inside, which is a
- *   weaker guarantee than either.
+ *   refused rather than followed — `SKILL.md` itself included. .NET and Python refuse links the
+ *   same way — resolving them first and then checking the prefix would accept a link that happens
+ *   to point back inside, which is a weaker guarantee than either. The directories named in
+ *   `paths` are the anchor of that guarantee: what the caller points the source at — including
+ *   through a link of the caller's own making — is the tree the reads are confined to.
  * - **Skill content is model context.** A `SKILL.md` body is injected verbatim and its resources
  *   are read on the model's say-so, so a directory anyone else can write to is a prompt-injection
  *   channel. Load skills from directories you control.
@@ -176,7 +178,9 @@ async function skillDirectories(directory: string): Promise<string[]> {
 }
 
 async function loadSkill(directory: string, options: LoadOptions): Promise<Skill> {
-  const markdown = await readFile(join(directory, SKILL_FILE), 'utf8');
+  // Read with the same containment check as a resource: discovery saw a plain file, but that was
+  // an instant ago, and a file swapped for a link in between must not be followed.
+  const markdown = await readWithin(directory, SKILL_FILE);
   // Parsed first: the skill's name is what the filters see, and a document that does not parse
   // should fail before the directory is walked.
   const named = markdownSkill({ markdown });
