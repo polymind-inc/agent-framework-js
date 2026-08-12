@@ -454,6 +454,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       options?.responseFormat ?? options?.options?.responseFormat ?? this.#defaultOptions.responseFormat;
 
     let providerContexts: Array<{ provider: ContextProvider; ctx: ProviderRunContext }> = [];
+    // Captured for `afterRun`: what the providers injected is decided during `start`, but a
+    // history provider is only told about it once the run is over.
+    let injectedMessages: readonly Message[] = [];
     let afterRunDone = false;
     let activeSession: AgentSession | undefined;
     // The `invoke_agent` span covers the whole run, including the tool loop and history
@@ -492,6 +495,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         }
         const afterCtx: ProviderAfterRunContext = {
           ...ctx,
+          contextMessages: injectedMessages,
           ...(response === undefined ? {} : { response }),
           ...(error === undefined ? {} : { error }),
         };
@@ -545,6 +549,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         }
       }
 
+      injectedMessages = [...accumulator.messages];
       const messages: Message[] = resuming ? [] : [...accumulator.messages, ...inputMessages];
       const chatOptions = this.#mergeOptions(
         options,

@@ -3,32 +3,24 @@ import type { Message, MessageFilter } from '../types/message.js';
 import { notSourceTypes, passThrough } from '../types/message.js';
 import type { SerializedMessage } from '../types/serialization.js';
 import { deserializeMessages, serializeMessages } from '../types/serialization.js';
-import type { HistoryProvider, ProviderAfterRunContext, ProviderRunContext } from './context-provider.js';
+import type {
+  HistoryProvider,
+  HistoryStoreOptions,
+  ProviderAfterRunContext,
+  ProviderRunContext,
+} from './context-provider.js';
+import { selectContextMessages } from './context-provider.js';
 
 const MESSAGES_KEY = 'messages';
 
 /** Options for {@link InMemoryHistoryProvider}. */
-export interface InMemoryHistoryProviderConfig {
+export interface InMemoryHistoryProviderConfig extends HistoryStoreOptions {
   /**
    * Defaults to `'in_memory'` (Python `InMemoryHistoryProvider.DEFAULT_SOURCE_ID`, which also
    * names the session-state partition). Override when running several history providers side by
    * side.
    */
   sourceId?: string;
-  /**
-   * Narrows what the stored transcript contributes to a run. Defaults to everything.
-   *
-   * Go `ChatHistoryProviderOptions.ProvideOutputMessageFilter`.
-   */
-  provideFilter?: MessageFilter;
-  /**
-   * Narrows what a finished run writes back.
-   *
-   * Defaults to `notSourceTypes('ChatHistory')`: re-saving replayed history would grow the
-   * transcript geometrically (Go's `notSourceTypes(SourceTypeHistoryProvider)`). Replacing this is
-   * how a caller stores, say, only external messages.
-   */
-  storeFilter?: MessageFilter;
 }
 
 /**
@@ -51,11 +43,13 @@ export class InMemoryHistoryProvider implements HistoryProvider {
   readonly sourceId: string;
   readonly #provideFilter: MessageFilter;
   readonly #storeFilter: MessageFilter;
+  readonly #storeContextMessages: boolean | readonly string[];
 
   constructor(options?: InMemoryHistoryProviderConfig) {
     this.sourceId = options?.sourceId ?? 'in_memory';
     this.#provideFilter = options?.provideFilter ?? passThrough;
     this.#storeFilter = options?.storeFilter ?? notSourceTypes('ChatHistory');
+    this.#storeContextMessages = options?.storeContextMessages ?? false;
   }
 
   async getMessages(_session: AgentSession, state: Record<string, unknown>): Promise<Message[]> {
@@ -83,10 +77,16 @@ export class InMemoryHistoryProvider implements HistoryProvider {
   }
 
   async afterRun(ctx: ProviderAfterRunContext): Promise<void> {
+    // A run that failed produced no exchange to append. Storing its input alone would leave the
+    // transcript with a question the model never answered, which the next run would replay.
     if (ctx.response === undefined) {
       return;
     }
-    const toSave = this.#storeFilter([...ctx.inputMessages, ...ctx.response.messages]);
+    const toSave = this.#storeFilter([
+      ...selectContextMessages(ctx.contextMessages, this.#storeContextMessages),
+      ...ctx.inputMessages,
+      ...ctx.response.messages,
+    ]);
     if (toSave.length > 0) {
       await this.saveMessages(ctx.session, toSave, ctx.state);
     }
