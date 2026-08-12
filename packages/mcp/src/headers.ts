@@ -1,5 +1,3 @@
-import type { FetchLike } from '@modelcontextprotocol/client';
-
 /**
  * Supplies the headers for one request to an MCP server.
  *
@@ -47,10 +45,10 @@ export function headerInjectingFetch(
   url: URL,
   headers: Record<string, string> | McpHeaderProvider | undefined,
   inner: typeof globalThis.fetch,
-): FetchLike {
-  return async (target: string | URL, init?: RequestInit): Promise<Response> => {
-    // The MCP transport passes a string or URL, but this is handed around as a drop-in fetch, and
-    // a fetch also accepts a Request — whose URL is a property, not its stringification.
+): (target: string | URL | Request, init?: RequestInit) => Promise<Response> {
+  // Wider than the transport's own FetchLike (string | URL): this is handed around as a drop-in
+  // fetch, and a fetch also accepts a Request — whose URL is a property, not its stringification.
+  return async (target: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = target instanceof Request ? target : undefined;
     const initialUrl = new URL(request?.url ?? String(target));
     if (headers === undefined || initialUrl.origin !== url.origin) {

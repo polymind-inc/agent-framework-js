@@ -109,7 +109,8 @@ export interface McpConnectionConfig {
    * Extra headers for every request, for example an authorization token.
    *
    * A function is called **once per request**, so a credential that expires — or one that varies
-   * with ambient request context — is read at the moment it is sent. A plain record is read once.
+   * with ambient request context — is read at the moment it is sent. A plain record is applied as
+   * it stands on every request.
    * A header the transport itself sets is not overridden; a configured header fills gaps.
    *
    * Headers are attached only to requests whose origin matches `url`, and a redirect is refused

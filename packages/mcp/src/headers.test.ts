@@ -188,7 +188,7 @@ describe('headerInjectingFetch', () => {
     const { fetch, calls } = recorder();
     const send = headerInjectingFetch(SERVER, { authorization: 'Bearer t' }, fetch);
 
-    await send(new Request(SERVER, { headers: { accept: 'text/event-stream' } }) as unknown as URL);
+    await send(new Request(SERVER, { headers: { accept: 'text/event-stream' } }));
 
     expect(calls[0]?.headers).toMatchObject({
       accept: 'text/event-stream',
@@ -200,7 +200,7 @@ describe('headerInjectingFetch', () => {
     const { fetch, calls } = recorder();
     const send = headerInjectingFetch(SERVER, { authorization: 'Bearer t' }, fetch);
 
-    await send(new Request('https://elsewhere.example.com/mcp') as unknown as URL);
+    await send(new Request('https://elsewhere.example.com/mcp'));
 
     expect(calls[0]?.headers.authorization).toBeUndefined();
   });

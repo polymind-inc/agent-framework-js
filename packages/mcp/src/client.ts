@@ -63,7 +63,7 @@ export interface MCPClientConfig {
    *
    * A function is called **once per request**, so a credential that expires can be refreshed
    * without writing a transport: return the current value and let whatever produced it do its own
-   * caching. A plain record is read once, at construction.
+   * caching. A plain record is applied as it stands on every request.
    *
    * Only applies to the `url` form. A `transport` or `transportFactory` you build yourself owns
    * its own headers.
