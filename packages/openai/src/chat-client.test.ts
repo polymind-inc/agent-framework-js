@@ -735,7 +735,7 @@ describe('OpenAIChatClient configuration', () => {
     expect(stable?.('resp_123')).toBe(false);
   });
 
-  // Not a deferral: Chat Completions is out of scope for good (see `OpenAIChatClientOptions.api`).
+  // Not a deferral: Chat Completions is out of scope for good (see `OpenAIChatClientConfigBase.api`).
   it('rejects the chat completions API', () => {
     expect(
       () => new OpenAIChatClient({ client: fakeClient(vi.fn()), model: 'm', api: 'chat_completions' }),

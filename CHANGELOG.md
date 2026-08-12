@@ -6,6 +6,12 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **BREAKING** — **`@polymind-inc/agent-framework-openai`** — the `OpenAIChatClientOptions`
+  interface is renamed `OpenAIChatClientConfigBase`. It is the construction-time half of
+  `OpenAIChatClientConfig`, and the package convention names construction types `*Config` and
+  per-call types `*Options` (`OpenAIChatOptions` is unchanged); OpenAI was the one provider whose
+  construction type broke that rule. `OpenAIChatClientConfig` itself — what `new OpenAIChatClient(…)`
+  accepts — is unchanged, so only code that names the base interface directly is affected.
 - **`@polymind-inc/agent-framework-core`** — new **Agent Skills** support
   ([#21](https://github.com/polymind-inc/agent-framework-js/issues/21)): `skillsProvider()` is a
   `ContextProvider` that advertises each available skill's name and description in the system

@@ -8,7 +8,7 @@ export type {
   EndpointNamedModel,
   NamedModel,
   OpenAIChatClientConfig,
-  OpenAIChatClientOptions,
+  OpenAIChatClientConfigBase,
 } from './chat-client.js';
 export { OpenAIChatClient } from './chat-client.js';
 // The to-openai.ts / from-openai.ts wire converters are internal (the Python reference
