@@ -4,6 +4,11 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
+      // The subpath alias must come first: a bare prefix match would otherwise rewrite
+      // `@polymind-inc/agent-framework-agentserver/internal` into a path inside index.ts.
+      '@polymind-inc/agent-framework-agentserver/internal': fileURLToPath(
+        new URL('../agentserver/src/internal.ts', import.meta.url),
+      ),
       '@polymind-inc/agent-framework-agentserver': fileURLToPath(
         new URL('../agentserver/src/index.ts', import.meta.url),
       ),

@@ -6,6 +6,14 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **BREAKING** — **`@polymind-inc/agent-framework-agentserver`** — `resolveUnder` and
+  `validatePathSegment` are no longer exported from the package's main entry. They are path-safety
+  primitives for file-backed stores, not part of the server protocol surface (the reference
+  implementation exposes only the domain-scoped state-root helper, which `stateRoot` continues to
+  mirror). The framework's own Foundry hosting adapter now reaches them — together with the shared
+  atomic JSON file helpers `readJsonFile` / `writeJsonFile`, previously duplicated between the two
+  packages — through the new `./internal` subpath, an internal contract like
+  `@polymind-inc/agent-framework-openai/internal` whose exports may change in any release.
 - **`@polymind-inc/agent-framework-core`** — new **Agent Skills** support
   ([#21](https://github.com/polymind-inc/agent-framework-js/issues/21)): `skillsProvider()` is a
   `ContextProvider` that advertises each available skill's name and description in the system
