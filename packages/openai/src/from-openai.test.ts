@@ -43,6 +43,64 @@ function fold(events: readonly unknown[], ctx?: ParseContext): ChatResponseUpdat
   return updates;
 }
 
+describe('response envelope parity', () => {
+  it.each([
+    { eventType: 'response.completed', status: 'completed', expectedFinishReason: 'stop' },
+    {
+      eventType: 'response.incomplete',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      expectedFinishReason: 'length',
+    },
+    {
+      eventType: 'response.failed',
+      status: 'failed',
+      error: { code: 'server_error', message: 'failed' },
+      expectedFinishReason: undefined,
+    },
+  ])('extracts the same metadata from an awaited response and $eventType', (terminal) => {
+    const { eventType, expectedFinishReason, ...terminalFields } = terminal;
+    const wireResponse = {
+      id: 'resp_42',
+      created_at: 1_700_000_000,
+      model: 'deployment-alias',
+      conversation: { id: 'conv_42' },
+      output: [],
+      usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+      ...terminalFields,
+    };
+    const ctx: ParseContext = { model: 'configured-model', servedModel: 'served-snapshot', store: true };
+
+    const awaited = parseResponse(wireResponse, ctx);
+    const terminalEvent = { type: eventType, response: wireResponse, logprobs: [{ token: 'done' }] };
+    const terminalUpdate = must(parseStreamEvent(terminalEvent, createStreamParseState(), ctx));
+    const streamed = mergeChatUpdates([terminalUpdate]);
+    const metadataOf = (response: typeof awaited): Record<string, unknown> => ({
+      responseId: response.responseId,
+      conversationId: response.conversationId,
+      model: response.model,
+      createdAt: response.createdAt,
+      finishReason: response.finishReason,
+      usageDetails: response.usageDetails,
+    });
+
+    expect(metadataOf(awaited)).toEqual({
+      responseId: 'resp_42',
+      conversationId: 'conv_42',
+      model: 'served-snapshot',
+      createdAt: '2023-11-14T22:13:20.000Z',
+      finishReason: expectedFinishReason,
+      usageDetails: { inputTokenCount: 7, outputTokenCount: 3, totalTokenCount: 10 },
+    });
+    expect(metadataOf(streamed)).toEqual(metadataOf(awaited));
+    expect(terminalUpdate.additionalProperties).toEqual({ logprobs: [{ token: 'done' }] });
+    expect(terminalUpdate.rawRepresentation).toBe(terminalEvent);
+    expect(terminalUpdate.contents.find((content) => content.type === 'usage')?.rawRepresentation).toBe(
+      terminalEvent,
+    );
+  });
+});
+
 describe('reasoning text vs reasoning summary', () => {
   // Both arrive under the same reasoning id and only the private text carries the
   // `reasoning_text` marker, so coalescing them into one item would replay the summary as private

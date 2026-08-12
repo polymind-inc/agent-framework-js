@@ -191,6 +191,43 @@ function parseConversationId(
   return typeof response?.id === 'string' ? response.id : undefined;
 }
 
+/** Response-level fields shared by the awaited and terminal-stream parsers. */
+interface ParsedResponseEnvelope {
+  responseId?: string;
+  createdAt?: string;
+  model?: string;
+  conversationId?: string;
+  usageDetails?: UsageDetails;
+  finishReason?: FinishReason;
+}
+
+/**
+ * Reads the metadata envelope carried by a whole Responses API response.
+ *
+ * Awaited responses store usage on {@link ChatResponse.usageDetails}; streamed responses emit the
+ * same value as `usage` content so the fold can sum it. Keeping extraction here while leaving that
+ * placement to each caller preserves the two wire-to-framework paths without letting their field
+ * fallbacks drift apart.
+ */
+function parseResponseEnvelope(
+  response: Partial<Response> | null | undefined,
+  ctx: ParseContext,
+): ParsedResponseEnvelope {
+  const envelope: ParsedResponseEnvelope = {};
+  if (typeof response?.id === 'string') envelope.responseId = response.id;
+  const createdAt = toIsoTimestamp(response?.created_at);
+  if (createdAt !== undefined) envelope.createdAt = createdAt;
+  const model = effectiveModel(response, ctx);
+  if (model !== undefined) envelope.model = model;
+  const conversationId = parseConversationId(response, ctx.store);
+  if (conversationId !== undefined) envelope.conversationId = conversationId;
+  const usage = parseUsage(response?.usage);
+  if (usage !== undefined) envelope.usageDetails = usage;
+  const finishReason = parseFinishReason(response);
+  if (finishReason !== undefined) envelope.finishReason = finishReason;
+  return envelope;
+}
+
 /** The four citation forms the Responses API attaches to `output_text`. */
 type WireAnnotation = Wire<
   | ResponseOutputText.FileCitation
@@ -639,21 +676,12 @@ export function parseResponse(response: unknown, ctx: ParseContext = {}): ChatRe
     contents.push(failure);
   }
 
+  const envelope = parseResponseEnvelope(raw, ctx);
   const init: Parameters<typeof chatResponse<undefined>>[0] = {
     messages: [{ role: 'assistant', contents }],
     rawRepresentation: response,
+    ...envelope,
   };
-  if (typeof raw?.id === 'string') init.responseId = raw.id;
-  const createdAt = toIsoTimestamp(raw?.created_at);
-  if (createdAt !== undefined) init.createdAt = createdAt;
-  const model = effectiveModel(raw, ctx);
-  if (model !== undefined) init.model = model;
-  const conversationId = parseConversationId(raw, ctx.store);
-  if (conversationId !== undefined) init.conversationId = conversationId;
-  const usage = parseUsage(raw?.usage);
-  if (usage !== undefined) init.usageDetails = usage;
-  const finishReason = parseFinishReason(raw);
-  if (finishReason !== undefined) init.finishReason = finishReason;
   if (raw?.status === 'in_progress' || raw?.status === 'queued') {
     init.continuationToken = { responseId: raw.id };
   }
@@ -666,10 +694,9 @@ export function parseResponse(response: unknown, ctx: ParseContext = {}): ChatRe
 /**
  * The three events that end a Responses SSE stream; nothing meaningful follows them.
  *
- * Single authority for "the stream is over": the terminal case labels in {@link parseStreamEvent}
- * and the chat client's early stream release both follow this set, so they cannot disagree about
- * when a stream is done. A new terminal event is added here and to the matching case labels
- * together.
+ * Single authority for "the stream is over": {@link parseStreamEvent} and the chat client's early
+ * stream release both call {@link isTerminalResponseEvent}, so adding an event here updates the
+ * parser and transport together.
  */
 const TERMINAL_RESPONSE_EVENTS: ReadonlySet<string> = new Set([
   'response.completed',
@@ -704,6 +731,27 @@ export function parseStreamEvent(
   // reported when the endpoint is the one naming the model.
   const contextModel = effectiveModel(undefined, ctx);
   if (contextModel !== undefined) init.model = contextModel;
+
+  // This predicate is the single authority for which event types end a response. Terminal events
+  // bypass the switch's unknown-event return below, then share the same metadata and update
+  // assembly as every other visible event.
+  const eventType = raw?.type;
+  const terminal = isTerminalResponseEvent(eventType);
+  let terminalMetadata: Omit<ParsedResponseEnvelope, 'usageDetails'> | undefined;
+  if (terminal) {
+    const response = (raw as { response?: Partial<Response> }).response;
+    const { usageDetails, ...metadata } = parseResponseEnvelope(response, ctx);
+    terminalMetadata = metadata;
+    if (usageDetails !== undefined) {
+      contents.push({ type: 'usage', usageDetails, rawRepresentation: event });
+    }
+    if (eventType === 'response.failed') {
+      const failure = failureContent(response, event);
+      if (failure !== undefined) {
+        contents.push(failure);
+      }
+    }
+  }
 
   switch (raw?.type) {
     case 'response.content_part.added': {
@@ -909,42 +957,17 @@ export function parseStreamEvent(
       break;
     }
 
-    // These labels are exactly TERMINAL_RESPONSE_EVENTS; change them only together.
-    case 'response.completed':
-    case 'response.incomplete':
-    case 'response.failed': {
-      const response = raw.response;
-      if (typeof response?.id === 'string') init.responseId = response.id;
-      const conversationId = parseConversationId(response, ctx.store);
-      if (conversationId !== undefined) init.conversationId = conversationId;
-      const model = effectiveModel(response, ctx);
-      if (model !== undefined) init.model = model;
-      const createdAt = toIsoTimestamp(response?.created_at);
-      if (createdAt !== undefined) init.createdAt = createdAt;
-      const finishReason = parseFinishReason(response);
-      if (finishReason !== undefined) init.finishReason = finishReason;
-      const usage = parseUsage(response?.usage);
-      if (usage !== undefined) {
-        contents.push({ type: 'usage', usageDetails: usage, rawRepresentation: event });
-      }
-      if (raw.type === 'response.failed') {
-        const failure = failureContent(response, event);
-        if (failure !== undefined) {
-          contents.push(failure);
-        }
-      }
-      break;
-    }
-
     default:
-      return undefined;
+      if (!terminal) {
+        return undefined;
+      }
   }
 
   // Python calls `_get_metadata_from_response` on every event kind it maps, reading the part on
   // `content_part.added` and the event itself elsewhere; in practice only `output_text` carries
   // the field, so the single call here covers the same ground.
-  const metadata = logprobsOf(raw.type === 'response.content_part.added' ? raw.part : event);
+  const metadata = logprobsOf(eventType === 'response.content_part.added' ? raw?.part : event);
   if (metadata !== undefined) init.additionalProperties = metadata;
 
-  return chatResponseUpdate(init);
+  return chatResponseUpdate({ ...init, ...(terminalMetadata ?? {}) });
 }

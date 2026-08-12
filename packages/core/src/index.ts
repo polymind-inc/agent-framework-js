@@ -30,8 +30,9 @@ export type {
 } from './client/chat-client.js';
 export type { ClientErrorNormalizer, ClientErrorNormalizerOptions } from './client/client-errors.js';
 export { createClientErrorNormalizer, guardClientStream } from './client/client-errors.js';
+export { FunctionInvocationLimitError } from './client/function-execution.js';
 export type { FunctionInvocationConfig } from './client/function-invocation.js';
-export { FunctionInvocationLimitError, withFunctionInvocation } from './client/function-invocation.js';
+export { withFunctionInvocation } from './client/function-invocation.js';
 export { arrayToStream, setIfDefined, topLevelMediaType, withoutUndefined } from './client/provider-utils.js';
 export type { ResolvedResponseFormat } from './client/structured-output.js';
 export {

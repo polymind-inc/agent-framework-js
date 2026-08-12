@@ -11,14 +11,10 @@
 // Usage: node scripts/pack-check.mjs
 
 import { execSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { readPackageManifests, workspaceRoot } from './workspace.mjs';
 
 const stdout = execSync('pnpm -r --filter "./packages/*" pack --dry-run --json', {
-  cwd: root,
+  cwd: workspaceRoot,
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'inherit'],
   maxBuffer: 64 * 1024 * 1024,
@@ -29,8 +25,7 @@ const packed = JSON.parse(stdout.slice(stdout.indexOf('[')));
 
 // Map package name -> manifest, so a packed result can be checked against what it promised.
 const manifests = new Map();
-for (const dir of readdirSync(join(root, 'packages'))) {
-  const manifest = JSON.parse(readFileSync(join(root, 'packages', dir, 'package.json'), 'utf8'));
+for (const { manifest } of readPackageManifests()) {
   manifests.set(manifest.name, manifest);
 }
 

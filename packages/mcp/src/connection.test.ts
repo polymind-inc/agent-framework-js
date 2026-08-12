@@ -245,6 +245,55 @@ describe('connection recovery', () => {
     expect(transport.starts).toBe(1);
     await connection.close();
   });
+
+  it('reconnects and retries tool listing once when the connection closes', async () => {
+    let attempts = 0;
+    const spy = vi.spyOn(Client.prototype, 'listTools').mockImplementation(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new SdkError(SdkErrorCode.ConnectionClosed, 'connection closed');
+      }
+      return { tools: [{ name: 'echo', inputSchema: { type: 'object' } }] };
+    });
+    try {
+      const transport = new TestMcpServer([echoTool()]);
+      const connection = connectionTo(transport);
+
+      const result = await connection.listTools();
+
+      expect(result.tools.map((tool) => tool.name)).toEqual(['echo']);
+      expect(attempts).toBe(2);
+      expect(transport.starts).toBe(2);
+      await connection.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('applies the same single reconnect to resource reads', async () => {
+    const seen: Array<Parameters<Client['readResource']>[1]> = [];
+    const spy = vi.spyOn(Client.prototype, 'readResource').mockImplementation(async (_params, options) => {
+      seen.push(options);
+      if (seen.length === 1) {
+        throw new SdkError(SdkErrorCode.ConnectionClosed, 'connection closed');
+      }
+      return { contents: [{ uri: 'skill://unit', text: 'instructions' }] };
+    });
+    try {
+      const connection = connectionTo(new TestMcpServer([], { resources: [] }));
+      const controller = new AbortController();
+
+      const result = await connection.readResource('skill://unit', { signal: controller.signal });
+
+      expect(result.contents).toEqual([{ uri: 'skill://unit', text: 'instructions' }]);
+      expect(seen).toHaveLength(2);
+      expect(seen[0]?.signal).toBe(controller.signal);
+      expect(seen[1]?.signal).toBe(controller.signal);
+      await connection.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe('cancellation', () => {

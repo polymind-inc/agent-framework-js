@@ -384,6 +384,37 @@ describe('payloads to response updates', () => {
     expect(must(updates[0]).additionalProperties).toEqual({ seq: 1, from: 'event' });
   });
 
+  it('keeps the last reported task state when an artifact update carries no status', () => {
+    const observed: ObservedTaskState = {
+      contextId: 'ctx-1',
+      taskId: 'task-1',
+      taskState: 'TASK_STATE_WORKING',
+    };
+    const event = streamEvent({
+      artifactUpdate: {
+        taskId: 'task-1',
+        contextId: 'ctx-1',
+        artifact: { artifactId: 'a1', parts: [{ text: 'chunk' }] },
+      },
+    });
+
+    updatesFromPayload(must(event.payload), observed);
+
+    expect(observed.taskState).toBe('TASK_STATE_WORKING');
+  });
+
+  it('resets the last task state when a status-bearing payload omits its status', () => {
+    const observed: ObservedTaskState = {
+      contextId: 'ctx-1',
+      taskId: 'task-old',
+      taskState: 'TASK_STATE_WORKING',
+    };
+
+    updatesFromPayload({ $case: 'task', value: task({ id: 'task-2', contextId: 'ctx-1' }) }, observed);
+
+    expect(observed).toEqual({ contextId: 'ctx-1', taskId: 'task-2', taskState: undefined });
+  });
+
   it('refuses an artifact update with no artifact', () => {
     expect(() =>
       updatesFromPayload(

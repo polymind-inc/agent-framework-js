@@ -121,6 +121,34 @@ function usageContent(usage: unknown, emitted: Record<string, number>): Content 
   };
 }
 
+/** Fields a complete message and a streamed `message_start` read identically. */
+interface ParsedMessageFields {
+  raw: AnthropicBlock;
+  contents: Content[];
+  responseId?: string;
+  model?: string;
+  finishReason?: FinishReason;
+}
+
+/**
+ * Reads the stable fields of a Messages API message.
+ *
+ * Usage deliberately stays with the callers: a complete response reports one snapshot directly,
+ * while a stream must turn cumulative snapshots into increments before the framework folds them.
+ */
+function parseMessageFields(message: unknown, state?: StreamParseState): ParsedMessageFields {
+  const raw = (typeof message === 'object' && message !== null ? message : {}) as AnthropicBlock;
+  const fields: ParsedMessageFields = {
+    raw,
+    contents: parseContentBlocks(Array.isArray(raw.content) ? raw.content : [], state),
+  };
+  if (typeof raw.id === 'string') fields.responseId = raw.id;
+  if (typeof raw.model === 'string') fields.model = raw.model;
+  const finishReason = parseFinishReason(raw.stop_reason);
+  if (finishReason !== undefined) fields.finishReason = finishReason;
+  return fields;
+}
+
 /**
  * Converts Messages API content blocks into framework content.
  *
@@ -256,17 +284,13 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
 
 /** Converts a complete Messages API response. */
 export function parseMessage(message: unknown): ChatResponse<undefined> {
-  const raw = (typeof message === 'object' && message !== null ? message : {}) as AnthropicBlock;
-  const contents = parseContentBlocks(Array.isArray(raw.content) ? raw.content : []);
-  const usage = parseUsage(raw.usage);
-  const responseId = raw.id;
-  const model = raw.model;
-  const finishReason = parseFinishReason(raw.stop_reason);
+  const fields = parseMessageFields(message);
+  const usage = parseUsage(fields.raw.usage);
   return chatResponse<undefined>({
-    messages: [{ role: 'assistant', contents, rawRepresentation: message }],
-    ...(typeof responseId === 'string' ? { responseId } : {}),
-    ...(typeof model === 'string' ? { model } : {}),
-    ...(finishReason === undefined ? {} : { finishReason }),
+    messages: [{ role: 'assistant', contents: fields.contents, rawRepresentation: message }],
+    ...(fields.responseId === undefined ? {} : { responseId: fields.responseId }),
+    ...(fields.model === undefined ? {} : { model: fields.model }),
+    ...(fields.finishReason === undefined ? {} : { finishReason: fields.finishReason }),
     ...(usage === undefined ? {} : { usageDetails: usage }),
     rawRepresentation: message,
   });
@@ -285,20 +309,14 @@ export function parseStreamEvent(event: unknown, state: StreamParseState): ChatR
   const raw = event as AnthropicBlock;
   switch (raw.type) {
     case 'message_start': {
-      const message = (raw.message ?? {}) as AnthropicBlock;
-      const usage = usageContent(message.usage, state.emittedUsage);
-      const responseId = message.id;
-      const model = message.model;
-      const finishReason = parseFinishReason(message.stop_reason);
+      const fields = parseMessageFields(raw.message, state);
+      const usage = usageContent(fields.raw.usage, state.emittedUsage);
       return chatResponseUpdate({
         role: 'assistant',
-        contents: [
-          ...parseContentBlocks(Array.isArray(message.content) ? message.content : [], state),
-          ...(usage === undefined ? [] : [usage]),
-        ],
-        ...(typeof responseId === 'string' ? { responseId } : {}),
-        ...(typeof model === 'string' ? { model } : {}),
-        ...(finishReason === undefined ? {} : { finishReason }),
+        contents: [...fields.contents, ...(usage === undefined ? [] : [usage])],
+        ...(fields.responseId === undefined ? {} : { responseId: fields.responseId }),
+        ...(fields.model === undefined ? {} : { model: fields.model }),
+        ...(fields.finishReason === undefined ? {} : { finishReason: fields.finishReason }),
         rawRepresentation: event,
       });
     }
@@ -313,14 +331,10 @@ export function parseStreamEvent(event: unknown, state: StreamParseState): ChatR
         rawRepresentation: event,
       });
     }
-    case 'content_block_start': {
-      const contents = parseContentBlocks([raw.content_block], state);
-      return contents.length === 0
-        ? undefined
-        : chatResponseUpdate({ role: 'assistant', contents, rawRepresentation: event });
-    }
+    case 'content_block_start':
     case 'content_block_delta': {
-      const contents = parseContentBlocks([raw.delta], state);
+      const block = raw.type === 'content_block_start' ? raw.content_block : raw.delta;
+      const contents = parseContentBlocks([block], state);
       return contents.length === 0
         ? undefined
         : chatResponseUpdate({ role: 'assistant', contents, rawRepresentation: event });

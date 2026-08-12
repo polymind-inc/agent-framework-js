@@ -171,6 +171,21 @@ describe('stream event fallbacks', () => {
     expect(update?.responseId).toBeUndefined();
   });
 
+  it.each([
+    {
+      event: { type: 'content_block_start', content_block: { type: 'text', text: 'opened' } },
+      expectedText: 'opened',
+    },
+    {
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'continued' } },
+      expectedText: 'continued',
+    },
+  ])('routes $event.type through its content-block field', ({ event, expectedText }) => {
+    const update = parseStreamEvent(event, createStreamParseState());
+    expect(update?.contents).toEqual([expect.objectContaining({ type: 'text', text: expectedText })]);
+    expect(update?.rawRepresentation).toBe(event);
+  });
+
   it('turns cumulative usage snapshots into increments across the stream', () => {
     const state = createStreamParseState();
     const start = parseStreamEvent(

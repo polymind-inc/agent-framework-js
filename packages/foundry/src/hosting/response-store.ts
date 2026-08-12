@@ -1,5 +1,4 @@
 import type { TokenCredential } from '@azure/identity';
-import { DefaultAzureCredential } from '@azure/identity';
 import type {
   OutputItem,
   ResponseEvent,
@@ -13,14 +12,12 @@ import {
   FileResponseProvider,
   historyOf,
   ID_PREFIX,
-  platformHeaders,
   projectEndpoint,
   resolveAgentReference,
   stateRoot,
 } from '@polymind-inc/agent-framework-agentserver';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
-import { tokenProvider } from '../credential.js';
-import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
+import { FoundryStorageClient } from './foundry-storage-client.js';
 
 /** Construction options for {@link FoundryResponseStore}. */
 export interface FoundryResponseStoreConfig {
@@ -121,16 +118,6 @@ function isDuplicateCreate(body: string): boolean {
     return true;
   }
   return typeof message === 'string' && message.toLowerCase().includes('already exists');
-}
-
-/** The statuses worth another attempt, matching the reference retry policy's set. */
-const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504]);
-
-/** The total request budget per call, including the first attempt. */
-const RETRY_ATTEMPTS = 3;
-
-function delay(ms: number): Promise<void> {
-  return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** The ids of a response's output items, in order. */
@@ -251,13 +238,9 @@ export class FoundryResponseStore implements ResponseProvider {
    */
   readonly linksConversationsServiceSide = true;
 
-  readonly #endpoint: string;
-  readonly #getToken: () => Promise<string>;
-  readonly #fetch: typeof globalThis.fetch;
-  readonly #forwardCallId: boolean;
+  readonly #client: FoundryStorageClient;
   /** The local half of the split: the replay log and the generation fence. */
   readonly #replay: FileResponseProvider;
-  readonly #retryBaseDelayMs: number;
 
   constructor(options: FoundryResponseStoreConfig = {}) {
     const endpoint = options.projectEndpoint ?? projectEndpoint();
@@ -267,127 +250,24 @@ export class FoundryResponseStore implements ResponseProvider {
           '`projectEndpoint`.',
       );
     }
-    this.#endpoint = normalizeProjectEndpoint(endpoint);
-    this.#getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    this.#forwardCallId = options.forwardCallId ?? true;
+    this.#client = new FoundryStorageClient(endpoint, options);
     this.#replay = new FileResponseProvider({
       root: options.replayRoot ?? `${stateRoot()}/foundry-responses`,
     });
-    this.#retryBaseDelayMs = options.retry?.baseDelayMs ?? 500;
   }
 
   /** The storage base URL, for diagnostics. */
   get baseUrl(): string {
-    return `${this.#endpoint}/storage/`;
-  }
-
-  #url(path: string, extra: Record<string, string> = {}): string {
-    const query = new URLSearchParams({ 'api-version': FOUNDRY_API_VERSION, ...extra });
-    return `${this.baseUrl}${path}?${query.toString()}`;
-  }
-
-  async #request(
-    method: string,
-    path: string,
-    options: { body?: unknown; query?: Record<string, string> } = {},
-  ): Promise<Response> {
-    return (await this.#attempt(method, path, options)).response;
-  }
-
-  /**
-   * One request through the bounded retry.
-   *
-   * `ambiguous` is `true` when an earlier attempt failed in a way that says nothing about whether
-   * the service applied it — a dropped connection, or a retryable status — which is the only
-   * situation in which a later "already exists" may describe *this* write rather than a
-   * collision.
-   */
-  async #attempt(
-    method: string,
-    path: string,
-    options: { body?: unknown; query?: Record<string, string> } = {},
-  ): Promise<{ response: Response; ambiguous: boolean }> {
-    let ambiguous = false;
-    for (let attempt = 0; ; attempt++) {
-      const last = attempt === RETRY_ATTEMPTS - 1;
-      // Rebuilt per attempt: the token may have refreshed, and the platform headers belong to the
-      // request in flight, never to construction time — one container serves many users.
-      const headers: Record<string, string> = {
-        authorization: `Bearer ${await this.#getToken()}`,
-        accept: 'application/json',
-        ...(this.#forwardCallId ? platformHeaders() : {}),
-      };
-      if (options.body !== undefined) {
-        headers['content-type'] = 'application/json';
-      }
-      try {
-        const response = await this.#fetch(this.#url(path, options.query ?? {}), {
-          method,
-          headers,
-          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-        });
-        if (last || !RETRYABLE_STATUSES.has(response.status)) {
-          return { response, ambiguous };
-        }
-        ambiguous = true;
-        // A discarded response's body would otherwise hold its connection until GC; cancelling
-        // is best-effort resource hygiene, never a failure.
-        await response.body?.cancel().catch(() => {});
-      } catch (error) {
-        // A network-level failure is transient by definition; the last one surfaces as-is.
-        if (last) {
-          throw error;
-        }
-        ambiguous = true;
-      }
-      await delay(this.#retryBaseDelayMs * 2 ** attempt);
-    }
-  }
-
-  /**
-   * The failure to raise for a storage response that did not succeed.
-   *
-   * The service's own message is included. Without it a failure reads only as
-   * `Foundry storage returned 500`, which says nothing about whether the payload was wrong, the
-   * caller unresolvable, or the service down — and this runs inside a container where attaching a
-   * debugger is not an option, so the error text is the entire diagnostic.
-   */
-  static async #failure(response: Response, what: string): Promise<Error> {
-    return FoundryResponseStore.#failureFrom(
-      response.status,
-      await FoundryResponseStore.#body(response),
-      what,
-    );
-  }
-
-  /**
-   * The response body as text, or `''` when it cannot be read.
-   *
-   * A body is consumable once, so a caller that has to *inspect* it (the create-conflict branch)
-   * reads it here and hands the same string to {@link #failureFrom} rather than re-reading.
-   */
-  static async #body(response: Response): Promise<string> {
-    try {
-      return await response.text();
-    } catch {
-      // A body that cannot be read must not replace the status with a read error.
-      return '';
-    }
-  }
-
-  static #failureFrom(status: number, body: string, what: string): Error {
-    const detail = body.slice(0, 500);
-    return new Error(`Foundry storage returned ${status} for ${what}.${detail === '' ? '' : ` ${detail}`}`);
+    return this.#client.baseUrl;
   }
 
   async get(id: string, owner: ResponseOwner): Promise<StoredResponse | undefined> {
-    const response = await this.#request('GET', `responses/${encodeURIComponent(id)}`);
+    const response = await this.#client.request('GET', `responses/${encodeURIComponent(id)}`);
     if (response.status === 404) {
       return undefined;
     }
     if (!response.ok) {
-      throw await FoundryResponseStore.#failure(response, `GET responses/${id}`);
+      throw await this.#client.failure(response, `GET responses/${id}`);
     }
     // The service stores the response resource itself; input items are a separate route, and the
     // local mirror read is independent of both.
@@ -430,11 +310,11 @@ export class FoundryResponseStore implements ResponseProvider {
     const items: OutputItem[] = [];
     let after: string | undefined;
     for (;;) {
-      const response = await this.#request('GET', `responses/${encodeURIComponent(id)}/input_items`, {
+      const response = await this.#client.request('GET', `responses/${encodeURIComponent(id)}/input_items`, {
         query: { limit: '100', order: 'asc', ...(after === undefined ? {} : { after }) },
       });
       if (!response.ok) {
-        throw await FoundryResponseStore.#failure(response, `GET responses/${id}/input_items`);
+        throw await this.#client.failure(response, `GET responses/${id}/input_items`);
       }
       const body = (await response.json()) as {
         data?: OutputItem[];
@@ -494,25 +374,25 @@ export class FoundryResponseStore implements ResponseProvider {
 
   /** Writes the response to the service — create, else update — resolving on success. */
   async #writeRemote(response: ResponseObject, body: CreateBody): Promise<void> {
-    const created = await this.#attempt('POST', 'responses', { body });
+    const created = await this.#client.attempt('POST', 'responses', { body });
     if (created.response.ok) {
       return;
     }
-    const createdBody = await FoundryResponseStore.#body(created.response);
+    const createdBody = await this.#client.body(created.response);
     const conflict =
       created.response.status === 409 || (created.response.status === 400 && isDuplicateCreate(createdBody));
     if (!conflict) {
-      throw FoundryResponseStore.#failureFrom(created.response.status, createdBody, 'POST responses');
+      throw this.#client.failureFrom(created.response.status, createdBody, 'POST responses');
     }
 
-    const updated = await this.#request('POST', `responses/${encodeURIComponent(response.id)}`, {
+    const updated = await this.#client.request('POST', `responses/${encodeURIComponent(response.id)}`, {
       body: response,
     });
     if (updated.status === 404) {
       // The conflict reading was wrong: nothing exists under this id, so the create failed for a
       // reason its "already exists"-flavoured body obscured (a duplicate *item*, most likely).
       // The create's own answer is the true diagnostic, not this 404.
-      throw FoundryResponseStore.#failureFrom(created.response.status, createdBody, 'POST responses');
+      throw this.#client.failureFrom(created.response.status, createdBody, 'POST responses');
     }
     if (updated.ok) {
       return;
@@ -522,14 +402,14 @@ export class FoundryResponseStore implements ResponseProvider {
     // holds is exactly the outcome this write described. A clean conflict is an id collision:
     // reconciliation is not even attempted, or another turn's outcome could be claimed as ours.
     if (!(created.ambiguous && (await this.#alreadyApplied(response)))) {
-      throw await FoundryResponseStore.#failure(updated, `POST responses/${response.id}`);
+      throw await this.#client.failure(updated, `POST responses/${response.id}`);
     }
   }
 
   /** Whether the stored record under this id is the very outcome this write described. */
   async #alreadyApplied(response: ResponseObject): Promise<boolean> {
     try {
-      const existing = await this.#request('GET', `responses/${encodeURIComponent(response.id)}`);
+      const existing = await this.#client.request('GET', `responses/${encodeURIComponent(response.id)}`);
       if (!existing.ok) {
         return false;
       }
@@ -586,9 +466,9 @@ export class FoundryResponseStore implements ResponseProvider {
   }
 
   async delete(id: string, owner: ResponseOwner): Promise<boolean> {
-    const response = await this.#request('DELETE', `responses/${encodeURIComponent(id)}`);
+    const response = await this.#client.request('DELETE', `responses/${encodeURIComponent(id)}`);
     if (!response.ok && response.status !== 404) {
-      throw await FoundryResponseStore.#failure(response, `DELETE responses/${id}`);
+      throw await this.#client.failure(response, `DELETE responses/${id}`);
     }
     // The replay log and its fence go with the response either way — even on a 404, because the
     // service and the sandbox can disagree after a recycle, and a stale local log must not
@@ -652,11 +532,11 @@ export class FoundryResponseStore implements ResponseProvider {
     if (ids.length === 0) {
       return [];
     }
-    const retrieved = await this.#request('POST', 'items/batch/retrieve', {
+    const retrieved = await this.#client.request('POST', 'items/batch/retrieve', {
       body: { item_ids: ids },
     });
     if (!retrieved.ok) {
-      throw await FoundryResponseStore.#failure(retrieved, 'POST items/batch/retrieve');
+      throw await this.#client.failure(retrieved, 'POST items/batch/retrieve');
     }
     // The service preserves order and answers a missing id with a null gap.
     const items = (await retrieved.json()) as Array<OutputItem | null>;
@@ -665,7 +545,7 @@ export class FoundryResponseStore implements ResponseProvider {
 
   /** The conversation's transcript item ids, or `undefined` when the conversation is unknown. */
   async #historyItemIds(conversationId: string): Promise<string[] | undefined> {
-    const response = await this.#request('GET', 'history/item_ids', {
+    const response = await this.#client.request('GET', 'history/item_ids', {
       // The page size mirrors the input_items read; the route answers a bare array.
       query: { limit: '100', conversation_id: conversationId },
     });
@@ -673,7 +553,7 @@ export class FoundryResponseStore implements ResponseProvider {
       return undefined;
     }
     if (!response.ok) {
-      throw await FoundryResponseStore.#failure(response, 'GET history/item_ids');
+      throw await this.#client.failure(response, 'GET history/item_ids');
     }
     const ids = (await response.json()) as unknown;
     return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];

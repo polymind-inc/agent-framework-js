@@ -1,4 +1,4 @@
-import { APPROVAL_RESPONSE_METADATA_KEY } from '../client/function-invocation.js';
+import { APPROVAL_RESPONSE_METADATA_KEY } from '../client/function-execution.js';
 import { approvalRequestId, MIDDLEWARE_APPROVAL_KEY } from '../tools/approval.js';
 import type { AnyFunctionTool } from '../tools/tool.js';
 import type { FunctionApprovalRequestContent } from '../types/content.js';
