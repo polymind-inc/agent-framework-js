@@ -91,8 +91,9 @@ export interface ResponseStreamInit<TUpdate, TFinal> {
  * The folded result stays available from {@link ResponseStream.finalResponse}; it describes the
  * part of the run that was actually produced, and `onResult` hooks are told so through
  * {@link StreamResultContext.abandoned}. An aborted signal is a failure rather than an
- * abandonment: the hooks still run, but `finalResponse()` rejects with the abort error instead of
- * returning a partial result.
+ * abandonment: `cleanup` still runs, handed the abort as its `failure`, but there is no result —
+ * `finalize` and the `onResult` hooks never run, and `finalResponse()` rejects with the abort
+ * error instead of returning a partial one.
  *
  * ## Failure is permanent
  *
