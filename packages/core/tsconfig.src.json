@@ -9,5 +9,7 @@
     "rootDir": "src"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"]
+  // `src/node/` is the one place Node APIs are allowed, reached only through the `./node`
+  // subpath; it is type-checked by tsconfig.json, which does supply the Node types.
+  "exclude": ["src/**/*.test.ts", "src/node.ts", "src/node/**/*.ts"]
 }

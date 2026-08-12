@@ -45,6 +45,10 @@
       "types": "./dist/testing.d.ts",
       "default": "./dist/testing.js"
     },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
     "./openai": {
       "types": "./dist/openai.d.ts",
       "default": "./dist/openai.js"
