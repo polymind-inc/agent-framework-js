@@ -57,7 +57,7 @@ interface SkillIndexEntry {
  * asks for it.
  *
  * ```ts
- * const connection = new McpConnection({ url, transport: () => new StreamableHTTPClientTransport(new URL(url)) });
+ * const connection = new McpConnection({ url });
  * const agent = new Agent({
  *   client,
  *   contextProviders: [skillsProvider(mcpSkillsSource(connection))],

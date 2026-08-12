@@ -1,5 +1,4 @@
-import type { FetchLike, Transport } from '@modelcontextprotocol/client';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import type { Transport } from '@modelcontextprotocol/client';
 import type {
   ApprovalMode,
   Content,
@@ -15,6 +14,7 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import { McpConnection } from './connection.js';
 import { fromMcpContents, mcpMetaProperties } from './content.js';
+import type { McpHeaderProvider } from './headers.js';
 import type { McpSkillsSourceConfig } from './skills.js';
 import { mcpSkillsSource } from './skills.js';
 
@@ -58,8 +58,27 @@ export interface MCPClientConfig {
    * `'always_require'` for a server you do not operate.
    */
   approvalMode?: ApprovalPolicy;
-  /** Extra headers for every request, for example an authorization token. */
-  headers?: Record<string, string>;
+  /**
+   * Extra headers for every request, for example an authorization token.
+   *
+   * A function is called **once per request**, so a credential that expires can be refreshed
+   * without writing a transport: return the current value and let whatever produced it do its own
+   * caching. A plain record is applied as it stands on every request.
+   *
+   * Only applies to the `url` form. A `transport` or `transportFactory` you build yourself owns
+   * its own headers.
+   *
+   * A header the transport itself sets — the content type, the session id, an `authorization`
+   * from the SDK's auth support — is not overridden; a configured header fills gaps.
+   *
+   * ## Security considerations
+   *
+   * Headers are attached only to requests whose origin matches `url`, and a redirect is refused
+   * rather than followed — following one would have to decide which origins may see the
+   * credential. A server that redirects is a configuration problem: set `url` to the endpoint it
+   * redirects to. Anything here is disclosed to the server at `url` itself.
+   */
+  headers?: Record<string, string> | McpHeaderProvider;
   /** Replaces the transport's `fetch`, for proxies and tests. */
   fetch?: typeof globalThis.fetch;
 }
@@ -133,13 +152,14 @@ export class MCPClient {
     const suppliedTransport = config.transport;
     const transportFactory =
       config.transportFactory ??
-      (suppliedTransport === undefined
-        ? (): Transport => this.#httpTransport()
-        : (): Transport => suppliedTransport);
+      (suppliedTransport === undefined ? undefined : (): Transport => suppliedTransport);
     this.#connection = new McpConnection({
-      transport: transportFactory,
+      // The `url` form is the connection's own: it builds the transport and carries the headers.
+      ...(transportFactory === undefined ? {} : { transport: transportFactory }),
       ...(config.clientInfo === undefined ? {} : { clientInfo: config.clientInfo }),
       ...(config.url === undefined ? {} : { url: config.url }),
+      ...(config.url === undefined || config.headers === undefined ? {} : { headers: config.headers }),
+      ...(config.url === undefined || config.fetch === undefined ? {} : { fetch: config.fetch }),
       // A supplied instance may be one-shot (the SDK's HTTP and in-memory transports are), so a
       // connection-loss retry must not call start() on it again. Factory-backed sources can
       // satisfy McpConnection's fresh-transport contract and keep its default retry predicate.
@@ -150,15 +170,6 @@ export class MCPClient {
   /** Whether the connection has been opened. Exposed so callers can assert it stays lazy. */
   get connected(): boolean {
     return this.#connection.connected;
-  }
-
-  #httpTransport(): Transport {
-    const headers = this.#config.headers;
-    const inner = this.#config.fetch;
-    return new StreamableHTTPClientTransport(new URL(String(this.#config.url)), {
-      ...(headers === undefined ? {} : { requestInit: { headers } }),
-      ...(inner === undefined ? {} : { fetch: inner as FetchLike }),
-    });
   }
 
   /**

@@ -4,8 +4,22 @@ import type {
   ReadResourceResult,
   Transport,
 } from '@modelcontextprotocol/client';
-import { Client, SdkError, SdkErrorCode, SdkHttpError } from '@modelcontextprotocol/client';
-import { GEN_AI, MCP, setMcpSpanError, withMcpClientSpan } from '@polymind-inc/agent-framework-core';
+import {
+  Client,
+  SdkError,
+  SdkErrorCode,
+  SdkHttpError,
+  StreamableHTTPClientTransport,
+} from '@modelcontextprotocol/client';
+import {
+  ConfigurationError,
+  GEN_AI,
+  MCP,
+  setMcpSpanError,
+  withMcpClientSpan,
+} from '@polymind-inc/agent-framework-core';
+import type { McpHeaderProvider } from './headers.js';
+import { headerInjectingFetch } from './headers.js';
 
 /**
  * The version reported as `clientInfo.version` in the MCP `initialize` handshake.
@@ -40,6 +54,18 @@ function isConnectionLoss(error: unknown): boolean {
   );
 }
 
+/**
+ * The transport used when the caller supplies a `url` rather than a `transport`.
+ *
+ * A fresh instance per connection attempt, so a lost connection is retried on a new one. The
+ * caller's `fetch` is wrapped from the outside, so replacing it cannot drop the headers.
+ */
+function httpTransportFactory(config: McpConnectionConfig): () => Transport {
+  const url = new URL(String(config.url));
+  const fetchImpl = headerInjectingFetch(url, config.headers, config.fetch ?? globalThis.fetch);
+  return () => new StreamableHTTPClientTransport(url, { fetch: fetchImpl });
+}
+
 /** The text of a result's `text` blocks, concatenated; used as the span's error description. */
 function textOfBlocks(content: unknown): string {
   if (!Array.isArray(content)) {
@@ -63,16 +89,42 @@ export interface McpConnectionConfig {
    * a fresh transport, or one that supports being started again after its connection died. This
    * is also the seam for per-call concerns such as a `fetch` wrapper that attaches authorization
    * to every request.
+   *
+   * Omit it to have the connection build a Streamable HTTP transport from `url`, which then also
+   * carries {@link McpConnectionConfig.headers} and {@link McpConnectionConfig.fetch}.
    */
-  transport: () => Transport;
+  transport?: () => Transport;
   /** How this client identifies itself to the server. Defaults to the framework's own identity. */
   clientInfo?: { name: string; version: string };
   /**
-   * The server's URL, used only to stamp `server.address` / `server.port` onto every span.
+   * The server's URL. Stamps `server.address` / `server.port` onto every span, and — when no
+   * `transport` is supplied — is the endpoint the connection builds its own Streamable HTTP
+   * transport for, a fresh one per connection attempt.
+   *
    * Omit it for a transport with no meaningful URL (stdio, in-memory); the spans then carry no
    * address attributes.
    */
   url?: string | URL;
+  /**
+   * Extra headers for every request, for example an authorization token.
+   *
+   * A function is called **once per request**, so a credential that expires — or one that varies
+   * with ambient request context — is read at the moment it is sent. A plain record is applied as
+   * it stands on every request.
+   * A header the transport itself sets is not overridden; a configured header fills gaps.
+   *
+   * Headers are attached only to requests whose origin matches `url`, and a redirect is refused
+   * rather than followed — set `url` to the endpoint the server redirects to. Only the built-in
+   * transport carries them: a custom `transport` owns its own fetch, so combining the two is
+   * refused rather than silently ignored.
+   */
+  headers?: Record<string, string> | McpHeaderProvider;
+  /**
+   * Replaces the built-in transport's `fetch`, for proxies and tests. Wrapped by the header
+   * injection, so replacing it cannot drop the headers. Refused alongside a custom `transport`
+   * for the same reason as `headers`.
+   */
+  fetch?: typeof globalThis.fetch;
   /**
    * Whether an error from `tools/call` means the connection is gone, so the call should be
    * retried once on a fresh connection.
@@ -113,8 +165,8 @@ export interface McpCallToolOptions {
  *
  * ```ts
  * const connection = new McpConnection({
- *   transport: () => new StreamableHTTPClientTransport(new URL('https://mcp.example.com/mcp')),
  *   url: 'https://mcp.example.com/mcp',
+ *   headers: async () => ({ authorization: `Bearer ${await refreshToken()}` }),
  * });
  * const { tools } = await connection.listTools();
  * const result = await connection.callTool('get_weather', { location: 'Tokyo' });
@@ -132,7 +184,16 @@ export class McpConnection {
   #generation = 0;
 
   constructor(config: McpConnectionConfig) {
-    this.#transport = config.transport;
+    if (config.transport === undefined && config.url === undefined) {
+      throw new ConfigurationError('McpConnection needs a `transport`, or a `url` to build one from.');
+    }
+    if (config.transport !== undefined && (config.headers !== undefined || config.fetch !== undefined)) {
+      // Silently ignoring them would look like a working credential that never reaches the wire.
+      throw new ConfigurationError(
+        'A custom `transport` owns its own fetch; configure `headers` and `fetch` on it instead.',
+      );
+    }
+    this.#transport = config.transport ?? httpTransportFactory(config);
     this.#clientInfo = config.clientInfo ?? DEFAULT_CLIENT_INFO;
     this.#url = config.url;
     this.#shouldReconnect = config.shouldReconnect ?? isConnectionLoss;

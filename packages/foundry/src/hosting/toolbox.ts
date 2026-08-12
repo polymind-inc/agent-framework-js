@@ -1,7 +1,6 @@
 import type { TokenCredential } from '@azure/identity';
 import { DefaultAzureCredential } from '@azure/identity';
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { platformHeaders, projectEndpoint } from '@polymind-inc/agent-framework-agentserver';
 import type {
   Content,
@@ -102,22 +101,15 @@ export class FoundryToolbox {
     this.#loadTools = options.loadTools ?? true;
 
     const getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
-    const inner = options.fetch ?? globalThis.fetch;
     this.#connection = new McpConnection({
       url: this.url,
-      transport: () =>
-        new StreamableHTTPClientTransport(new URL(this.url), {
-          // Per-request rather than per-connection: see the class note on why this cannot be a
-          // static header set.
-          fetch: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-            const headers = new Headers(init?.headers);
-            headers.set('authorization', `Bearer ${await getToken()}`);
-            for (const [name, value] of Object.entries(platformHeaders())) {
-              headers.set(name, value);
-            }
-            return inner(input, { ...init, headers });
-          },
-        }),
+      // Per-request rather than per-connection: see the class note on why this cannot be a
+      // static header set.
+      headers: async () => ({
+        authorization: `Bearer ${await getToken()}`,
+        ...platformHeaders(),
+      }),
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
   }
 
