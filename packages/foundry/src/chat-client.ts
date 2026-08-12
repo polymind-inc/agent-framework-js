@@ -7,11 +7,11 @@ import type {
   CodeInterpreterToolOptions,
   FileSearchToolOptions,
   HostedTool,
-  MCPToolOptions,
+  McpToolOptions,
   Message,
   SupportsCodeInterpreterTool,
   SupportsFileSearchTool,
-  SupportsMCPTool,
+  SupportsMcpTool,
   SupportsWebSearchTool,
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
@@ -76,7 +76,7 @@ export class FoundryChatClient
     SupportsWebSearchTool,
     SupportsFileSearchTool,
     SupportsCodeInterpreterTool,
-    SupportsMCPTool
+    SupportsMcpTool
 {
   readonly metadata: ChatClientMetadata;
   readonly #inner: OpenAIChatClient;
@@ -155,8 +155,8 @@ export class FoundryChatClient
   }
 
   /** Declares a remote MCP server Foundry connects to on the model's behalf. */
-  getMCPTool(options: MCPToolOptions): HostedTool {
-    return this.#inner.getMCPTool(options);
+  getMcpTool(options: McpToolOptions): HostedTool {
+    return this.#inner.getMcpTool(options);
   }
 
   /** Builds the request body without sending it. See {@link OpenAIChatClient.buildRequest}. */

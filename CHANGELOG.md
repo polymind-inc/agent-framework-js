@@ -6,6 +6,15 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **BREAKING** — the MCP acronym in public identifiers is now spelled `Mcp`, matching the official
+  `@modelcontextprotocol` SDK and this framework's own newer API (`McpConnection`,
+  `mcpSkillsSource()`, `withMcpClientSpan`). The wire format is unaffected. Renames —
+  `@polymind-inc/agent-framework-mcp`: `MCPClient` → `McpClient`, `MCPClientConfig` →
+  `McpClientConfig`; `@polymind-inc/agent-framework-core`: `MCPToolOptions` → `McpToolOptions`,
+  `SupportsMCPTool` → `SupportsMcpTool`, `supportsMCP` → `supportsMcp`, and the capability method
+  `getMCPTool` → `getMcpTool` (the OpenAI, Anthropic and Foundry clients implement the renamed
+  method). There are no deprecated aliases; update imports and any custom `ChatClient` that
+  declares the MCP capability.
 - **`@polymind-inc/agent-framework-core`** — new **Agent Skills** support
   ([#21](https://github.com/polymind-inc/agent-framework-js/issues/21)): `skillsProvider()` is a
   `ContextProvider` that advertises each available skill's name and description in the system
@@ -26,7 +35,7 @@ contain breaking changes**; patch releases are fixes only.
   Walking a directory of `SKILL.md` files is deliberately not part of the core, which has no
   filesystem; the extensibility examples show the recipe.
 - **`@polymind-inc/agent-framework-mcp`** — new `mcpSkillsSource()`, also reachable as
-  `MCPClient.skillsSource()`: discovers the Agent Skills an MCP server publishes by reading the
+  `McpClient.skillsSource()`: discovers the Agent Skills an MCP server publishes by reading the
   well-known `skill://index.json` catalogue, fetching each `SKILL.md` body and any document it
   refers to only when the model asks. `McpConnection.readResource()` is exposed for it, with the
   same reconnect-once behaviour as `callTool` and a `resources/read` client span. A server with no

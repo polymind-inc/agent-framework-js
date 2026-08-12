@@ -21,27 +21,27 @@ import { mcpSkillsSource } from './skills.js';
 /** How a tool's `approvalMode` is decided when its MCP server declares nothing. */
 export type ApprovalPolicy = ApprovalMode | ((toolName: string) => ApprovalMode);
 
-/** Construction options for {@link MCPClient}. */
-export interface MCPClientConfig {
+/** Construction options for {@link McpClient}. */
+export interface McpClientConfig {
   /**
    * The MCP server's Streamable HTTP endpoint.
    *
-   * Mutually exclusive with {@link MCPClientConfig.transport} and
-   * {@link MCPClientConfig.transportFactory}.
+   * Mutually exclusive with {@link McpClientConfig.transport} and
+   * {@link McpClientConfig.transportFactory}.
    */
   url?: string | URL;
   /**
    * One transport to use instead of Streamable HTTP — stdio, in-memory, or anything custom.
    *
    * A transport instance cannot be recreated after a lost connection, so automatic reconnect is
-   * disabled for this form. Use {@link MCPClientConfig.transportFactory} when the transport is
+   * disabled for this form. Use {@link McpClientConfig.transportFactory} when the transport is
    * one-shot and the connection should recover automatically.
    */
   transport?: Transport;
   /**
    * Creates a fresh custom transport for each connection attempt.
    *
-   * Mutually exclusive with {@link MCPClientConfig.url} and {@link MCPClientConfig.transport}.
+   * Mutually exclusive with {@link McpClientConfig.url} and {@link McpClientConfig.transport}.
    */
   transportFactory?: () => Transport;
   /** How this client identifies itself to the server. */
@@ -101,7 +101,7 @@ interface DeclaredTool {
  * Exposes an MCP server's tools as framework tools.
  *
  * ```ts
- * const mcp = new MCPClient({ url: 'https://mcp.example.com/mcp' });
+ * const mcp = new McpClient({ url: 'https://mcp.example.com/mcp' });
  * const agent = new Agent({ client, tools: await mcp.getTools() });
  * ```
  *
@@ -126,24 +126,24 @@ interface DeclaredTool {
  *
  * - **The server is remote code.** Its tool descriptions are read by the model and its results
  *   enter the context window — both are prompt-injection surfaces. See
- *   {@link MCPClientConfig.approvalMode}.
+ *   {@link McpClientConfig.approvalMode}.
  * - **`headers` is sent to that server on every request.** Anything in it is disclosed to it.
  * - **Tool names come from the server.** A server can rename its tools between connections, so a
  *   name-based allowlist is checked at enumeration time, not once at startup.
  */
-export class MCPClient {
-  readonly #config: MCPClientConfig;
+export class McpClient {
+  readonly #config: McpClientConfig;
   readonly #allowedTools: ReadonlySet<string> | undefined;
   readonly #target: string;
   readonly #connection: McpConnection;
 
-  constructor(config: MCPClientConfig) {
+  constructor(config: McpClientConfig) {
     const sources = [config.url, config.transport, config.transportFactory].filter(
       (value) => value !== undefined,
     );
     if (sources.length !== 1) {
       throw new ConfigurationError(
-        'MCPClient needs exactly one of `url`, `transport`, or `transportFactory`.',
+        'McpClient needs exactly one of `url`, `transport`, or `transportFactory`.',
       );
     }
     this.#config = config;
@@ -191,7 +191,7 @@ export class MCPClient {
    * Discovers the server's Agent Skills, for `skillsProvider`.
    *
    * Skills and tools are independent: a server may publish either, both or neither, and this
-   * shares the same connection as {@link MCPClient.getTools} rather than opening a second one.
+   * shares the same connection as {@link McpClient.getTools} rather than opening a second one.
    *
    * ```ts
    * const agent = new Agent({ client, contextProviders: [skillsProvider(mcp.skillsSource())] });

@@ -166,7 +166,7 @@ describe('raw results', () => {
   });
 
   it('returns an isError result instead of raising it', async () => {
-    // Whether a declined tool call becomes an exception is the consumer's decision — MCPClient
+    // Whether a declined tool call becomes an exception is the consumer's decision — McpClient
     // raises, a host relaying raw MCP blocks does not — so the primitive hands the result back.
     const connection = connectionTo(
       new TestMcpServer([

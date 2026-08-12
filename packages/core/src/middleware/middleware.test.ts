@@ -5,7 +5,7 @@ import { MockChatClient } from '../client/test-support.js';
 import type { ContextProvider } from '../context/context-provider.js';
 import { ConfigurationError } from '../errors.js';
 import { approvalResponse } from '../tools/approval.js';
-import { supportsMCP, supportsWebSearch } from '../tools/hosted.js';
+import { supportsMcp, supportsWebSearch } from '../tools/hosted.js';
 import { tool } from '../tools/tool.js';
 import { textContent } from '../types/content.js';
 import type { AgentResponse, AgentResponseUpdate } from '../types/response.js';
@@ -574,15 +574,15 @@ describe('toolApprovalMiddleware', () => {
 
   it('keeps the wrapped client hosted-tool capabilities visible through withMiddleware', () => {
     const capable = Object.assign(new MockChatClient([{ contents: [textContent('x')] }]), {
-      getMCPTool: (options: { serverLabel: string }) => ({
+      getMcpTool: (options: { serverLabel: string }) => ({
         kind: 'hosted' as const,
         name: 'mcp',
         spec: { server_label: options.serverLabel },
       }),
     });
     const wrapped = withMiddleware(capable, []);
-    expect(supportsMCP(wrapped)).toBe(true);
-    expect(supportsMCP(wrapped) && wrapped.getMCPTool({ serverLabel: 'docs' }).spec).toEqual({
+    expect(supportsMcp(wrapped)).toBe(true);
+    expect(supportsMcp(wrapped) && wrapped.getMcpTool({ serverLabel: 'docs' }).spec).toEqual({
       server_label: 'docs',
     });
     expect(supportsWebSearch(wrapped)).toBe(false);
