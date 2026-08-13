@@ -1,29 +1,22 @@
 import { context as otelContext } from '@opentelemetry/api';
-import { BackgroundRun, type IdClaim, newClaim, sequenceOf } from './background-run.js';
-import {
-  cancelGraceMs,
-  isHosted,
-  maxBodyBytes,
-  maxInputItems,
-  maxStreamEvents,
-  serverIdentity,
-  sseKeepAliveSeconds,
-} from './config.js';
+import { startBackground } from './background-driver.js';
+import { type IdClaim, newClaim } from './background-run.js';
+import { readJsonBody } from './body.js';
+import { isHosted, maxBodyBytes, maxInputItems, maxStreamEvents, serverIdentity } from './config.js';
 import type { RequestContext } from './context.js';
 import { createRequestContext, HEADERS, runWithRequestContext } from './context.js';
 import {
-  badRequest,
   conflict,
   methodNotAllowed,
   notFound,
   notImplemented,
   ProtocolError,
-  requestTooLarge,
   routeNotFound,
   toProtocolError,
   unavailable,
   upstreamError,
 } from './errors.js';
+import { collectResponse, streamResponse } from './foreground.js';
 import {
   decodeSegment,
   errorResponse,
@@ -34,34 +27,28 @@ import {
 } from './http.js';
 import { ID_PREFIX, itemIdPrefix, newId, newResponseId } from './ids.js';
 import type { LifecycleViolation } from './lifecycle.js';
-import { applyCancelledTerminal, enforceLifecycle, ResponseTracker } from './lifecycle.js';
+import { enforceLifecycle, ResponseTracker } from './lifecycle.js';
 import { flushTelemetry } from './observability/flush.js';
 import { bindIterable, extractTraceContext, withResponseBaggage } from './observability/trace-context.js';
-import { resolveAgentReference, resolveAgentSessionId } from './session-id.js';
-import { SequenceNumberWriter, SSE_HEADERS, toSseStream } from './sse.js';
-import { InMemoryResponseProvider } from './store/memory.js';
-import type { ResponseGeneration, ResponseOwner, ResponseProvider } from './store/provider.js';
-import { sameOwner } from './store/provider.js';
 import {
-  conversationIdOf,
-  parseCreateRequest,
-  parseLimit,
-  parseOrder,
-  parseStartingAfter,
-  validateResponseId,
-} from './validation.js';
-import { raceTimeout } from './wait.js';
+  cancelResponse,
+  deleteResponse,
+  getResponse,
+  listInputItems,
+  type ResourceRouteState,
+} from './resource-routes.js';
+import { resolveAgentReference, resolveAgentSessionId } from './session-id.js';
+import { InMemoryResponseProvider } from './store/memory.js';
+import type { ResponseGeneration, ResponseProvider } from './store/provider.js';
+import { sameOwner } from './store/provider.js';
+import { conversationIdOf, parseCreateRequest, validateResponseId } from './validation.js';
 import type {
   AgentReference,
-  ApiError,
   CreateResponseRequest,
-  DeletedResponse,
-  InputItemList,
   OutputItem,
   ResponseEvent,
   ResponseObject,
 } from './wire.js';
-import { isTerminalEventType } from './wire.js';
 
 /** What a handler is told about the request it is answering. */
 export interface HandlerContext {
@@ -132,90 +119,6 @@ export interface ResponsesServerConfig {
 }
 
 /**
- * What the caller is told when a finished response could not be stored (.NET
- * `ResponseOrchestrator`): the turn is reported as `failed` — with the output cleared, because
- * items that were never persisted cannot be retrieved later and returning them would create a
- * false expectation — rather than pretending a `completed` happened that no follow-up turn will
- * be able to resolve.
- */
-const STORAGE_ERROR: ApiError = {
-  code: 'storage_error',
-  message:
-    'An internal error occurred while storing the response. Subsequent retrieval is not guaranteed. Please retry the request.',
-  type: 'server_error',
-};
-
-function storageFailed(response: ResponseObject): ResponseObject {
-  return { ...response, status: 'failed', output: [], error: STORAGE_ERROR };
-}
-
-/**
- * The persist-before-terminal contract, shared by the foreground SSE stream and the background
- * driver: the turn is offered to the store *before* its terminal event reaches any consumer, so a
- * caller that reads `response.completed` can come back with `previous_response_id`. When the store
- * refuses, the terminal the consumer reads is a `response.failed` carrying `storage_error`
- * instead. Persisting is attempted at most once — .NET does not retry a failed persist, and
- * neither does this.
- */
-class TerminalPersister {
-  readonly #persist: () => Promise<void>;
-  readonly #tracker: ResponseTracker;
-  #attempted = false;
-
-  constructor(persist: () => Promise<void>, tracker: ResponseTracker) {
-    this.#persist = persist;
-    this.#tracker = tracker;
-  }
-
-  /** Persists ahead of the terminal `event`; on a store refusal returns the storage failure instead. */
-  async onTerminal(event: ResponseEvent): Promise<ResponseEvent> {
-    this.#attempted = true;
-    try {
-      await this.#persist();
-      return event;
-    } catch {
-      return { type: 'response.failed', response: storageFailed(this.#tracker.response) };
-    }
-  }
-
-  /**
-   * The teardown fallback for a stream torn down before any terminal event came through: records
-   * the partial turn — it is resumable with `previous_response_id`. A store failure here has no
-   * caller left to tell, so it is deliberately swallowed.
-   */
-  async ensureAttempted(): Promise<void> {
-    if (this.#attempted) {
-      return;
-    }
-    try {
-      await this.#persist();
-    } catch {
-      // Nothing to answer: the caller is gone.
-    }
-  }
-}
-
-/**
- * The cancel refusals for each terminal state, worded exactly as the reference words them
- * (Python `_endpoint_handler._CANCEL_TERMINAL_ERRORS`). `cancelled` is missing on purpose:
- * cancelling an already-cancelled response is idempotent and answers 200.
- */
-const CANCEL_TERMINAL_ERRORS: Readonly<Partial<Record<string, string>>> = {
-  completed: 'Cannot cancel a completed response.',
-  failed: 'Cannot cancel a failed response.',
-  incomplete: 'Cannot cancel a response in terminal state.',
-};
-
-/**
- * The combined message for a background response whose event stream is not available — never
- * created (`stream=false`), dropped over the retention cap, or lost to a storage failure. The
- * persisted response does not say which, and Python's fallback uses one combined message for
- * exactly that reason (`_handle_get_fallback`).
- */
-const REPLAY_UNAVAILABLE =
-  'This response cannot be streamed because it was not created with stream=true or the stream TTL has expired.';
-
-/**
  * Who owes one turn's telemetry flush.
  *
  * Every request flushes when it is answered, so no error path can lose the spans a failing turn
@@ -228,57 +131,12 @@ interface TurnTelemetry {
   deferred: boolean;
 }
 
-/** A 400 with `code: "invalid_mode"` on `param: "stream"`, Python's `_invalid_mode` shape. */
-function invalidMode(message: string): ProtocolError {
-  return badRequest(message, { code: 'invalid_mode', param: 'stream' });
-}
-
-/** The states a response never leaves (Python `_RuntimeState._TERMINAL_STATUSES`). */
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'incomplete', 'cancelled']);
-
-/** A finished event list as an async iterable, for the SSE encoder. */
-async function* replayEvents(events: readonly ResponseEvent[]): AsyncGenerator<ResponseEvent> {
-  for (const event of events) {
-    yield event;
-  }
-}
-
-/**
- * The status a route must judge a registered run by (Python `_refresh_background_status`).
- *
- * Two things make "registered" a different question from "still working":
- *
- * - the registration outlives the terminal state. `#runBackground` persists the terminal, delivers
- *   it, stores the replay log, and only then drops the record — so between the caller reading
- *   `response.completed` and the registry being cleared, the run is registered *and* finished;
- * - a run whose cancellation is under way reads as `cancelled` before its terminal event is in,
- *   so a second cancel takes the idempotent path instead of opening a second winddown.
- */
-function runStatus(run: BackgroundRun): string {
-  const status = String(run.tracker.response.status);
-  return run.cancelRequested && !TERMINAL_STATUSES.has(status) ? 'cancelled' : status;
-}
-
-/**
- * Rewrites a run's terminal as `cancelled`, and makes the tracked resource match.
- *
- * The port of Python `_orchestrator._maybe_override_to_cancelled`: once the caller has
- * been promised `cancelled`, a handler that ignores the signal and goes on to emit its own
- * `completed` must not have that terminal honoured — neither on the wire nor in the store. Without
- * this the cancel route's own persist is simply overwritten by the run when it finally ends.
- *
- * The event keeps the type `response.failed`, as the reference's override does: the protocol has
- * no `response.cancelled` event, so the status on the carried resource is what says what happened.
- */
-function cancelledTerminal(tracker: ResponseTracker): ResponseEvent {
-  const response = applyCancelledTerminal(tracker.response);
-  tracker.replace(response);
-  return { type: 'response.failed', response };
-}
-
 // jsonResponse, decodeSegment, trimTrailingSlashes and the prefix/header/error plumbing live in
 // http.ts, shared with the Invocations server: the container contract is one contract, and the
-// parts of it every protocol answers identically must have one implementation.
+// parts of it every protocol answers identically must have one implementation. The same split
+// carries through the rest of the protocol: the terminal-persistence contract is in terminal.ts,
+// the foreground execution modes in foreground.ts, the detached background driver in
+// background-driver.ts, and the id-addressed routes in resource-routes.ts.
 
 /**
  * A Foundry Responses container protocol v2.0.0 server.
@@ -307,10 +165,12 @@ export class ResponsesServer {
   readonly #shutdown = new AbortController();
   /**
    * Response ids currently spoken for by a background execution, keyed by id. An entry appears the
-   * instant a create settles on its id and carries a {@link BackgroundRun} from the moment the run
+   * instant a create settles on its id and carries a `BackgroundRun` from the moment the run
    * starts. See {@link IdClaim}.
    */
   readonly #claims = new Map<string, IdClaim>();
+  /** What the id-addressed routes (`GET`, `DELETE`, `/cancel`, `/input_items`) read. */
+  readonly #resources: ResourceRouteState;
   #draining = false;
 
   constructor(options: ResponsesServerConfig) {
@@ -324,6 +184,7 @@ export class ResponsesServer {
       maxInputItems: options.limits?.maxInputItems ?? maxInputItems(),
       maxStreamEvents: options.limits?.maxStreamEvents ?? maxStreamEvents(),
     };
+    this.#resources = { store: this.#store, claims: this.#claims };
   }
 
   /**
@@ -334,7 +195,7 @@ export class ResponsesServer {
    * way before letting the process exit. Callers that only need the signal may ignore it.
    *
    * "Turn", not "run": the wait covers a create that has reserved its id and is still in setup as
-   * well as one that is already executing. Waiting on {@link BackgroundRun}s alone would miss the
+   * well as one that is already executing. Waiting on `BackgroundRun`s alone would miss the
    * whole window between the id being claimed and the run being registered — the writability
    * check, the session lookup, the handler's own setup are all awaits — and a shutdown would return
    * while a turn was still about to start, run, and persist.
@@ -348,18 +209,6 @@ export class ResponsesServer {
     this.#shutdown.abort();
     const pending = [...this.#claims.values()].map((claim) => claim.done);
     return Promise.allSettled(pending).then(() => undefined);
-  }
-
-  /**
-   * The run answering under `id` for `owner`, or `undefined`.
-   *
-   * A claim without a run is an id a create has reserved but not started yet: nothing answers under
-   * it, so every route reads it as absent and falls through to the store, which is the 404 the
-   * caller would have got a moment earlier. A run belonging to someone else reads as absent too.
-   */
-  #runFor(id: string, owner: ResponseOwner): BackgroundRun | undefined {
-    const run = this.#claims.get(id)?.run;
-    return run !== undefined && sameOwner(run.owner, owner) ? run : undefined;
   }
 
   /**
@@ -457,18 +306,18 @@ export class ResponsesServer {
 
     if (action === 'cancel') {
       if (request.method !== 'POST') throw methodNotAllowed('POST');
-      return this.#cancel(id, context.userId);
+      return cancelResponse(this.#resources, id, context.userId);
     }
     if (action === 'input_items') {
       if (request.method !== 'GET') throw methodNotAllowed('GET');
-      return this.#inputItems(id, url, context.userId);
+      return listInputItems(this.#resources, id, url, context.userId);
     }
     if (action !== undefined) {
       throw routeNotFound();
     }
 
-    if (request.method === 'GET') return this.#getResponse(id, url, context.userId);
-    if (request.method === 'DELETE') return this.#deleteResponse(id, context.userId);
+    if (request.method === 'GET') return getResponse(this.#resources, id, url, context.userId);
+    if (request.method === 'DELETE') return deleteResponse(this.#resources, id, context.userId);
     throw methodNotAllowed('GET, DELETE');
   }
 
@@ -489,50 +338,6 @@ export class ResponsesServer {
     }
   }
 
-  /**
-   * Reads and parses the request body, bounded by {@link ResponsesServerLimits.maxBodyBytes}.
-   *
-   * `request.json()` would buffer however much the caller cares to send; this reads the stream
-   * chunk by chunk and stops with a 413 the moment the limit is crossed, whether or not the caller
-   * declared a `content-length`.
-   */
-  async #readJsonBody(request: Request): Promise<unknown> {
-    const limit = this.#limits.maxBodyBytes;
-    const declared = Number(request.headers.get('content-length'));
-    if (Number.isFinite(declared) && declared > limit) {
-      throw requestTooLarge(limit);
-    }
-
-    let text = '';
-    if (request.body !== null) {
-      const decoder = new TextDecoder();
-      const reader = request.body.getReader();
-      let total = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        total += value.byteLength;
-        if (total > limit) {
-          await reader.cancel();
-          throw requestTooLarge(limit);
-        }
-        text += decoder.decode(value, { stream: true });
-      }
-      text += decoder.decode();
-    }
-
-    try {
-      return JSON.parse(text) as unknown;
-    } catch (error) {
-      throw new ProtocolError(400, 'request body must be valid JSON', {
-        code: 'invalid_request',
-        cause: error,
-      });
-    }
-  }
-
   async #createResponse(
     request: Request,
     context: RequestContext,
@@ -540,7 +345,7 @@ export class ResponsesServer {
   ): Promise<Response> {
     this.#assertProtocolVersion(context);
 
-    const payload = await this.#readJsonBody(request);
+    const payload = await readJsonBody(request, this.#limits.maxBodyBytes);
     const created = parseCreateRequest(payload, { maxInputItems: this.#limits.maxInputItems });
     const conversationId = conversationIdOf(created);
     const previousResponseId =
@@ -886,7 +691,7 @@ export class ResponsesServer {
       // A claim is taken for exactly the background creates, so this *is* the background branch —
       // written against `claim` rather than `background` because the run it starts needs it.
       if (claim !== undefined) {
-        const answer = await this.#startBackground({
+        const answer = await startBackground({
           responseId,
           claim,
           streamed: created.stream === true,
@@ -899,6 +704,12 @@ export class ResponsesServer {
           persist,
           persistSnapshot,
           releaseSignals,
+          store: this.#store,
+          maxEvents: this.#limits.maxStreamEvents,
+          // The run's deferred writes and its own deregistration act on the claim taken above;
+          // handed over as closures so the driver never reaches into the registry itself.
+          holdsClaim: () => this.#holds(responseId, claim),
+          releaseClaim: () => this.#releaseClaim(responseId, claim),
         });
         // The detached run is the turn from here on, and it flushes when it winds down.
         telemetry.deferred = true;
@@ -908,505 +719,16 @@ export class ResponsesServer {
       if (created.stream === true) {
         // Set only once the 200 is real: a failure before the commit is answered by this request,
         // so this request is what has to flush the spans it produced.
-        const answer = await this.#streamResponse(events, tracker, persist, sessionId, releaseSignals);
+        const answer = await streamResponse(events, tracker, persist, sessionId, releaseSignals);
         telemetry.deferred = true;
         return answer;
       }
       try {
-        return await this.#collectResponse(events, tracker, persist, sessionId);
+        return await collectResponse(events, tracker, persist, sessionId);
       } finally {
         releaseSignals();
       }
     });
-  }
-
-  /**
-   * `background=true`: run the handler detached from the request, registered in {@link #claims}.
-   *
-   * - `stream=false` answers 200 once the handler's first event is in — status `queued` or
-   *   `in_progress`, exactly what the caller then polls with `GET` (Python `run_background`
-   *   waits for `response.created` the same way; a handler that fails before any event is
-   *   reported as the `failed` snapshot, still with 200).
-   * - `stream=true` answers an SSE subscription over the same detached run. Dropping it does
-   *   not cancel the run; the caller reconnects with `GET ?stream=true&starting_after=N`.
-   */
-  async #startBackground(args: {
-    responseId: string;
-    claim: IdClaim;
-    streamed: boolean;
-    owner: ResponseOwner;
-    sessionId: string;
-    tracker: ResponseTracker;
-    events: AsyncIterable<ResponseEvent>;
-    inputItems: readonly OutputItem[];
-    abort: AbortController;
-    persist: () => Promise<void>;
-    persistSnapshot: (response: ResponseObject) => Promise<void>;
-    releaseSignals: () => void;
-  }): Promise<Response> {
-    const run = new BackgroundRun({
-      owner: args.owner,
-      streamed: args.streamed,
-      tracker: args.tracker,
-      inputItems: args.inputItems,
-      abort: args.abort,
-      persistSnapshot: args.persistSnapshot,
-      maxEvents: this.#limits.maxStreamEvents,
-    });
-    // The id was claimed before any of the awaits that led here; this is the handover, not a
-    // second registration.
-    args.claim.run = run;
-    run.done = this.#runBackground({
-      run,
-      responseId: args.responseId,
-      claim: args.claim,
-      events: args.events,
-      persist: args.persist,
-      releaseSignals: args.releaseSignals,
-    });
-    // The claim's wait becomes the run's. Anyone already holding it — a `drain()` that started
-    // while this create was still in setup — now waits for the terminal state and the replay log
-    // too, without ever having seen a run.
-    args.claim.settle(run.done);
-
-    if (args.streamed) {
-      const keepAliveMs = sseKeepAliveSeconds() * 1000;
-      return new Response(toSseStream(run.follow(-1), { keepAliveMs }), {
-        status: 200,
-        headers: { ...SSE_HEADERS, [HEADERS.sessionId]: args.sessionId },
-      });
-    }
-    await run.firstEvent;
-    return jsonResponse(run.tracker.response, 200, { [HEADERS.sessionId]: args.sessionId });
-  }
-
-  /**
-   * Drives one background run to its persisted end. Never throws: there is no request left to
-   * answer, so every failure becomes the terminal state instead.
-   */
-  async #runBackground(args: {
-    run: BackgroundRun;
-    responseId: string;
-    claim: IdClaim;
-    events: AsyncIterable<ResponseEvent>;
-    persist: () => Promise<void>;
-    releaseSignals: () => void;
-  }): Promise<void> {
-    const { run, responseId, claim, events, persist, releaseSignals } = args;
-    const sequence = new SequenceNumberWriter();
-    const persister = new TerminalPersister(persist, run.tracker);
-    try {
-      try {
-        for await (const raw of events) {
-          let event = raw;
-          if (isTerminalEventType(String(event.type))) {
-            if (run.cancelRequested) {
-              // The caller was already promised `cancelled`; whatever terminal the handler
-              // reached does not get to overrule that (Python `_maybe_override_to_cancelled`).
-              // Without this the persist below writes the handler's `completed` over the cancel
-              // route's `cancelled` — the route has no way to write last, because the run may
-              // outlive its grace by any amount.
-              event = cancelledTerminal(run.tracker);
-            }
-            event = await persister.onTerminal(event);
-          }
-          run.deliver(sequence.stamp(event));
-        }
-      } catch (error) {
-        // `enforceLifecycle` rethrows only before `response.created`. A foreground request turns
-        // that into a real status code; a background caller already has its 200, so the failure
-        // becomes the terminal state instead (Python `run_background`:
-        // `response_failed_before_events` answers the `failed` snapshot, still with 200). The
-        // wrap `enforceLifecycle` applied for the 500 body is undone here: like a streamed
-        // `response.failed`, this terminal state is the only place left
-        // for the caller to learn why the turn failed.
-        const cause = error instanceof ProtocolError && error.cause !== undefined ? error.cause : error;
-        const message =
-          cause instanceof Error ? (cause.message === '' ? cause.name : cause.message) : String(cause);
-        const event = run.cancelRequested
-          ? // Same override as the loop above: a handler that throws *after* the cancel route
-            // answered still ends as `cancelled`, not as `failed` (the reference applies
-            // `_maybe_override_to_cancelled` on the resolved terminal whatever produced it).
-            cancelledTerminal(run.tracker)
-          : run.tracker.lifecycleEvent('response.failed', 'failed', {
-              error: { code: 'server_error', message, type: 'server_error' },
-            });
-        run.deliver(sequence.stamp(await persister.onTerminal(event)));
-      }
-      // Unreachable while `enforceLifecycle` guarantees a terminal event; kept so a future
-      // regression cannot silently drop a finished turn.
-      await persister.ensureAttempted();
-      if (run.streamed && !run.overflowed) {
-        await this.#storeReplayLog(responseId, run, claim);
-      }
-    } finally {
-      // Order matters: the run leaves the registry only after the replay log is on the store, so
-      // there is no moment where the id answers neither live nor from storage.
-      run.finish();
-      // …and only if the slot is still *this* run's. `DELETE` frees it early once the run is
-      // terminal (Python `_RuntimeState.delete`), and the id is reusable from that moment on, so
-      // an unconditional delete here would deregister whoever holds it now.
-      this.#releaseClaim(responseId, claim);
-      releaseSignals();
-      // The detached run is the turn here; flush before the platform freezes the sandbox.
-      await flushTelemetry();
-    }
-  }
-
-  /**
-   * Writes one finished run's replay log, and only under the id that run still holds.
-   *
-   * This is the one thing the server persists *after* a run has become deletable: it is written
-   * once, whole, as the run winds down, while `DELETE` is allowed from the moment the run is
-   * terminal (Python `_RuntimeState.delete` refuses on the status, not on the record's presence).
-   * The store is keyed by id alone, so an unguarded write lands in whatever turn holds that id when
-   * it arrives — after a `DELETE` and a re-create, somebody else's — and `GET ?stream=true` would
-   * replay the *previous* run's output under the new response.
-   *
-   * The local claim check below is only an optimization: it skips a write this server already knows
-   * is pointless. **It cannot be the guarantee**, because the id can be freed and re-taken while
-   * the write is in flight, and there is no un-write. The guarantee is the generation the store
-   * checks under its own lock — see {@link ResponseProvider.putEvents}. Compensating afterwards
-   * (writing an empty log over whatever landed) is worse than doing nothing: by then the id may
-   * belong to another streamed turn whose own log is in place, and blanking it turns
-   * `GET ?stream=true` on a perfectly good response into a 400.
-   *
-   * The reference has no equivalent write: Python's replay buffer is a per-run in-process subject
-   * (`_ResponseEventSubject`) in a registry the delete route tears down, so a stale publisher writes
-   * into an object nothing can reach any more. The generation is what gives a store-backed log the
-   * same property across a boundary the server cannot hold a lock over.
-   */
-  async #storeReplayLog(responseId: string, run: BackgroundRun, claim: IdClaim): Promise<void> {
-    const putEvents = this.#store.putEvents?.bind(this.#store);
-    if (putEvents === undefined || !this.#holds(responseId, claim)) {
-      return;
-    }
-    try {
-      await putEvents(responseId, run.owner, run.events, claim.generation);
-    } catch {
-      // Replay is best-effort: without the log, `GET ?stream=true` answers the same 400 an expired
-      // stream gets. The terminal state itself was persisted before this.
-    }
-  }
-
-  /**
-   * `stream=false`: drive the handler to completion and answer with the finished resource.
-   *
-   * A persistence failure after the handler completes is answered as the resource with
-   * `status: "failed"` and `error.code: "storage_error"` (.NET's documented behaviour) — not as an
-   * opaque 500: the handler did its work, and the caller needs to know specifically that a
-   * follow-up `previous_response_id` will not resolve.
-   */
-  async #collectResponse(
-    events: AsyncIterable<ResponseEvent>,
-    tracker: ResponseTracker,
-    persist: () => Promise<void>,
-    sessionId: string,
-  ): Promise<Response> {
-    for await (const _ of events) {
-      // The lifecycle layer already folds each event into the tracker.
-    }
-    let response = tracker.response;
-    try {
-      await persist();
-    } catch (error) {
-      if (error instanceof ProtocolError) {
-        // Not a storage outage but a protocol answer — the ownership 404 for a reused
-        // `response_id`, most importantly. The caller gets the real status code.
-        throw error;
-      }
-      response = storageFailed(response);
-    }
-    // No flush here: `handle` flushes every answered request in its own `finally`, which is what
-    // covers the `throw` above as well (the reference's `flush_spans`).
-    return jsonResponse(response, 200, { [HEADERS.sessionId]: sessionId });
-  }
-
-  /** `stream=true`: frame the events as SSE, stamping the sequence numbers. */
-  async #streamResponse(
-    events: AsyncIterable<ResponseEvent>,
-    tracker: ResponseTracker,
-    persist: () => Promise<void>,
-    sessionId: string,
-    releaseSignals: () => void,
-  ): Promise<Response> {
-    // The first event is pulled *before* the 200 and the SSE headers go out. A handler that fails
-    // during setup — an unauthorized session, a missing agent — therefore still reaches the
-    // caller as a real status code, which is impossible once the response is committed. Nothing
-    // is persisted before `response.created` either, so this is the same boundary the protocol
-    // already draws.
-    const iterator = events[Symbol.asyncIterator]();
-    let first: IteratorResult<ResponseEvent>;
-    try {
-      first = await iterator.next();
-    } catch (error) {
-      await iterator.return?.();
-      releaseSignals();
-      throw error;
-    }
-
-    const sequence = new SequenceNumberWriter();
-    const persister = new TerminalPersister(persist, tracker);
-    const numbered = async function* (): AsyncGenerator<ResponseEvent> {
-      try {
-        let pending = first;
-        while (pending.done !== true) {
-          let event = pending.value;
-          if (isTerminalEventType(String(event.type))) {
-            event = await persister.onTerminal(event);
-          }
-          yield sequence.stamp(event);
-          pending = await iterator.next();
-        }
-      } finally {
-        // The client-disconnect path: the stream was torn down before the terminal event came
-        // through. Close the handler chain first so its own `finally` blocks run, then record the
-        // partial turn.
-        try {
-          await iterator.return?.();
-        } catch {
-          // The generator's own failure must not mask the teardown.
-        }
-        await persister.ensureAttempted();
-        releaseSignals();
-        // Stream over — flush before the platform freezes the sandbox (the reference's
-        // `trace_stream` flushes in its own `finally` the same way).
-        await flushTelemetry();
-      }
-    };
-
-    const keepAliveMs = sseKeepAliveSeconds() * 1000;
-    return new Response(toSseStream(numbered(), { keepAliveMs }), {
-      status: 200,
-      headers: { ...SSE_HEADERS, [HEADERS.sessionId]: sessionId },
-    });
-  }
-
-  async #getResponse(id: string, url: URL, owner: ResponseOwner): Promise<Response> {
-    const streamReplay = url.searchParams.get('stream') === 'true';
-    // The cursor is validated before anything else the replay path could answer — stream
-    // availability, even existence — so an invalid one always reports `param: "starting_after"`
-    // (Python parses it first in the fallback path for exactly this reason).
-    const startingAfter = streamReplay ? parseStartingAfter(url.searchParams.get('starting_after')) : -1;
-
-    // An in-flight background run is publicly visible before anything is persisted (Python's
-    // runtime-state-first lookup). A run belonging to someone else reads as absent, and the
-    // store below gives the same caller the same 404.
-    const run = this.#runFor(id, owner);
-    if (run !== undefined) {
-      if (!streamReplay) {
-        // A cancel that is still inside its winddown grace has already promised `cancelled`, and
-        // the reference refreshes the record's status from the cancel signal before answering any
-        // GET (`_refresh_background_status`). Only the status is refreshed — the rest of the
-        // snapshot, accumulated output included, stays the handler's until the cancel route
-        // applies the actual cancelled terminal.
-        const snapshot = run.tracker.response;
-        if (run.cancelRequested && !TERMINAL_STATUSES.has(String(snapshot.status))) {
-          return jsonResponse({ ...snapshot, status: 'cancelled' }, 200);
-        }
-        return jsonResponse(snapshot, 200);
-      }
-      if (!run.streamed) {
-        throw invalidMode('This response cannot be streamed because it was not created with stream=true.');
-      }
-      if (run.overflowed) {
-        throw invalidMode(REPLAY_UNAVAILABLE);
-      }
-      // Replay the retained prefix, then follow live to the terminal (the resilience contract's
-      // reconnect clause: events strictly after the cursor, then live-tail).
-      const keepAliveMs = sseKeepAliveSeconds() * 1000;
-      return new Response(toSseStream(run.follow(startingAfter), { keepAliveMs }), {
-        status: 200,
-        headers: SSE_HEADERS,
-      });
-    }
-
-    const stored = await this.#store.get(id, owner);
-    if (stored === undefined) {
-      throw notFound(id);
-    }
-    if (!streamReplay) {
-      return jsonResponse(stored.response, 200);
-    }
-
-    if (stored.response.background !== true) {
-      // SSE replay requires background mode, whatever the stream happened to be (the Python
-      // reference checks the same rule against the persisted resource in `_handle_get_fallback`).
-      throw invalidMode('This response cannot be streamed because it was not created with background=true.');
-    }
-    if (this.#store.getEvents === undefined) {
-      // A store that cannot persist events keeps the documented fail-closed answer — the
-      // same 501 its background create gives.
-      throw notImplemented(
-        'replaying a stored response as a stream is not supported by the configured response store',
-      );
-    }
-    // A record whose generation cannot be matched must not be paired with a replay log: a reused
-    // id would otherwise expose the previous turn's events. Records written before the current
-    // fence come in two shapes, and this branch only catches one of them — both still fail closed,
-    // just at different steps:
-    //
-    // - **No `generation` at all** (written before the generation fence existed). Refused here.
-    // - **A numeric `generation`** (written when the fence was a
-    //   per-server counter, before it became a UUID string). A number is not `undefined`, so it
-    //   passes this check and is handed to `getEvents`, where the comparison against the stored
-    //   log's own generation is a strict `===` that a legacy log — which
-    //   carries no generation at all — cannot satisfy. `getEvents` answers `undefined` and the
-    //   next branch refuses. (A current turn's UUID likewise never `===` a persisted number, so a
-    //   legacy log can never be paired with a current record either.)
-    //
-    // Either way only replay is refused; the resource itself stays retrievable above.
-    if (stored.generation === undefined) {
-      throw invalidMode(REPLAY_UNAVAILABLE);
-    }
-    const events = await this.#store.getEvents(id, owner, stored.generation);
-    if (events === undefined || events.length === 0) {
-      throw invalidMode(REPLAY_UNAVAILABLE);
-    }
-    const replayable = events.filter((event) => sequenceOf(event) > startingAfter);
-    // A finished stream replays as-is and closes; no keep-alive timer for a body that is already
-    // complete (Python's fallback replay does not wrap `with_keep_alive` either).
-    return new Response(toSseStream(replayEvents(replayable)), { status: 200, headers: SSE_HEADERS });
-  }
-
-  async #deleteResponse(id: string, owner: ResponseOwner): Promise<Response> {
-    const run = this.#runFor(id, owner);
-    if (run !== undefined && !TERMINAL_STATUSES.has(runStatus(run))) {
-      // Only a run that is *still working* is undeletable. Python refuses on the status —
-      // `record.mode_flags.background and record.status in {"queued", "in_progress"}` — not on
-      // the record's mere presence, and the difference is a real window here: the registration
-      // outlives the terminal state by however long the replay log takes to store, and during it
-      // the finished turn is already in the store and perfectly deletable.
-      throw new ProtocolError(400, 'Cannot delete an in-flight response.', {
-        code: 'invalid_request_error',
-        param: 'response_id',
-      });
-    }
-    const deleted = await this.#store.delete(id, owner);
-    if (!deleted) {
-      throw notFound(id);
-    }
-    // The runtime record goes with the response (Python `_RuntimeState.delete`), so a deleted id
-    // does not keep answering `GET` out of the run that is still winding down. The run's own
-    // deferred writes are guarded on the claim this drops, so the winddown cannot land them in
-    // whatever turn takes the id next.
-    const claim = this.#claims.get(id);
-    if (run !== undefined && claim?.run === run) {
-      this.#claims.delete(id);
-    }
-    const body: DeletedResponse = { id, object: 'response', deleted: true };
-    return jsonResponse(body, 200);
-  }
-
-  async #cancel(id: string, owner: ResponseOwner): Promise<Response> {
-    const run = this.#runFor(id, owner);
-    if (run !== undefined) {
-      // A registered run is not necessarily a running one, so the *status* decides — the same
-      // order the reference decides it in (`_refresh_background_status`, then
-      // `_check_cancel_terminal_status`): a terminal state refuses with its own message, and
-      // `cancelled` is idempotent rather than an error.
-      const status = runStatus(run);
-      const refusal = CANCEL_TERMINAL_ERRORS[status];
-      if (refusal !== undefined) {
-        throw new ProtocolError(400, refusal, { code: 'invalid_request_error', param: 'response_id' });
-      }
-      if (status === 'cancelled') {
-        // Repeats the cancelled snapshot instead of opening a second winddown — the case where a
-        // cancel arrives while the first one is still inside its grace, as well as the plain
-        // second cancel (Python's sentinel path re-applies the cancelled terminal the same way).
-        return jsonResponse(applyCancelledTerminal(run.tracker.response), 200);
-      }
-
-      // The cancellation winddown (Python `handle_cancel`): signal the handler, give
-      // it a bounded grace to finish its teardown, then cancellation wins regardless of what the
-      // handler managed to emit.
-      run.cancelRequested = true;
-      run.abort.abort();
-      // A run that fails during the winddown still ends the wait: the cancel route must not
-      // throw because the handler did.
-      await raceTimeout(
-        run.done.catch(() => undefined),
-        cancelGraceMs(),
-      );
-      const cancelled = applyCancelledTerminal(run.tracker.response);
-      // Written back onto the run, exactly as the reference stamps it on the record
-      // (`set_response_snapshot` + `transition_to("cancelled")`): a run that outlived its grace is
-      // still registered, and every later reader — `GET`, a second cancel, the run's own terminal
-      // override — has to see the state the caller was just promised.
-      run.tracker.replace(cancelled);
-      try {
-        await run.persistSnapshot(cancelled);
-      } catch {
-        // Best-effort, as in the reference: the caller still gets the cancelled snapshot.
-      }
-      return jsonResponse(cancelled, 200);
-    }
-
-    const stored = await this.#store.get(id, owner);
-    if (stored === undefined) {
-      throw notFound(id);
-    }
-    if (stored.response.background !== true) {
-      throw new ProtocolError(400, 'Cannot cancel a synchronous response.', {
-        code: 'invalid_request_error',
-        param: 'response_id',
-      });
-    }
-    const message = CANCEL_TERMINAL_ERRORS[String(stored.response.status)];
-    if (message !== undefined) {
-      throw new ProtocolError(400, message, { code: 'invalid_request_error', param: 'response_id' });
-    }
-    if (stored.response.status === 'cancelled') {
-      // Idempotent: cancelling a cancelled response repeats the snapshot (Python's sentinel path).
-      return jsonResponse(stored.response, 200);
-    }
-    // A background record that is neither running here nor terminal: the run that owned it is
-    // gone — a restart, an eviction — and there is nothing left to signal (Python's cancel
-    // fallback answers 404 for exactly this state).
-    throw notFound(id);
-  }
-
-  async #inputItems(id: string, url: URL, owner: ResponseOwner): Promise<Response> {
-    const stored = await this.#store.get(id, owner);
-    let source: readonly OutputItem[];
-    if (stored !== undefined) {
-      source = stored.inputItems ?? [];
-    } else {
-      // An in-flight background response is publicly visible, and so are its input items
-      // (Python's runtime-state fallback in `handle_input_items`).
-      const run = this.#runFor(id, owner);
-      if (run === undefined) {
-        throw notFound(id);
-      }
-      source = run.inputItems;
-    }
-    const limit = parseLimit(url.searchParams.get('limit'));
-    const order = parseOrder(url.searchParams.get('order'));
-
-    let items = [...source];
-    if (order === 'desc') {
-      items.reverse();
-    }
-    const after = url.searchParams.get('after');
-    if (after !== null) {
-      const index = items.findIndex((item) => item.id === after);
-      items = index < 0 ? items : items.slice(index + 1);
-    }
-    const before = url.searchParams.get('before');
-    if (before !== null) {
-      const index = items.findIndex((item) => item.id === before);
-      items = index < 0 ? items : items.slice(0, index);
-    }
-
-    const page = items.slice(0, limit);
-    const body: InputItemList = {
-      object: 'list',
-      data: page,
-      first_id: page[0]?.id ?? null,
-      last_id: page[page.length - 1]?.id ?? null,
-      has_more: items.length > page.length,
-    };
-    return jsonResponse(body, 200);
   }
 
   /** Adds the headers the platform expects on every response. */
