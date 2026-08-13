@@ -1,7 +1,10 @@
 import { homedir } from 'node:os';
-import { resolveUnder } from '@polymind-inc/agent-framework-agentserver';
+import {
+  readJsonFile,
+  resolveUnder,
+  writeJsonFile,
+} from '@polymind-inc/agent-framework-agentserver/internal';
 import type { FunctionApprovalRequestContent } from '@polymind-inc/agent-framework-core';
-import { readJsonFile, writeJsonFile } from './json-file.js';
 
 /**
  * Remembers the approval requests this container issued, keyed by the id they went out under.

@@ -1,9 +1,9 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { rm } from 'node:fs/promises';
 import { stateRoot } from '../config.js';
 import { notFound } from '../errors.js';
 import { resolveUnder } from '../paths.js';
 import type { OutputItem, ResponseEvent } from '../wire.js';
+import { readJsonFile, writeJsonFile } from './json-file.js';
 import type { ResponseGeneration, ResponseOwner, ResponseProvider, StoredResponse } from './provider.js';
 import {
   assertOwnerCanWrite,
@@ -99,19 +99,7 @@ export class FileResponseProvider implements ResponseProvider {
    * instead of policed. `#readEvents` carries the same assertion for the same reason.
    */
   async #read(id: string): Promise<StoredResponse | undefined> {
-    return this.#readJson<StoredResponse>(this.#pathFor(id));
-  }
-
-  /** Reads and parses one JSON file, reading a missing file as absent. */
-  async #readJson<T>(path: string): Promise<T | undefined> {
-    try {
-      return JSON.parse(await readFile(path, 'utf8')) as T;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return undefined;
-      }
-      throw error;
-    }
+    return readJsonFile<StoredResponse>(this.#pathFor(id));
   }
 
   async get(id: string, owner: ResponseOwner): Promise<StoredResponse | undefined> {
@@ -121,7 +109,7 @@ export class FileResponseProvider implements ResponseProvider {
   async put(stored: StoredResponse): Promise<void> {
     return this.#serialized(stored.response.id, async () => {
       assertWritable(await this.#read(stored.response.id), stored);
-      await this.#writeAtomic(this.#pathFor(stored.response.id), stored);
+      await writeJsonFile(this.#pathFor(stored.response.id), stored);
     });
   }
 
@@ -133,18 +121,7 @@ export class FileResponseProvider implements ResponseProvider {
   }
 
   async #readEvents(id: string): Promise<StoredEventsFile | undefined> {
-    return this.#readJson<StoredEventsFile>(this.#eventsPathFor(id));
-  }
-
-  /**
-   * Atomically writes `payload` as JSON to `path`. Write-then-rename: a reader never sees a
-   * half-written file, even if the container is killed mid-write.
-   */
-  async #writeAtomic(path: string, payload: unknown): Promise<void> {
-    await mkdir(dirname(path), { recursive: true });
-    const temporary = `${path}.${crypto.randomUUID()}.tmp`;
-    await writeFile(temporary, JSON.stringify(payload), 'utf8');
-    await rename(temporary, path);
+    return readJsonFile<StoredEventsFile>(this.#eventsPathFor(id));
   }
 
   async putEvents(
@@ -173,7 +150,7 @@ export class FileResponseProvider implements ResponseProvider {
         generation,
         events: [...events],
       };
-      await this.#writeAtomic(this.#eventsPathFor(id), payload);
+      await writeJsonFile(this.#eventsPathFor(id), payload);
     });
   }
 

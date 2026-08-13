@@ -18,6 +18,7 @@ export default defineConfig({
       '@polymind-inc/agent-framework-foundry': src('../foundry/src/index.ts'),
       '@polymind-inc/agent-framework-agentserver/node': src('../agentserver/src/node.ts'),
       '@polymind-inc/agent-framework-agentserver/observability': src('../agentserver/src/observability.ts'),
+      '@polymind-inc/agent-framework-agentserver/internal': src('../agentserver/src/internal.ts'),
       '@polymind-inc/agent-framework-agentserver': src('../agentserver/src/index.ts'),
       '@polymind-inc/agent-framework-openai/internal': src('../openai/src/internal.ts'),
       '@polymind-inc/agent-framework-openai': src('../openai/src/index.ts'),
