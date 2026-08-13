@@ -6,6 +6,12 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **BREAKING** — **`@polymind-inc/agent-framework-openai`** — the `OpenAIChatClientOptions`
+  interface is renamed `OpenAIChatClientConfigBase`. It is the construction-time half of
+  `OpenAIChatClientConfig`, and the package convention names construction types `*Config` and
+  per-call types `*Options` (`OpenAIChatOptions` is unchanged); OpenAI was the one provider whose
+  construction type broke that rule. `OpenAIChatClientConfig` itself — what `new OpenAIChatClient(…)`
+  accepts — is unchanged, so only code that names the base interface directly is affected.
 - **BREAKING** — the MCP acronym in public identifiers is now spelled `Mcp`, matching the official
   `@modelcontextprotocol` SDK and this framework's own newer API (`McpConnection`,
   `mcpSkillsSource()`, `withMcpClientSpan`). The wire format is unaffected. Renames —

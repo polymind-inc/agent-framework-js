@@ -47,8 +47,8 @@ import {
   toResponsesTools,
 } from './to-openai.js';
 
-/** The options {@link OpenAIChatClient} takes regardless of how the model is decided. */
-export interface OpenAIChatClientOptions {
+/** The construction options {@link OpenAIChatClient} takes regardless of how the model is decided. */
+export interface OpenAIChatClientConfigBase {
   /**
    * A configured SDK client. Omit to build one from the environment (`OPENAI_API_KEY`).
    *
@@ -87,7 +87,7 @@ export interface OpenAIChatClientOptions {
  * `model` is required, except behind the explicit {@link EndpointNamedModel} opt-in: forgetting it
  * is a misconfiguration worth catching at compile time rather than as a service 400.
  */
-export type OpenAIChatClientConfig = OpenAIChatClientOptions & (NamedModel | EndpointNamedModel);
+export type OpenAIChatClientConfig = OpenAIChatClientConfigBase & (NamedModel | EndpointNamedModel);
 
 /** The ordinary case: the caller names the model or Azure deployment. */
 export interface NamedModel {
