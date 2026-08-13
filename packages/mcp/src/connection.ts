@@ -149,7 +149,7 @@ export interface McpCallToolOptions {
 /**
  * A lazily connected MCP session that survives a dropped connection.
  *
- * This is the connection-management layer {@link MCPClient} is built on, exposed for consumers
+ * This is the connection-management layer {@link McpClient} is built on, exposed for consumers
  * that speak MCP without the framework-tool packaging. Results come back as raw
  * `@modelcontextprotocol/client` types; converting them is the caller's responsibility.
  *

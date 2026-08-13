@@ -7,9 +7,9 @@ import type {
   ChatResponseUpdate,
   ClientErrorNormalizer,
   HostedTool,
-  MCPToolOptions,
+  McpToolOptions,
   Message,
-  SupportsMCPTool,
+  SupportsMcpTool,
   SupportsWebSearchTool,
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
@@ -113,7 +113,7 @@ export interface AnthropicChatClientConfig {
  *   loop and the authorization token is disclosed to it on every call.
  */
 export class AnthropicChatClient
-  implements ChatClient<AnthropicChatOptions>, SupportsMCPTool, SupportsWebSearchTool
+  implements ChatClient<AnthropicChatOptions>, SupportsMcpTool, SupportsWebSearchTool
 {
   readonly metadata: ChatClientMetadata;
   readonly #client: Anthropic;
@@ -152,8 +152,8 @@ export class AnthropicChatClient
     return this.#client;
   }
 
-  /** Declares a remote MCP server Anthropic calls directly. See {@link supportsMCP}. */
-  getMCPTool(options: MCPToolOptions): HostedTool {
+  /** Declares a remote MCP server Anthropic calls directly. See {@link supportsMcp}. */
+  getMcpTool(options: McpToolOptions): HostedTool {
     return mcpTool(options);
   }
 

@@ -92,7 +92,7 @@ describe('construction', () => {
 
   it('rejects a blank MCP server label with a ConfigurationError', () => {
     const { client } = clientWith([]);
-    expect(() => client.getMCPTool({ serverLabel: '  ', serverUrl: 'https://mcp.example/sse' })).toThrow(
+    expect(() => client.getMcpTool({ serverLabel: '  ', serverUrl: 'https://mcp.example/sse' })).toThrow(
       ConfigurationError,
     );
   });
@@ -167,7 +167,7 @@ describe('request mapping', () => {
       execute: () => 'ok',
     });
     const request = client.buildRequest([{ role: 'user', contents: [textContent('hi')] }], {
-      tools: [search, client.getMCPTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse' })],
+      tools: [search, client.getMcpTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse' })],
       toolChoice: 'required',
     });
 
@@ -189,12 +189,12 @@ describe('request mapping', () => {
     // (`_chat_client.py:520`), and the openai package already does the same.
     const { client } = clientWith([message('hi')]);
     const request = client.buildRequest([{ role: 'user', contents: [textContent('hi')] }], {
-      tools: [client.getMCPTool({ serverLabel: 'my docs', serverUrl: 'https://mcp.example/sse' })],
+      tools: [client.getMcpTool({ serverLabel: 'my docs', serverUrl: 'https://mcp.example/sse' })],
     });
 
     expect(request.mcp_servers).toEqual([{ type: 'url', name: 'my_docs', url: 'https://mcp.example/sse' }]);
     // The hosted tool's own name is the normalised label too, so an approval keyed by it matches.
-    expect(client.getMCPTool({ serverLabel: 'my docs', serverUrl: 'https://x' }).name).toBe('my_docs');
+    expect(client.getMcpTool({ serverLabel: 'my docs', serverUrl: 'https://x' }).name).toBe('my_docs');
   });
 
   it('maps tool choice, approximating a multi-name requirement as any', () => {
@@ -287,7 +287,7 @@ describe('beta namespace routing', () => {
     const { client, messages } = clientWith([message('hi')]);
 
     await client.getResponse([{ role: 'user', contents: [textContent('hello')] }], {
-      tools: [client.getMCPTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse' })],
+      tools: [client.getMcpTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse' })],
     });
 
     const request = messages.requests[0];

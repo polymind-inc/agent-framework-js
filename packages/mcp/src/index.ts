@@ -5,12 +5,12 @@
  * Built on `@modelcontextprotocol/client` v2 (protocol revision 2026-07-28).
  */
 
-export type { ApprovalPolicy, MCPClientConfig } from './client.js';
-export { MCPClient } from './client.js';
+export type { ApprovalPolicy, McpClientConfig } from './client.js';
+export { McpClient } from './client.js';
 export type { McpCallToolOptions, McpConnectionConfig } from './connection.js';
 export { McpConnection } from './connection.js';
 // headers.ts (origin-scoped header injection) is internal: consumers configure `headers` on
-// MCPClient or McpConnection rather than building the fetch wrapper themselves.
+// McpClient or McpConnection rather than building the fetch wrapper themselves.
 export type { McpHeaderProvider } from './headers.js';
 export type { McpResourceReader, McpSkillsSourceConfig } from './skills.js';
 export { mcpSkillsSource } from './skills.js';

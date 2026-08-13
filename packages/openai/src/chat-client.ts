@@ -9,11 +9,11 @@ import type {
   ContinuationToken,
   FileSearchToolOptions,
   HostedTool,
-  MCPToolOptions,
+  McpToolOptions,
   Message,
   SupportsCodeInterpreterTool,
   SupportsFileSearchTool,
-  SupportsMCPTool,
+  SupportsMcpTool,
   SupportsWebSearchTool,
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
@@ -218,7 +218,7 @@ export class OpenAIChatClient
     SupportsWebSearchTool,
     SupportsFileSearchTool,
     SupportsCodeInterpreterTool,
-    SupportsMCPTool
+    SupportsMcpTool
 {
   readonly metadata: ChatClientMetadata;
   readonly #client: OpenAI;
@@ -301,8 +301,8 @@ export class OpenAIChatClient
     return codeInterpreterTool(options);
   }
 
-  /** Declares a remote MCP server the provider calls directly. See {@link supportsMCP}. */
-  getMCPTool(options: MCPToolOptions): HostedTool {
+  /** Declares a remote MCP server the provider calls directly. See {@link supportsMcp}. */
+  getMcpTool(options: McpToolOptions): HostedTool {
     return mcpTool(options);
   }
 

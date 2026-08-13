@@ -1,4 +1,4 @@
-import { supportsMCP, supportsWebSearch, textContent } from '@polymind-inc/agent-framework-core';
+import { supportsMcp, supportsWebSearch, textContent } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it } from 'vitest';
 import { AnthropicChatClient } from './chat-client.js';
 import { webSearchTool } from './hosted-tools.js';
@@ -50,7 +50,7 @@ describe('hosted tool capability protocol', () => {
   it('advertises web search and MCP', () => {
     const c = client();
     expect(supportsWebSearch(c)).toBe(true);
-    expect(supportsMCP(c)).toBe(true);
+    expect(supportsMcp(c)).toBe(true);
   });
 
   it('delegates getWebSearchTool to the factory', () => {

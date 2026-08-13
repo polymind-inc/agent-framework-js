@@ -9,7 +9,7 @@ import type {
 import {
   supportsCodeInterpreter,
   supportsFileSearch,
-  supportsMCP,
+  supportsMcp,
   supportsWebSearch,
   textContent,
 } from '@polymind-inc/agent-framework-core';
@@ -41,13 +41,13 @@ describe('hosted tool capability protocol', () => {
     expect(supportsWebSearch(c)).toBe(true);
     expect(supportsFileSearch(c)).toBe(true);
     expect(supportsCodeInterpreter(c)).toBe(true);
-    expect(supportsMCP(c)).toBe(true);
+    expect(supportsMcp(c)).toBe(true);
   });
 
   it('does not claim capabilities for a client that has none', () => {
     const bare = { metadata: { providerName: 'x' }, getResponse: () => undefined as never };
     expect(supportsWebSearch(bare)).toBe(false);
-    expect(supportsMCP(bare)).toBe(false);
+    expect(supportsMcp(bare)).toBe(false);
   });
 
   it('maps hosted declarations onto the wire verbatim', () => {
@@ -56,7 +56,7 @@ describe('hosted tool capability protocol', () => {
       c.getWebSearchTool({ searchContextSize: 'high', userLocation: { country: 'JP' } }),
       c.getFileSearchTool({ vectorStoreIds: ['vs_1'], maxNumResults: 5 }),
       c.getCodeInterpreterTool({ fileIds: ['file_1'] }),
-      c.getMCPTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse', requireApproval: 'never' }),
+      c.getMcpTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse', requireApproval: 'never' }),
     ];
 
     expect(toResponsesTools(tools)).toEqual([
@@ -84,7 +84,7 @@ describe('hosted tool capability protocol', () => {
     // The API's object form is `{always: {tool_names}, never: {tool_names}}` (SDK
     // `Mcp.McpToolApprovalFilter`); bare arrays are rejected. Labels with spaces are
     // normalised the way Python's `get_mcp_tool` does.
-    const tool = client().getMCPTool({
+    const tool = client().getMcpTool({
       serverLabel: 'my docs',
       serverUrl: 'https://mcp.example/sse',
       requireApproval: { always: ['dangerous_tool'], never: ['safe_tool'] },
@@ -102,7 +102,7 @@ describe('hosted tool capability protocol', () => {
   });
 
   it('keeps a one-sided MCP approval filter one-sided', () => {
-    const tool = client().getMCPTool({
+    const tool = client().getMcpTool({
       serverLabel: 'docs',
       serverUrl: 'https://mcp.example/sse',
       requireApproval: { always: ['dangerous_tool'] },

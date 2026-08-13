@@ -16,7 +16,7 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { MCPClient } from './client.js';
+import { McpClient } from './client.js';
 import { fromMcpContent } from './content.js';
 import type { TestTool } from './test-server.js';
 import { TestMcpServer } from './test-server.js';
@@ -46,7 +46,7 @@ function server(): TestMcpServer {
 
 describe('tool enumeration', () => {
   it('stays disconnected until tools are needed', async () => {
-    const mcp = new MCPClient({ transport: server() });
+    const mcp = new McpClient({ transport: server() });
     expect(mcp.connected).toBe(false);
 
     await mcp.getTools();
@@ -60,7 +60,7 @@ describe('tool enumeration', () => {
     // the capability is what invites `sampling/createMessage` and `elicitation/create`, so a
     // well-behaved server never sends either. See the package README for why they are out of scope.
     const transport = server();
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
 
     await mcp.getTools();
 
@@ -71,7 +71,7 @@ describe('tool enumeration', () => {
   });
 
   it('exposes the server tools with their own schemas', async () => {
-    const mcp = new MCPClient({ transport: server() });
+    const mcp = new McpClient({ transport: server() });
 
     const tools = await mcp.getTools();
 
@@ -86,7 +86,7 @@ describe('tool enumeration', () => {
   });
 
   it('leaves the description empty when the server declares none', async () => {
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([{ name: 'bare', call: () => ({ content: [] }) }]),
     });
     const [bare] = await mcp.getTools();
@@ -96,14 +96,14 @@ describe('tool enumeration', () => {
   });
 
   it('honours the allowlist', async () => {
-    const mcp = new MCPClient({ transport: server(), allowedTools: ['echo'] });
+    const mcp = new McpClient({ transport: server(), allowedTools: ['echo'] });
     const tools = await mcp.getTools();
     expect(tools.map((t) => t.name)).toEqual(['echo']);
     await mcp.close();
   });
 
   it('applies the approval policy', async () => {
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: server(),
       approvalMode: (name) => (name === 'echo' ? 'never_require' : 'always_require'),
     });
@@ -117,7 +117,7 @@ describe('tool enumeration', () => {
   });
 
   it('applies a constant approval mode to every tool', async () => {
-    const mcp = new MCPClient({ transport: server(), approvalMode: 'always_require' });
+    const mcp = new McpClient({ transport: server(), approvalMode: 'always_require' });
     const tools = await mcp.getTools();
     expect(new Set(tools.map((t) => t.approvalMode))).toEqual(new Set(['always_require']));
     await mcp.close();
@@ -132,7 +132,7 @@ describe('tool enumeration', () => {
       return new Response('nope', { status: 500 });
     }) as unknown as typeof globalThis.fetch;
     let issued = 0;
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       url: 'https://mcp.example.com/mcp',
       headers: () => {
         issued += 1;
@@ -148,11 +148,11 @@ describe('tool enumeration', () => {
   });
 
   it('refuses a configuration without exactly one connection source', () => {
-    expect(() => new MCPClient({})).toThrow(ConfigurationError);
-    expect(() => new MCPClient({ url: 'https://example.com/mcp', transport: server() })).toThrow(
+    expect(() => new McpClient({})).toThrow(ConfigurationError);
+    expect(() => new McpClient({ url: 'https://example.com/mcp', transport: server() })).toThrow(
       ConfigurationError,
     );
-    expect(() => new MCPClient({ transport: server(), transportFactory: server })).toThrow(
+    expect(() => new McpClient({ transport: server(), transportFactory: server })).toThrow(
       ConfigurationError,
     );
   });
@@ -161,7 +161,7 @@ describe('tool enumeration', () => {
 describe('tool invocation', () => {
   it('calls the server and returns its content', async () => {
     const transport = server();
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
     const [echo] = await mcp.getTools();
 
     const result = await echo?.execute?.({ value: 'hi' }, { callId: 'call_1' });
@@ -172,7 +172,7 @@ describe('tool invocation', () => {
   });
 
   it('turns an isError result into a ToolInvocationError carrying the text', async () => {
-    const mcp = new MCPClient({ transport: server() });
+    const mcp = new McpClient({ transport: server() });
     const tools = await mcp.getTools();
     const explode = tools.find((t) => t.name === 'explode');
 
@@ -181,7 +181,7 @@ describe('tool invocation', () => {
   });
 
   it('supplies a generic message when an error result carries no text', async () => {
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([
         { name: 'mute-failure', description: 'fails silently', call: () => ({ content: [], isError: true }) },
       ]),
@@ -195,7 +195,7 @@ describe('tool invocation', () => {
   });
 
   it('wraps a protocol-level failure', async () => {
-    const mcp = new MCPClient({ transport: server() });
+    const mcp = new McpClient({ transport: server() });
     const tools = await mcp.getTools();
     const crash = tools.find((t) => t.name === 'crash');
 
@@ -206,7 +206,7 @@ describe('tool invocation', () => {
   it('surfaces structuredContent as a JSON text content', async () => {
     // A server may answer with *only* structuredContent; dropping it would hand the model an
     // empty result. Python appends json.dumps(structuredContent) as a text content.
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([
         { name: 'structured', call: () => ({ content: [], structuredContent: { answer: 42 } }) },
       ]),
@@ -220,7 +220,7 @@ describe('tool invocation', () => {
   });
 
   it('appends structuredContent after the regular content', async () => {
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([
         {
           name: 'both',
@@ -245,7 +245,7 @@ describe('tool invocation', () => {
     // `additional_properties["_meta"]` (`_mcp.py` `_parse_tool_result_from_mcp`) so downstream
     // security layers can derive per-item labels; dropping it loses that signal entirely.
     const meta = { ifc: { label: 'confidential' } };
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([
         {
           name: 'labelled',
@@ -270,7 +270,7 @@ describe('tool invocation', () => {
   it('leaves additionalProperties alone when the result carries no _meta', async () => {
     // Python only passes `additional_properties` when the envelope is non-empty (`if meta`), so an
     // ordinary result must not grow an empty one.
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([
         { name: 'plain', call: () => ({ content: [{ type: 'text', text: 'a' }], _meta: {} }) },
       ]),
@@ -287,7 +287,7 @@ describe('tool invocation', () => {
     // Python builds the structuredContent text *without* `**additional_kwargs` and the empty-result
     // "null" text *with* it. Mirror that split rather than tidying it up.
     const meta = { ifc: { label: 'confidential' } };
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([
         { name: 'structured', call: () => ({ content: [], structuredContent: { a: 1 }, _meta: meta }) },
         { name: 'silent', call: () => ({ content: [], _meta: meta }) },
@@ -309,7 +309,7 @@ describe('tool invocation', () => {
 
   it('returns a literal "null" text for an empty result', async () => {
     // Python parity: the model sees an answer instead of an absent one.
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transport: new TestMcpServer([{ name: 'silent', call: () => ({ content: [] }) }]),
     });
     const [silent] = await mcp.getTools();
@@ -337,7 +337,7 @@ describe('connection recovery', () => {
 
   it('reconnects and retries once when the connection dies under a call', async () => {
     const transports: TestMcpServer[] = [];
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transportFactory: () => {
         const transport = echoServer(transports.length === 0 ? [2] : []);
         transports.push(transport);
@@ -361,7 +361,7 @@ describe('connection recovery', () => {
 
   it('retries at most once, then recovers on the next call', async () => {
     const transports: TestMcpServer[] = [];
-    const mcp = new MCPClient({
+    const mcp = new McpClient({
       transportFactory: () => {
         const transport = echoServer(transports.length < 2 ? [1] : []);
         transports.push(transport);
@@ -386,7 +386,7 @@ describe('connection recovery', () => {
 
   it('does not restart a supplied one-shot transport after connection loss', async () => {
     const transport = echoServer([1]);
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
     const [echo] = await mcp.getTools();
 
     await expect(echo?.execute?.({ value: 'one' }, { callId: 'call_1' })).rejects.toThrow(
@@ -398,7 +398,7 @@ describe('connection recovery', () => {
 
   it('does not treat a protocol error as a dead connection', async () => {
     const transport = server();
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
     const crash = (await mcp.getTools()).find((t) => t.name === 'crash');
 
     await expect(crash?.execute?.({}, { callId: 'call_1' })).rejects.toThrow(/server exploded/);
@@ -412,7 +412,7 @@ describe('connection recovery', () => {
     const transport = new SlowStartServer([
       { name: 'echo', call: () => ({ content: [{ type: 'text', text: 'hi' }] }) },
     ]);
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
 
     const pending = mcp.getTools();
     await transport.reached;
@@ -504,7 +504,7 @@ describe('cancellation', () => {
         return { content: [{ type: 'text', text: 'ok' }] };
       });
     try {
-      const mcp = new MCPClient({ transport: echoServer() });
+      const mcp = new McpClient({ transport: echoServer() });
       const [echo] = await mcp.getTools();
       const controller = new AbortController();
 
@@ -532,7 +532,7 @@ describe('cancellation', () => {
         return { content: [{ type: 'text', text: 'ok' }] };
       });
     try {
-      const mcp = new MCPClient({ transportFactory: echoServer });
+      const mcp = new McpClient({ transportFactory: echoServer });
       const [echo] = await mcp.getTools();
       const controller = new AbortController();
 
@@ -549,7 +549,7 @@ describe('cancellation', () => {
 
   it('never puts an already-aborted call on the wire', async () => {
     const transport = echoServer();
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
     const [echo] = await mcp.getTools();
     const controller = new AbortController();
     controller.abort();
@@ -565,7 +565,7 @@ describe('cancellation', () => {
     const transport = new HangingCallServer([
       { name: 'slow', call: () => ({ content: [{ type: 'text', text: 'never' }] }) },
     ]);
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
     const [slow] = await mcp.getTools();
     const controller = new AbortController();
 
@@ -734,7 +734,7 @@ describe('content conversion', () => {
 describe('through the agent', () => {
   it('runs a full tool round against the server', async () => {
     const transport = server();
-    const mcp = new MCPClient({ transport });
+    const mcp = new McpClient({ transport });
     const tools = await mcp.getTools();
     const client = new MockChatClient([
       { contents: [{ type: 'function_call', callId: 'call_1', name: 'echo', arguments: { value: 'hi' } }] },
@@ -757,7 +757,7 @@ describe('through the agent', () => {
   });
 
   it('reports a failing MCP tool to the model instead of failing the run', async () => {
-    const mcp = new MCPClient({ transport: server() });
+    const mcp = new McpClient({ transport: server() });
     const tools = await mcp.getTools();
     const client = new MockChatClient([
       { contents: [{ type: 'function_call', callId: 'call_1', name: 'explode', arguments: {} }] },
@@ -782,7 +782,7 @@ describe('telemetry', () => {
     const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
     trace.setGlobalTracerProvider(provider);
     try {
-      const mcp = new MCPClient({ transport: server() });
+      const mcp = new McpClient({ transport: server() });
       const [echo] = await mcp.getTools();
       await echo?.execute?.({ value: 'hi' }, { callId: 'call_1' });
       const tools = await mcp.getTools();
