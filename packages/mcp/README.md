@@ -6,7 +6,7 @@
 > this package to its exact version. Installing this package directly works and resolves to the
 > same modules, but examples and documentation import through the main package.
 
-Model Context Protocol client integration for the Agent Framework: `MCPClient` connects to an MCP
+Model Context Protocol client integration for the Agent Framework: `McpClient` connects to an MCP
 server and exposes its tools as framework `FunctionTool`s, so an agent calls them like any other
 tool. Built on `@modelcontextprotocol/client` v2. Each `tools/call` is traced as an MCP client span
 per the OpenTelemetry MCP semantic conventions.
@@ -58,7 +58,7 @@ above can read per-item labels a server attached.
 
 ## Connection sources
 
-`MCPClient` accepts exactly one connection source:
+`McpClient` accepts exactly one connection source:
 
 - `url` creates a fresh Streamable HTTP transport when the connection must be reopened.
 - `transportFactory` creates a fresh stdio, in-memory, or custom transport per connection attempt

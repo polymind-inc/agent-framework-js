@@ -20,7 +20,7 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { describe, expect, it } from 'vitest';
-import { MCPClient } from './client.js';
+import { McpClient } from './client.js';
 
 const url = process.env.MCP_SERVER_URL;
 const authToken = process.env.MCP_AUTH_TOKEN;
@@ -34,8 +34,8 @@ function must<T>(value: T | null | undefined): T {
   return value;
 }
 
-function connect(): MCPClient {
-  return new MCPClient({
+function connect(): McpClient {
+  return new McpClient({
     url: must(url),
     ...(authToken === undefined ? {} : { headers: { authorization: `Bearer ${authToken}` } }),
   });
@@ -94,7 +94,7 @@ describe.runIf(url !== undefined && url !== '')('MCP client (integration)', () =
     // the wrong route. The connection must fail rather than hang, and it must fail on the first
     // `getTools()` rather than at construction, since the client is deliberately lazy.
     const origin = new URL(must(url)).origin;
-    const mcp = new MCPClient({ url: origin });
+    const mcp = new McpClient({ url: origin });
 
     expect(mcp.connected).toBe(false);
     await expect(mcp.getTools()).rejects.toBeInstanceOf(Error);

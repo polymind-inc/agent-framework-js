@@ -1,4 +1,4 @@
-import { context, trace } from '@opentelemetry/api';
+import { context, SpanStatusCode, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import {
@@ -12,6 +12,7 @@ import { withChatTelemetry } from '../client/telemetry.js';
 import { MockChatClient } from '../client/test-support.js';
 import { tool } from '../tools/tool.js';
 import { textContent } from '../types/content.js';
+import { message } from '../types/message.js';
 import { agentResponse } from '../types/response.js';
 import { GEN_AI } from './attributes.js';
 import { configureObservability, getTracer } from './settings.js';
@@ -104,6 +105,20 @@ describe('GenAI tracing', () => {
         .map(parentOf),
     ).toEqual(['invoke_agent weather-bot', 'invoke_agent weather-bot']);
     expect(parentOf(invoke)).toBeUndefined();
+  });
+
+  it('ends the run span when capturing the input messages fails', async () => {
+    configureObservability({ captureMessageContent: true });
+    const mock = new MockChatClient([{ contents: [textContent('ok')], finishReason: 'stop' }]);
+    const agent = new Agent({ client: mock, name: 'leaky-bot' });
+
+    // A BigInt has no JSON serialization, so recording the input messages throws after the span
+    // has already been started; the failure must still end the span it started.
+    const poisoned = message('user', [{ type: 'text', text: 1n as unknown as string }]);
+    await expect(agent.run(poisoned)).rejects.toThrow(/BigInt/);
+
+    expect(startedSpanNames).toContain('invoke_agent leaky-bot');
+    expect(must(byName('invoke_agent leaky-bot')).status.code).toBe(SpanStatusCode.ERROR);
   });
 
   it('nests the same way when the caller streams', async () => {

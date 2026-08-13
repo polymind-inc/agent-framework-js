@@ -313,7 +313,7 @@ export function withMiddleware<TOptions extends ChatOptions>(
 ): ChatClient<TOptions> & { readonly middleware: readonly Middleware[] } {
   const existing = (client as { middleware?: readonly Middleware[] }).middleware ?? [];
   // The hosted-tool capability protocol is duck-typed on method presence, so the wrapper
-  // has to carry the underlying client's capability methods or `supportsMCP` and friends would
+  // has to carry the underlying client's capability methods or `supportsMcp` and friends would
   // report a capable client as incapable after wrapping.
   const capabilities: Record<string, unknown> = {};
   for (const method of HOSTED_TOOL_CAPABILITY_METHODS) {

@@ -137,7 +137,7 @@ describe('FoundryChatClient', () => {
       vector_store_ids: ['vs_1'],
     });
     expect(client.getCodeInterpreterTool().spec).toMatchObject({ type: 'code_interpreter' });
-    expect(client.getMCPTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example' }).spec).toMatchObject({
+    expect(client.getMcpTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example' }).spec).toMatchObject({
       type: 'mcp',
       server_label: 'docs',
     });

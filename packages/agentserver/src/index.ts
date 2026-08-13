@@ -66,7 +66,6 @@ export { isTerminalEventType, TERMINAL_EVENT_TYPES } from './wire.js';
 
 export type { LifecycleViolation } from './lifecycle.js';
 
-export { resolveUnder, validatePathSegment } from './paths.js';
 export type {
   HandlerContext,
   ResponseHandler,

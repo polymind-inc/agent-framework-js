@@ -2,7 +2,7 @@ import type {
   CodeInterpreterToolOptions,
   FileSearchToolOptions,
   HostedTool,
-  MCPToolOptions,
+  McpToolOptions,
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
 import { ConfigurationError, hostedTool, withoutUndefined } from '@polymind-inc/agent-framework-core';
@@ -65,7 +65,7 @@ export function codeInterpreterTool(options: CodeInterpreterToolOptions = {}): H
  * and the server is chosen by URL — a compromised or hostile one runs with whatever the tools can
  * reach. `headers` is sent to that server on every call, so anything in it is disclosed to it.
  */
-export function mcpTool(options: MCPToolOptions): HostedTool {
+export function mcpTool(options: McpToolOptions): HostedTool {
   if (options.serverLabel.trim() === '') {
     throw new ConfigurationError('mcpTool requires a non-empty serverLabel.');
   }

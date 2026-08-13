@@ -158,10 +158,10 @@ export type {
   CodeInterpreterToolOptions,
   FileSearchToolOptions,
   HostedTool,
-  MCPToolOptions,
+  McpToolOptions,
   SupportsCodeInterpreterTool,
   SupportsFileSearchTool,
-  SupportsMCPTool,
+  SupportsMcpTool,
   SupportsWebSearchTool,
   WebSearchToolOptions,
 } from './tools/hosted.js';
@@ -169,7 +169,7 @@ export {
   hostedTool,
   supportsCodeInterpreter,
   supportsFileSearch,
-  supportsMCP,
+  supportsMcp,
   supportsWebSearch,
 } from './tools/hosted.js';
 export type { JsonSchema, SchemaInput } from './tools/json-schema.js';

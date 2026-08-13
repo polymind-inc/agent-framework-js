@@ -54,7 +54,7 @@ export interface CodeInterpreterToolOptions {
 }
 
 /** Options for a provider-hosted (remote) MCP server. */
-export interface MCPToolOptions {
+export interface McpToolOptions {
   /** The label the provider reports on `mcp_call` items. */
   serverLabel: string;
   serverUrl?: string;
@@ -85,15 +85,15 @@ export interface SupportsCodeInterpreterTool {
 }
 
 /** A client that can attach a remote MCP server the provider talks to directly. */
-export interface SupportsMCPTool {
-  getMCPTool(options: MCPToolOptions): HostedTool;
+export interface SupportsMcpTool {
+  getMcpTool(options: McpToolOptions): HostedTool;
 }
 
 /** The method names of the duck-typed hosted-tool capability protocol defined above. */
 type CapabilityMethod = keyof (SupportsWebSearchTool &
   SupportsFileSearchTool &
   SupportsCodeInterpreterTool &
-  SupportsMCPTool);
+  SupportsMcpTool);
 
 /**
  * Every capability method, keyed exhaustively so the compiler flags this record when a capability
@@ -105,7 +105,7 @@ const CAPABILITY_METHOD_RECORD: Record<CapabilityMethod, true> = {
   getWebSearchTool: true,
   getFileSearchTool: true,
   getCodeInterpreterTool: true,
-  getMCPTool: true,
+  getMcpTool: true,
 };
 
 /** The hosted-tool capability methods a wrapping client must carry over from the wrapped one. */
@@ -133,6 +133,6 @@ export function supportsCodeInterpreter(
 }
 
 /** Narrows a client that can attach a remote MCP server. */
-export function supportsMCP(client: ChatClient): client is ChatClient & SupportsMCPTool {
-  return hasMethod(client, 'getMCPTool');
+export function supportsMcp(client: ChatClient): client is ChatClient & SupportsMcpTool {
+  return hasMethod(client, 'getMcpTool');
 }

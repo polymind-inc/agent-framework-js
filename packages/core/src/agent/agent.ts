@@ -1,5 +1,5 @@
 import type { Span } from '@opentelemetry/api';
-import type { ChatClient, ChatOptions, ResponseFormat } from '../client/chat-client.js';
+import type { ChatClient, ChatOptions, ChatResponseStream, ResponseFormat } from '../client/chat-client.js';
 import type { FunctionInvocationConfig } from '../client/function-invocation.js';
 import { withFunctionInvocation } from '../client/function-invocation.js';
 import { applyStructuredOutput } from '../client/structured-output.js';
@@ -175,6 +175,12 @@ export interface AgentConfig<TOptions extends ChatOptions = ChatOptions> {
  */
 interface ClientWithMiddleware {
   readonly middleware?: readonly Middleware[];
+}
+
+/** A context provider paired with the run context handed to its hooks for one run. */
+interface ProviderRunEntry {
+  provider: ContextProvider;
+  ctx: ProviderRunContext;
 }
 
 function concatInstructions(parts: ReadonlyArray<string | undefined>): string | undefined {
@@ -447,13 +453,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     const inputMessages = resuming ? continuation.inputMessages : callerMessages;
 
     const signal = options?.signal;
-    // The effective format follows the same precedence as #mergeOptions, so a format supplied
-    // through `defaultOptions` or `run({ options })` fills `response.value` too.
-    // Only the explicit `responseFormat` parameter carries the static type, hence `StructuredValue`.
-    const responseFormat: ResponseFormat | undefined =
-      options?.responseFormat ?? options?.options?.responseFormat ?? this.#defaultOptions.responseFormat;
+    const responseFormat = this.#effectiveResponseFormat(options);
 
-    let providerContexts: Array<{ provider: ContextProvider; ctx: ProviderRunContext }> = [];
+    let providerContexts: ProviderRunEntry[] = [];
     // Captured for `afterRun`: what the providers injected is decided during `start`, but a
     // history provider is only told about it once the run is over.
     let injectedMessages: readonly Message[] = [];
@@ -476,70 +478,21 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       runSpan = undefined;
     };
 
+    /** Notifies the providers once, on whichever path ends the run first. */
     const runAfterRun = async (response?: AgentResponse<unknown>, error?: unknown): Promise<void> => {
       if (afterRunDone) {
         return;
       }
       afterRunDone = true;
-      // The session can become service-managed while the run is in flight, which retires the
-      // default history provider for this run: its stored transcript is no longer the source of
-      // truth, so appending to it would make the next run replay messages the service also sends
-      // (Go `shouldStoreHistoryProvider`).
-      const serviceOwnsHistory = activeSession?.serviceSessionId !== undefined;
-      for (const { provider, ctx } of providerContexts) {
-        if (provider.afterRun === undefined) {
-          continue;
-        }
-        if (serviceOwnsHistory && provider === this.historyProvider) {
-          continue;
-        }
-        const afterCtx: ProviderAfterRunContext = {
-          ...ctx,
-          contextMessages: injectedMessages,
-          ...(response === undefined ? {} : { response }),
-          ...(error === undefined ? {} : { error }),
-        };
-        await provider.afterRun(afterCtx);
-      }
-    };
-
-    /**
-     * Fails a run where both the service and an explicit history provider claim the transcript.
-     *
-     * Go `handleHistoryProviderConflict`. Checked again after the run because the session can be
-     * promoted to service-managed while it is in flight.
-     */
-    const rejectHistoryConflict = (session: AgentSession): void => {
-      if (session.serviceSessionId !== undefined && this.hasExplicitHistoryProvider) {
-        throw new ConfigurationError(
-          `Session '${session.sessionId}' has a serviceSessionId, so the service manages history, ` +
-            'but this agent was configured with an explicit historyProvider. Use one or the other.',
-        );
-      }
+      await this.#notifyProvidersAfterRun(providerContexts, injectedMessages, activeSession, response, error);
     };
 
     const start = async (ctx: { stream: boolean }): Promise<AsyncIterable<AgentResponseUpdate>> => {
       const session = presetSession ?? options?.session ?? this.createSession();
       activeSession = session;
-      rejectHistoryConflict(session);
-      const usesServiceHistory = session.serviceSessionId !== undefined;
-
-      const accumulator: RunContextAccumulator = { messages: [], instructions: [], tools: [] };
-      // When the service owns the transcript, the default in-memory history provider steps aside.
-      const providers: ContextProvider[] = usesServiceHistory
-        ? [...this.#contextProviders]
-        : [this.historyProvider, ...this.#contextProviders];
-
-      providerContexts = providers.map((provider) => ({
-        provider,
-        ctx: createProviderRunContext(provider, {
-          agent: { id: this.id, ...(this.name === undefined ? {} : { name: this.name }) },
-          session,
-          inputMessages,
-          accumulator,
-          ...(signal === undefined ? {} : { signal }),
-        }),
-      }));
+      this.#rejectHistoryConflict(session);
+      const prepared = this.#createProviderContexts(session, inputMessages, signal);
+      providerContexts = prepared.providerContexts;
 
       // A resumed run re-enters mid-exchange: history and context were already applied when the
       // operation started, so only the `afterRun` half runs (Go `historyProviderForRun`).
@@ -549,144 +502,56 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         }
       }
 
-      injectedMessages = [...accumulator.messages];
-      const messages: Message[] = resuming ? [] : [...accumulator.messages, ...inputMessages];
+      injectedMessages = [...prepared.accumulator.messages];
+      const messages: Message[] = resuming ? [] : [...prepared.accumulator.messages, ...inputMessages];
       const chatOptions = this.#mergeOptions(
         options,
-        accumulator,
+        prepared.accumulator,
         session,
         continuation.innerToken,
         functionMiddleware,
       );
-      const client = withToolApproval(this.#client, sessionApprovalStore(session), {
-        ...(this.#functionInvocation.additionalTools === undefined
-          ? {}
-          : { additionalTools: this.#functionInvocation.additionalTools }),
-      });
+      const client = this.#approvalClient(session);
 
-      runSpan = startSpan(
-        spanName(GEN_AI_OPERATION.invokeAgent, this.name ?? this.id),
-        agentSpanAttributes({
-          id: this.id,
-          ...(this.name === undefined ? {} : { name: this.name }),
-          ...(this.description === undefined ? {} : { description: this.description }),
-          providerName: this.#client.metadata.providerName,
-          ...(chatOptions.model === undefined ? {} : { model: chatOptions.model }),
-          ...(session.serviceSessionId === undefined ? {} : { conversationId: session.serviceSessionId }),
-        }),
-      );
-      setMessageContent(runSpan, GEN_AI.inputMessages, messages);
+      const span = this.#startRunSpan(session, chatOptions.model);
+      runSpan = span;
+      // Capturing the input messages serializes caller-supplied content and can throw; it runs
+      // only after the span is assigned above, so the teardown can end what was started.
+      setMessageContent(span, GEN_AI.inputMessages, messages);
       const inner = client.getResponse(messages, chatOptions);
-      const span = runSpan;
-      const agentName = this.name;
-      const agentId = this.id;
       // Everything the caller will have seen by the time a token is issued, so a resumed run can
       // persist the whole exchange rather than just its tail (Go `continuationUpdates`).
       const seen: AgentResponseUpdate[] = [...continuation.updates];
-      const wantsTokenReplay = ctx.stream;
+      const mapUpdate = this.#createUpdateMapper({
+        session,
+        inputMessages,
+        seen,
+        wantsTokenReplay: ctx.stream,
+      });
 
-      /**
-       * Keeps a service-managed session pointing at the newest turn.
-       *
-       * Runs per update rather than at the end (Python `_propagate_conversation_id`) so a caller
-       * who abandons a stream still holds a session that can continue the conversation.
-       *
-       * A session that is *not* already service-managed is never promoted here: with `store`
-       * defaulting to on, every response carries an id, and adopting one would silently move the
-       * transcript from the framework to the provider. Handing the framework a conversation id is
-       * the caller's decision to make.
-       */
-      const stableConversationId = this.#client.metadata.stableConversationId;
-      const propagateConversationId = (update: ChatResponseUpdate): void => {
-        const conversationId = update.conversationId;
-        const current = session.serviceSessionId;
-        if (
-          conversationId === undefined ||
-          conversationId === '' ||
-          current === undefined ||
-          current === conversationId
-        ) {
-          return;
-        }
-        // An anchor the provider declares stable stays the session's id: a per-response id
-        // reported mid-run must not unhook the session from the stored conversation. The same
-        // guard the function-calling loop applies between tool rounds, applied where the
-        // reference puts it — on the session update itself (Go `updateConversationID`).
-        if (stableConversationId?.(current) === true) {
-          return;
-        }
-        session.serviceSessionId = conversationId;
-      };
-
-      const mapUpdate = (update: ChatResponseUpdate): AgentResponseUpdate => {
-        propagateConversationId(update);
-        const mapped = chatToAgentUpdate(update, {
-          ...(agentName === undefined ? {} : { agentName }),
-          agentId,
-        });
-        seen.push(mapped);
-        if (mapped.continuationToken !== undefined) {
-          // Both halves ride on the same gate (Go `agent.go`): an awaited run folds its own
-          // updates *and* has already persisted its own input, so carrying either in the token
-          // makes the resumed run store the exchange a second time.
-          mapped.continuationToken = wrapContinuationToken(
-            mapped.continuationToken,
-            wantsTokenReplay ? inputMessages : [],
-            wantsTokenReplay ? seen : [],
-          );
-        }
-        return mapped;
-      };
-
-      const carried = continuation.updates;
-
-      async function* pipe(): AsyncGenerator<AgentResponseUpdate> {
-        try {
-          // The updates the suspended run already produced come first, so a resumed stream reads
-          // as one continuous response.
-          yield* carried;
-          if (ctx.stream) {
-            // Driven inside the run span so the tool loop's `chat` and `execute_tool` spans become
-            // its children — the generator body would otherwise run outside any span context.
-            for await (const update of withActiveSpan(span, inner)) {
-              yield mapUpdate(update);
-            }
-          } else {
-            const response = await inActiveSpan(span, () => inner);
-            for (const update of chatResponseToUpdates(response)) {
-              yield mapUpdate(update);
-            }
-          }
-        } catch (error) {
+      return this.#pipeUpdates({
+        stream: ctx.stream,
+        span,
+        inner,
+        carried: continuation.updates,
+        mapUpdate,
+        onError: async (error: unknown): Promise<void> => {
           runFailure = error;
           await runAfterRun(undefined, error);
-          throw error;
-        }
-      }
-      return pipe();
-    };
-
-    const finalize = (updates: AgentResponseUpdate[]): AgentResponse<StructuredValue<TFormat>> => {
-      const response = mergeUpdates<StructuredValue<TFormat>>(updates);
-      response.agentId = this.id;
-      if (this.name !== undefined) {
-        for (const msg of response.messages) {
-          msg.authorName ??= this.name;
-        }
-      }
-      return response;
+        },
+      });
     };
 
     return createResponseStream<AgentResponseUpdate, AgentResponse<StructuredValue<TFormat>>>({
       start,
-      finalize,
+      finalize: (updates: AgentResponseUpdate[]) => this.#finalizeResponse<StructuredValue<TFormat>>(updates),
       onResult: [
         async (response, resultCtx) => {
           try {
             // Re-checked here because the session may have been promoted to service-managed during
             // the run; storing into an explicit provider now would fork the transcript.
             if (activeSession !== undefined) {
-              rejectHistoryConflict(activeSession);
+              this.#rejectHistoryConflict(activeSession);
             }
             if (runSpan !== undefined) {
               setResponseAttributes(runSpan, response);
@@ -732,11 +597,11 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
             // every `MoveNextAsync()` (`ChatClientAgent.RunCoreStreamingAsync` →
             // `NotifyProvidersOfFailureAtEndOfRunAsync`), which is where a cancellation between
             // pulls lands there. Here the equivalent abort is raised by `throwIfAborted` *outside*
-            // the generator, so `pipe()`'s own `catch` never sees it — and neither does a consumer
-            // `iterator.throw()`, which closes the generator with a return completion. Without this
-            // the run would end with no `afterRun` at all, so a provider holding resources for the
-            // run never gets told to let go. `runAfterRun` is once-only, so the paths that already
-            // reported the failure from `pipe()` do not report it twice.
+            // the generator, so the update pipe's own `catch` never sees it — and neither does a
+            // consumer `iterator.throw()`, which closes the generator with a return completion.
+            // Without this the run would end with no `afterRun` at all, so a provider holding
+            // resources for the run never gets told to let go. `runAfterRun` is once-only, so the
+            // paths that already reported the failure from inside the pipe do not report it twice.
             if (cleanupFailure !== undefined) {
               await runAfterRun(undefined, cleanupFailure);
             }
@@ -749,6 +614,235 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       ],
       ...(signal === undefined ? {} : { signal }),
     });
+  }
+
+  /**
+   * Resolves the format that fills `response.value`.
+   *
+   * Follows the same precedence as `#mergeOptions`, so a format supplied through `defaultOptions`
+   * or `run({ options })` fills `response.value` too. Only the explicit `responseFormat`
+   * parameter carries the static type, hence {@link StructuredValue}.
+   */
+  #effectiveResponseFormat(
+    options: AgentRunOptions<TOptions, ResponseFormat | undefined> | undefined,
+  ): ResponseFormat | undefined {
+    return options?.responseFormat ?? options?.options?.responseFormat ?? this.#defaultOptions.responseFormat;
+  }
+
+  /**
+   * Fails a run where both the service and an explicit history provider claim the transcript.
+   *
+   * Go `handleHistoryProviderConflict`. Checked again after the run because the session can be
+   * promoted to service-managed while it is in flight.
+   */
+  #rejectHistoryConflict(session: AgentSession): void {
+    if (session.serviceSessionId !== undefined && this.hasExplicitHistoryProvider) {
+      throw new ConfigurationError(
+        `Session '${session.sessionId}' has a serviceSessionId, so the service manages history, ` +
+          'but this agent was configured with an explicit historyProvider. Use one or the other.',
+      );
+    }
+  }
+
+  /** Pairs each provider taking part in this run with the run context handed to its hooks. */
+  #createProviderContexts(
+    session: AgentSession,
+    inputMessages: Message[],
+    signal: AbortSignal | undefined,
+  ): { providerContexts: ProviderRunEntry[]; accumulator: RunContextAccumulator } {
+    const accumulator: RunContextAccumulator = { messages: [], instructions: [], tools: [] };
+    // When the service owns the transcript, the default in-memory history provider steps aside.
+    const providers: ContextProvider[] =
+      session.serviceSessionId !== undefined
+        ? [...this.#contextProviders]
+        : [this.historyProvider, ...this.#contextProviders];
+    const providerContexts = providers.map((provider) => ({
+      provider,
+      ctx: createProviderRunContext(provider, {
+        agent: { id: this.id, ...(this.name === undefined ? {} : { name: this.name }) },
+        session,
+        inputMessages,
+        accumulator,
+        ...(signal === undefined ? {} : { signal }),
+      }),
+    }));
+    return { providerContexts, accumulator };
+  }
+
+  /**
+   * Runs every provider's `afterRun`.
+   *
+   * The session can become service-managed while the run is in flight, which retires the default
+   * history provider for this run: its stored transcript is no longer the source of truth, so
+   * appending to it would make the next run replay messages the service also sends
+   * (Go `shouldStoreHistoryProvider`).
+   */
+  async #notifyProvidersAfterRun(
+    providerContexts: readonly ProviderRunEntry[],
+    injectedMessages: readonly Message[],
+    session: AgentSession | undefined,
+    response: AgentResponse<unknown> | undefined,
+    error: unknown,
+  ): Promise<void> {
+    const serviceOwnsHistory = session?.serviceSessionId !== undefined;
+    for (const { provider, ctx } of providerContexts) {
+      if (provider.afterRun === undefined) {
+        continue;
+      }
+      if (serviceOwnsHistory && provider === this.historyProvider) {
+        continue;
+      }
+      const afterCtx: ProviderAfterRunContext = {
+        ...ctx,
+        contextMessages: injectedMessages,
+        ...(response === undefined ? {} : { response }),
+        ...(error === undefined ? {} : { error }),
+      };
+      await provider.afterRun(afterCtx);
+    }
+  }
+
+  /** Composes the session-scoped approval layer over the shared client stack for one run. */
+  #approvalClient(session: AgentSession): ChatClient<TOptions> {
+    return withToolApproval(this.#client, sessionApprovalStore(session), {
+      ...(this.#functionInvocation.additionalTools === undefined
+        ? {}
+        : { additionalTools: this.#functionInvocation.additionalTools }),
+    });
+  }
+
+  /** Opens the `invoke_agent` span and records the request-side attributes on it. */
+  #startRunSpan(session: AgentSession, model: string | undefined): Span {
+    return startSpan(
+      spanName(GEN_AI_OPERATION.invokeAgent, this.name ?? this.id),
+      agentSpanAttributes({
+        id: this.id,
+        ...(this.name === undefined ? {} : { name: this.name }),
+        ...(this.description === undefined ? {} : { description: this.description }),
+        providerName: this.#client.metadata.providerName,
+        ...(model === undefined ? {} : { model }),
+        ...(session.serviceSessionId === undefined ? {} : { conversationId: session.serviceSessionId }),
+      }),
+    );
+  }
+
+  /**
+   * Builds the mapping applied to every chat update of one run: conversation-id propagation,
+   * chat-to-agent conversion, and wrapping any continuation token with the run's replay state.
+   */
+  #createUpdateMapper(run: {
+    session: AgentSession;
+    inputMessages: Message[];
+    /** Shared with the caller; every mapped update is appended so a token can carry them. */
+    seen: AgentResponseUpdate[];
+    /** `true` for a streaming run, whose token must replay input and updates on resume. */
+    wantsTokenReplay: boolean;
+  }): (update: ChatResponseUpdate) => AgentResponseUpdate {
+    const { session, inputMessages, seen, wantsTokenReplay } = run;
+    const agentName = this.name;
+    const agentId = this.id;
+
+    /**
+     * Keeps a service-managed session pointing at the newest turn.
+     *
+     * Runs per update rather than at the end (Python `_propagate_conversation_id`) so a caller
+     * who abandons a stream still holds a session that can continue the conversation.
+     *
+     * A session that is *not* already service-managed is never promoted here: with `store`
+     * defaulting to on, every response carries an id, and adopting one would silently move the
+     * transcript from the framework to the provider. Handing the framework a conversation id is
+     * the caller's decision to make.
+     */
+    const stableConversationId = this.#client.metadata.stableConversationId;
+    const propagateConversationId = (update: ChatResponseUpdate): void => {
+      const conversationId = update.conversationId;
+      const current = session.serviceSessionId;
+      if (
+        conversationId === undefined ||
+        conversationId === '' ||
+        current === undefined ||
+        current === conversationId
+      ) {
+        return;
+      }
+      // An anchor the provider declares stable stays the session's id: a per-response id
+      // reported mid-run must not unhook the session from the stored conversation. The same
+      // guard the function-calling loop applies between tool rounds, applied where the
+      // reference puts it — on the session update itself (Go `updateConversationID`).
+      if (stableConversationId?.(current) === true) {
+        return;
+      }
+      session.serviceSessionId = conversationId;
+    };
+
+    return (update: ChatResponseUpdate): AgentResponseUpdate => {
+      propagateConversationId(update);
+      const mapped = chatToAgentUpdate(update, {
+        ...(agentName === undefined ? {} : { agentName }),
+        agentId,
+      });
+      seen.push(mapped);
+      if (mapped.continuationToken !== undefined) {
+        // Both halves ride on the same gate (Go `agent.go`): an awaited run folds its own
+        // updates *and* has already persisted its own input, so carrying either in the token
+        // makes the resumed run store the exchange a second time.
+        mapped.continuationToken = wrapContinuationToken(
+          mapped.continuationToken,
+          wantsTokenReplay ? inputMessages : [],
+          wantsTokenReplay ? seen : [],
+        );
+      }
+      return mapped;
+    };
+  }
+
+  /**
+   * The update source for one run: replays carried updates, then drives the client stream.
+   *
+   * A failure raised inside the source is reported through `onError` before it propagates; the
+   * paths that kill the stream without touching the generator are covered by the run's cleanup
+   * hook instead.
+   */
+  async *#pipeUpdates(run: {
+    stream: boolean;
+    span: Span;
+    inner: ChatResponseStream<unknown>;
+    carried: readonly AgentResponseUpdate[];
+    mapUpdate: (update: ChatResponseUpdate) => AgentResponseUpdate;
+    onError: (error: unknown) => Promise<void>;
+  }): AsyncGenerator<AgentResponseUpdate> {
+    try {
+      // The updates the suspended run already produced come first, so a resumed stream reads
+      // as one continuous response.
+      yield* run.carried;
+      if (run.stream) {
+        // Driven inside the run span so the tool loop's `chat` and `execute_tool` spans become
+        // its children — the generator body would otherwise run outside any span context.
+        for await (const update of withActiveSpan(run.span, run.inner)) {
+          yield run.mapUpdate(update);
+        }
+      } else {
+        const response = await inActiveSpan(run.span, () => run.inner);
+        for (const update of chatResponseToUpdates(response)) {
+          yield run.mapUpdate(update);
+        }
+      }
+    } catch (error) {
+      await run.onError(error);
+      throw error;
+    }
+  }
+
+  /** Folds the observed updates into the final response and stamps this agent's identity on it. */
+  #finalizeResponse<TValue>(updates: AgentResponseUpdate[]): AgentResponse<TValue> {
+    const response = mergeUpdates<TValue>(updates);
+    response.agentId = this.id;
+    if (this.name !== undefined) {
+      for (const msg of response.messages) {
+        msg.authorName ??= this.name;
+      }
+    }
+    return response;
   }
 
   /**

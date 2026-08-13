@@ -1,14 +1,14 @@
 /**
  * 04 — MCP tools.
  *
- * `MCPClient` turns an MCP server's tools into framework tools, so the agent calls them exactly
+ * `McpClient` turns an MCP server's tools into framework tools, so the agent calls them exactly
  * like local ones. The connection opens on the first `getTools()` and each `tools/call` is traced
  * as an MCP client span.
  *
  * Run: `OPENAI_API_KEY=... MCP_SERVER_URL=https://… pnpm --filter example-03-extensibility mcp`
  */
 import { Agent, approvalResponse } from '@polymind-inc/agent-framework';
-import { MCPClient } from '@polymind-inc/agent-framework/mcp';
+import { McpClient } from '@polymind-inc/agent-framework/mcp';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 
 const url = process.env.MCP_SERVER_URL;
@@ -17,7 +17,7 @@ if (url === undefined) {
   process.exit(1);
 }
 
-const mcp = new MCPClient({
+const mcp = new McpClient({
   url,
   ...(process.env.MCP_AUTH_TOKEN === undefined
     ? {}

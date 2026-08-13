@@ -1,7 +1,10 @@
 import { homedir } from 'node:os';
-import { resolveUnder } from '@polymind-inc/agent-framework-agentserver';
+import {
+  readJsonFile,
+  resolveUnder,
+  writeJsonFile,
+} from '@polymind-inc/agent-framework-agentserver/internal';
 import type { SerializedAgentSession } from '@polymind-inc/agent-framework-core';
-import { readJsonFile, writeJsonFile } from './json-file.js';
 
 /** A session snapshot plus the user it belongs to. */
 export interface StoredSession {

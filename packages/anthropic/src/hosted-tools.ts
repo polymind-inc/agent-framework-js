@@ -1,4 +1,4 @@
-import type { HostedTool, MCPToolOptions, WebSearchToolOptions } from '@polymind-inc/agent-framework-core';
+import type { HostedTool, McpToolOptions, WebSearchToolOptions } from '@polymind-inc/agent-framework-core';
 import { ConfigurationError, hostedTool, withoutUndefined } from '@polymind-inc/agent-framework-core';
 
 /**
@@ -37,7 +37,7 @@ export const MCP_SERVER_SPEC_TYPE = 'anthropic.mcp_server';
  * Declares a remote MCP server for Anthropic to connect to directly.
  *
  * Messages API takes an `authorization_token` rather than arbitrary headers, so only the
- * `authorization` entry of {@link MCPToolOptions.headers} is used; `requireApproval` has no
+ * `authorization` entry of {@link McpToolOptions.headers} is used; `requireApproval` has no
  * Messages API equivalent and is ignored.
  *
  * ## Security considerations
@@ -46,7 +46,7 @@ export const MCP_SERVER_SPEC_TYPE = 'anthropic.mcp_server';
  * compromised server runs with whatever those tools can reach. The authorization token is
  * disclosed to that server on every call.
  */
-export function mcpTool(options: MCPToolOptions): HostedTool {
+export function mcpTool(options: McpToolOptions): HostedTool {
   if (options.serverLabel.trim() === '') {
     throw new ConfigurationError('mcpTool requires a non-empty serverLabel.');
   }
