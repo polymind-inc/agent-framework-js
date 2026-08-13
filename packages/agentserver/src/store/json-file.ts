@@ -4,9 +4,9 @@ import { dirname } from 'node:path';
 /**
  * Reads and parses a JSON file, treating a missing file as `undefined`.
  *
- * Shared by the session store and the approval storage: both keep per-user state files that
- * legitimately do not exist before the first write, and everything else — a parse failure above
- * all — must surface rather than silently become an empty state.
+ * Every file-backed store built on this helper keeps records that legitimately do not exist
+ * before the first write, and everything else — a parse failure above all — must surface rather
+ * than silently become an empty state.
  */
 export async function readJsonFile<T>(path: string): Promise<T | undefined> {
   let raw: string;
@@ -25,7 +25,8 @@ export async function readJsonFile<T>(path: string): Promise<T | undefined> {
  * Writes `value` as JSON via write-then-rename, creating the parent directory.
  *
  * The rename is what makes the replacement atomic: a process killed mid-write leaves the previous
- * file intact rather than a truncated one holding half a JSON object.
+ * file intact rather than a truncated one holding half a JSON object, and a reader never sees a
+ * half-written file.
  */
 export async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });

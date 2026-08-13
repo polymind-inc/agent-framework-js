@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/node.ts', 'src/observability.ts'],
+  entry: ['src/index.ts', 'src/node.ts', 'src/observability.ts', 'src/internal.ts'],
   format: ['esm'],
   platform: 'node',
   // The gRPC exporters are optional peers, but they are also devDependencies so the tests can
