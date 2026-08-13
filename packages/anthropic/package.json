@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-anthropic",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Anthropic Messages API chat client for the Agent Framework, built on the official @anthropic-ai/sdk.",
   "keywords": [
     "agent",

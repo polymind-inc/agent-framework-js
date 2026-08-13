@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-core",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Core abstractions for the Agent Framework (TypeScript): Agent, AgentSession, Message/Content, tools, and the ChatClient seam.",
   "keywords": [
     "agent",

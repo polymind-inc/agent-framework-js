@@ -4,15 +4,20 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
-## Unreleased
+## 0.3.0
 
-- **BREAKING** — **`@polymind-inc/agent-framework-openai`** — the `OpenAIChatClientOptions`
+The first minor since 0.2, and the first release after the public-API surface freeze was lifted:
+six breaking changes settle the naming conventions and correct semantics against the reference
+implementations, alongside Agent Skills, the Foundry Memory provider, the Invocations protocol,
+and file-backed persistence for transcripts and skills.
+
+- **[BREAKING]** **`@polymind-inc/agent-framework-openai`** — the `OpenAIChatClientOptions`
   interface is renamed `OpenAIChatClientConfigBase`. It is the construction-time half of
   `OpenAIChatClientConfig`, and the package convention names construction types `*Config` and
   per-call types `*Options` (`OpenAIChatOptions` is unchanged); OpenAI was the one provider whose
   construction type broke that rule. `OpenAIChatClientConfig` itself — what `new OpenAIChatClient(…)`
   accepts — is unchanged, so only code that names the base interface directly is affected.
-- **BREAKING** — the MCP acronym in public identifiers is now spelled `Mcp`, matching the official
+- **[BREAKING]** the MCP acronym in public identifiers is now spelled `Mcp`, matching the official
   `@modelcontextprotocol` SDK and this framework's own newer API (`McpConnection`,
   `mcpSkillsSource()`, `withMcpClientSpan`). The wire format is unaffected. Renames —
   `@polymind-inc/agent-framework-mcp`: `MCPClient` → `McpClient`, `MCPClientConfig` →
@@ -21,7 +26,7 @@ contain breaking changes**; patch releases are fixes only.
   `getMCPTool` → `getMcpTool` (the OpenAI, Anthropic and Foundry clients implement the renamed
   method). There are no deprecated aliases; update imports and any custom `ChatClient` that
   declares the MCP capability.
-- **BREAKING** — **`@polymind-inc/agent-framework-agentserver`** — `resolveUnder` and
+- **[BREAKING]** **`@polymind-inc/agent-framework-agentserver`** — `resolveUnder` and
   `validatePathSegment` are no longer exported from the package's main entry. They are path-safety
   primitives for file-backed stores, not part of the server protocol surface (the reference
   implementation exposes only the domain-scoped state-root helper, which `stateRoot` continues to
@@ -29,6 +34,28 @@ contain breaking changes**; patch releases are fixes only.
   atomic JSON file helpers `readJsonFile` / `writeJsonFile`, previously duplicated between the two
   packages — through the new `./internal` subpath, an internal contract like
   `@polymind-inc/agent-framework-openai/internal` whose exports may change in any release.
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`** — `HandlerContext` gains two required
+  fields: `agentReference` (the resolved agent this turn targets, always with a non-empty name)
+  and `agentSessionId` (the resolved sandbox session id, as returned on `x-agent-session-id`).
+  Handlers only read the context and are unaffected; code that *constructs* `HandlerContext`
+  values — test doubles, custom protocol frontends — must now supply both.
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — the function-calling loop no longer
+  hardcodes OpenAI's `conv_` prefix when deciding whether a conversation id advances between tool
+  rounds. Which ids are stable service-side anchors is now the provider's declaration:
+  `ChatClientMetadata.stableConversationId`, a new optional predicate the loop and the agent's
+  session propagation consult. The built-in OpenAI, Azure OpenAI and Foundry clients declare it,
+  so their behavior is unchanged. **A custom `ChatClient` implementation that relied on the loop
+  pinning `conv_…` ids must now declare the predicate on its `metadata`** — without it, every
+  conversation id a round reports advances the chain, matching the .NET and Python loops.
+- **[BREAKING] `@polymind-inc/agent-framework-foundry`** — `FoundryChatClient` no longer asks for
+  `reasoning.encrypted_content` implicitly. Not every Foundry deployment supports encrypted
+  reasoning, and one that does not rejects a request that asks for it — which the client did on
+  every call without service-side storage, with no way to turn it off. **A caller whose deployment
+  does support encrypted reasoning, and who replays the transcript from their own side, must now
+  list `reasoning.encrypted_content` in `options.include`**; without it a reasoning model's
+  replayed transcript fails for missing reasoning content. Matches the upstream Python fix and the
+  function-calling loop specification, which make the request an explicit caller opt-in on
+  Foundry.
 - **`@polymind-inc/agent-framework-core`** — new **Agent Skills** support
   ([#21](https://github.com/polymind-inc/agent-framework-js/issues/21)): `skillsProvider()` is a
   `ContextProvider` that advertises each available skill's name and description in the system
@@ -46,8 +73,8 @@ contain breaking changes**; patch releases are fixes only.
   on a relaxed tool (a middleware `'allow'` cannot bypass a tool's own approval requirement). A skill or
   resource the model asks for and does not exist comes back as a message it can correct rather than
   a failed run; a skill a source cannot load is skipped and reported through `onSkillError`.
-  Walking a directory of `SKILL.md` files is deliberately not part of the core, which has no
-  filesystem; the extensibility examples show the recipe.
+  Walking a directory of `SKILL.md` files is not part of the core, which has no filesystem;
+  `directorySkillsSource` on the `/node` subpath covers it.
 - **`@polymind-inc/agent-framework-mcp`** — new `mcpSkillsSource()`, also reachable as
   `McpClient.skillsSource()`: discovers the Agent Skills an MCP server publishes by reading the
   well-known `skill://index.json` catalogue, fetching each `SKILL.md` body and any document it
@@ -110,34 +137,45 @@ contain breaking changes**; patch releases are fixes only.
   key as an explicit argument. There is deliberately no per-request tenant field: the platform's
   trust boundary injects only the user id and call id, and a hosted container is deployed per
   agent inside one tenant.
-- **[BREAKING] `@polymind-inc/agent-framework-agentserver`** — `HandlerContext` gains two required
-  fields: `agentReference` (the resolved agent this turn targets, always with a non-empty name)
-  and `agentSessionId` (the resolved sandbox session id, as returned on `x-agent-session-id`).
-  Handlers only read the context and are unaffected; code that *constructs* `HandlerContext`
-  values — test doubles, custom protocol frontends — must now supply both.
-- **[BREAKING] `@polymind-inc/agent-framework-core`** — the function-calling loop no longer
-  hardcodes OpenAI's `conv_` prefix when deciding whether a conversation id advances between tool
-  rounds. Which ids are stable service-side anchors is now the provider's declaration:
-  `ChatClientMetadata.stableConversationId`, a new optional predicate the loop and the agent's
-  session propagation consult. The built-in OpenAI, Azure OpenAI and Foundry clients declare it,
-  so their behavior is unchanged. **A custom `ChatClient` implementation that relied on the loop
-  pinning `conv_…` ids must now declare the predicate on its `metadata`** — without it, every
-  conversation id a round reports advances the chain, matching the .NET and Python loops.
-- **[BREAKING] `@polymind-inc/agent-framework-foundry`** — `FoundryChatClient` no longer asks for
-  `reasoning.encrypted_content` implicitly. Not every Foundry deployment supports encrypted
-  reasoning, and one that does not rejects a request that asks for it — which the client did on
-  every call without service-side storage, with no way to turn it off. **A caller whose deployment
-  does support encrypted reasoning, and who replays the transcript from their own side, must now
-  list `reasoning.encrypted_content` in `options.include`**; without it a reasoning model's
-  replayed transcript fails for missing reasoning content. Matches the upstream Python fix and the
-  function-calling loop specification, which make the request an explicit caller opt-in on
-  Foundry.
 - **`@polymind-inc/agent-framework-openai`** — new `includeReasoningEncryptedContent` construction
   option (default `true`, so OpenAI and Azure OpenAI are unchanged). Setting it to `false`
   suppresses the implicit `reasoning.encrypted_content` request for an endpoint that rejects it;
   an entry the caller lists in `include` themselves is always sent either way. Mirrors the .NET
   clients' option of the same name.
-
+- **`@polymind-inc/agent-framework-core`** — a history provider can opt into storing the
+  messages other context providers injected into a run: `HistoryStoreOptions.storeContextMessages`
+  takes `true` for all of them, or a list of `sourceId`s for just those providers. The default
+  stays as before — the run's input and the response — matching the reference implementations'
+  default; the opt-in is the knob they offer that was missing here.
+- **`@polymind-inc/agent-framework-core`** — new `FileHistoryProvider` on the `/node` subpath:
+  keeps the transcript in a JSON Lines file per session, using the same layout as the Python
+  file-backed provider so the files interoperate, and a session survives a process restart without
+  a custom provider.
+- **`@polymind-inc/agent-framework-core`** — new `directorySkillsSource` on the `/node`
+  subpath: walks a directory of `SKILL.md` skill folders — the convention all three reference
+  implementations support — and serves them as a `SkillsSource` for `skillsProvider()`.
+- **`@polymind-inc/agent-framework-mcp`** — `McpClient` accepts a header provider
+  (`McpHeaderProvider`, sync or async) in place of a static `headers` record. It is re-evaluated
+  per request, so a credential that refreshes can be expressed without a custom `fetch` wrapper,
+  and the headers are scoped to the server's origin so a redirect elsewhere cannot carry them
+  along.
+- **`@polymind-inc/agent-framework-core`** — the `ENABLE_SENSITIVE_DATA` compatibility alias
+  accepts the same spellings as the Python reader: `on` now enables message-content capture —
+  previously it silently read as unset, the exact cross-language case the alias exists for — and
+  `off` is an explicit negative rather than falling through to the OTel-named variables.
+- **`@polymind-inc/agent-framework-openai`** — the Responses wire mappings the Foundry hosting
+  adapter replays (the `mcp_call` / search / code-interpreter items, MCP output stringification,
+  and the encrypted-reasoning lookup) are shared through an undocumented `./internal` entry
+  instead of hand-maintained mirrors, so the replay path and the live provider path cannot drift;
+  the call-id fallback order now matches the Python reference on both.
+- **`@polymind-inc/agent-framework-core`** — what happens when a caller stops consuming a run
+  early (`break`, an aborted signal) and how token usage is read after draining a stream are now
+  documented contracts on `AgentRunStream` / `ResponseStream`, each pinned by tests.
+- Repository: the Baseline v0.1 public-API surface freeze is lifted — surface changes now require
+  grounding in the reference implementations, and the gate on new feature areas stays. Large
+  internal modules were split into focused ones and duplicated internal logic consolidated, with
+  reduced streaming hot-path overhead and no behavior change; CI actions and dependencies were
+  bumped.
 ## 0.2.2
 
 Fixes accumulated since 0.2.1, centred on running agents as Microsoft Foundry Hosted Agents:
