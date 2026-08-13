@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-agentserver",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Microsoft Foundry hosted-agent container protocol servers (Responses v2.0.0 and Invocations). Independent of the Agent Framework.",
   "keywords": [
     "agent",
