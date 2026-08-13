@@ -513,8 +513,11 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       );
       const client = this.#approvalClient(session);
 
-      const span = this.#startRunSpan(session, chatOptions.model, messages);
+      const span = this.#startRunSpan(session, chatOptions.model);
       runSpan = span;
+      // Capturing the input messages serializes caller-supplied content and can throw; it runs
+      // only after the span is assigned above, so the teardown can end what was started.
+      setMessageContent(span, GEN_AI.inputMessages, messages);
       const inner = client.getResponse(messages, chatOptions);
       // Everything the caller will have seen by the time a token is issued, so a resumed run can
       // persist the whole exchange rather than just its tail (Go `continuationUpdates`).
@@ -709,8 +712,8 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
   }
 
   /** Opens the `invoke_agent` span and records the request-side attributes on it. */
-  #startRunSpan(session: AgentSession, model: string | undefined, messages: Message[]): Span {
-    const span = startSpan(
+  #startRunSpan(session: AgentSession, model: string | undefined): Span {
+    return startSpan(
       spanName(GEN_AI_OPERATION.invokeAgent, this.name ?? this.id),
       agentSpanAttributes({
         id: this.id,
@@ -721,8 +724,6 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         ...(session.serviceSessionId === undefined ? {} : { conversationId: session.serviceSessionId }),
       }),
     );
-    setMessageContent(span, GEN_AI.inputMessages, messages);
-    return span;
   }
 
   /**
