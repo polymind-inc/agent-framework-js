@@ -1,21 +1,5 @@
 import type { TokenCredential } from '@azure/identity';
 import { DefaultAzureCredential } from '@azure/identity';
-import type {
-  ChatClient,
-  ChatClientMetadata,
-  ChatResponseStream,
-  CodeInterpreterToolOptions,
-  FileSearchToolOptions,
-  HostedTool,
-  McpToolOptions,
-  Message,
-  SupportsCodeInterpreterTool,
-  SupportsFileSearchTool,
-  SupportsMcpTool,
-  SupportsWebSearchTool,
-  WebSearchToolOptions,
-} from '@polymind-inc/agent-framework-core';
-import type { OpenAIChatOptions } from '@polymind-inc/agent-framework-openai';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
 import OpenAI from 'openai';
 import { tokenProvider } from './credential.js';
@@ -84,16 +68,7 @@ export type FoundryChatClientConfig = FoundryChatClientConfigBase &
  *   never build it from user input.
  * - The OpenAI notes apply unchanged: messages leave the process, and `store` is pass-through.
  */
-export class FoundryChatClient
-  implements
-    ChatClient<OpenAIChatOptions>,
-    SupportsWebSearchTool,
-    SupportsFileSearchTool,
-    SupportsCodeInterpreterTool,
-    SupportsMcpTool
-{
-  readonly metadata: ChatClientMetadata;
-  readonly #inner: OpenAIChatClient;
+export class FoundryChatClient extends OpenAIChatClient {
   readonly #baseURL: string;
 
   constructor(config: FoundryChatClientConfig) {
@@ -104,7 +79,6 @@ export class FoundryChatClient
     const endpoint =
       config.client === undefined ? resolveEndpoint(config.projectEndpoint, config.target) : undefined;
 
-    this.#baseURL = config.client?.baseURL ?? (endpoint as { baseURL: string }).baseURL;
     const client =
       config.client ??
       new OpenAI({
@@ -119,7 +93,7 @@ export class FoundryChatClient
         ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       });
 
-    this.#inner = new OpenAIChatClient({
+    super({
       client,
       // Not every Foundry deployment supports encrypted reasoning, and one that does not rejects
       // a request that asks for it — so asking implicitly would make those deployments
@@ -129,60 +103,14 @@ export class FoundryChatClient
       includeReasoningEncryptedContent: false,
       ...(model === undefined ? { endpointProvidesModel: true as const } : { model }),
     });
-    this.metadata = {
-      providerName: 'azure.ai.foundry',
-      ...(model === undefined ? {} : { modelId: model }),
-      // Foundry speaks the same Responses protocol, so which conversation ids are stable is the
-      // inner client's knowledge — re-spelling it here is how the two could drift.
-      ...(this.#inner.metadata.stableConversationId === undefined
-        ? {}
-        : { stableConversationId: this.#inner.metadata.stableConversationId }),
-    };
+    this.#baseURL = client.baseURL;
+    // Everything except the provider name is the Responses client's own metadata, including its
+    // knowledge of which conversation ids are stable.
+    Object.assign(this.metadata, { providerName: 'azure.ai.foundry' });
   }
 
   /** The endpoint requests are sent to, for diagnostics. */
   get baseURL(): string {
     return this.#baseURL;
-  }
-
-  /** The underlying SDK client, for Foundry features the framework does not model. */
-  get client(): OpenAI {
-    return this.#inner.client;
-  }
-
-  /**
-   * Declares the hosted web search tool.
-   *
-   * On Foundry this is backed by Bing Grounding, configured on the project rather than here.
-   */
-  getWebSearchTool(options?: WebSearchToolOptions): HostedTool {
-    return this.#inner.getWebSearchTool(options);
-  }
-
-  /** Declares the hosted file search tool over the project's vector stores. */
-  getFileSearchTool(options?: FileSearchToolOptions): HostedTool {
-    return this.#inner.getFileSearchTool(options);
-  }
-
-  /** Declares the hosted code interpreter. */
-  getCodeInterpreterTool(options?: CodeInterpreterToolOptions): HostedTool {
-    return this.#inner.getCodeInterpreterTool(options);
-  }
-
-  /** Declares a remote MCP server Foundry connects to on the model's behalf. */
-  getMcpTool(options: McpToolOptions): HostedTool {
-    return this.#inner.getMcpTool(options);
-  }
-
-  /** Builds the request body without sending it. See {@link OpenAIChatClient.buildRequest}. */
-  buildRequest(messages: Message[], options?: OpenAIChatOptions): Record<string, unknown> {
-    return this.#inner.buildRequest(messages, options);
-  }
-
-  getResponse(
-    messages: Message[],
-    options?: OpenAIChatOptions & { signal?: AbortSignal },
-  ): ChatResponseStream<undefined> {
-    return this.#inner.getResponse(messages, options);
   }
 }

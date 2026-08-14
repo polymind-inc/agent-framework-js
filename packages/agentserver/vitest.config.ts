@@ -1,7 +1,3 @@
-import { defineConfig } from 'vitest/config';
+import { definePackageTests } from '../../scripts/vitest-config.ts';
 
-export default defineConfig({
-  test: {
-    include: ['src/**/*.test.ts'],
-  },
-});
+export default definePackageTests();

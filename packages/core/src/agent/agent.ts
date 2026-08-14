@@ -1,7 +1,7 @@
 import type { Span } from '@opentelemetry/api';
 import type { ChatClient, ChatOptions, ChatResponseStream, ResponseFormat } from '../client/chat-client.js';
 import type { FunctionInvocationConfig } from '../client/function-invocation.js';
-import { withFunctionInvocation } from '../client/function-invocation.js';
+import { createFunctionInvocationClientFactory } from '../client/function-invocation.js';
 import { applyStructuredOutput } from '../client/structured-output.js';
 import { withChatTelemetry } from '../client/telemetry.js';
 import { APPROVAL_STATE_KEY, sessionApprovalStore, withToolApproval } from '../client/tool-approval.js';
@@ -23,7 +23,6 @@ import type {
   Middleware,
 } from '../middleware/middleware.js';
 import { categorizeMiddleware } from '../middleware/middleware.js';
-import { attachRunScope } from '../middleware/run-scope.js';
 import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
 import {
   agentSpanAttributes,
@@ -242,6 +241,10 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
   readonly instructions?: string;
 
   readonly #client: ChatClient<TOptions>;
+  readonly #functionClient: (
+    session?: AgentSession,
+    middleware?: readonly FunctionMiddleware[],
+  ) => ChatClient<TOptions>;
   readonly #tools: Tool[];
   readonly #defaultOptions: Partial<TOptions>;
   /**
@@ -301,7 +304,8 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     // Telemetry sits *inside* the loop, so each round gets its own `chat` span that closes before
     // that round's tools run.
     this.#functionInvocation = config.functionInvocation ?? {};
-    this.#client = withFunctionInvocation(withChatTelemetry(config.client), {
+    this.#client = withChatTelemetry(config.client);
+    this.#functionClient = createFunctionInvocationClientFactory(this.#client, {
       ...this.#functionInvocation,
       middleware: [...(this.#functionInvocation.middleware ?? []), ...collected.function],
     });
@@ -511,14 +515,8 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
 
       injectedMessages = [...prepared.accumulator.messages];
       const messages: Message[] = resuming ? [] : [...prepared.accumulator.messages, ...inputMessages];
-      const chatOptions = this.#mergeOptions(
-        options,
-        prepared.accumulator,
-        session,
-        continuation.innerToken,
-        functionMiddleware,
-      );
-      const client = this.#approvalClient(session);
+      const chatOptions = this.#mergeOptions(options, prepared.accumulator, session, continuation.innerToken);
+      const client = this.#approvalClient(session, functionMiddleware);
 
       const span = this.#startRunSpan(session, chatOptions.model);
       runSpan = span;
@@ -710,12 +708,19 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
   }
 
   /** Composes the session-scoped approval layer over the shared client stack for one run. */
-  #approvalClient(session: AgentSession): ChatClient<TOptions> {
-    return withToolApproval(this.#client, sessionApprovalStore(session), {
-      ...(this.#functionInvocation.additionalTools === undefined
-        ? {}
-        : { additionalTools: this.#functionInvocation.additionalTools }),
-    });
+  #approvalClient(
+    session: AgentSession,
+    functionMiddleware: readonly FunctionMiddleware[],
+  ): ChatClient<TOptions> {
+    return withToolApproval(
+      this.#functionClient(session, functionMiddleware),
+      sessionApprovalStore(session),
+      {
+        ...(this.#functionInvocation.additionalTools === undefined
+          ? {}
+          : { additionalTools: this.#functionInvocation.additionalTools }),
+      },
+    );
   }
 
   /** Opens the `invoke_agent` span and records the request-side attributes on it. */
@@ -864,7 +869,6 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     accumulator: RunContextAccumulator,
     session: AgentSession,
     innerContinuationToken: ContinuationToken | undefined,
-    functionMiddleware: readonly FunctionMiddleware[],
   ): TOptions & { signal?: AbortSignal } {
     const agentOptions: Partial<ChatOptions> = this.#defaultOptions;
     const runOptions: Partial<ChatOptions> = options?.options ?? {};
@@ -928,8 +932,6 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     if (options?.signal !== undefined) {
       merged.signal = options.signal;
     }
-    // Run-scoped values for the client layers, on a symbol key so they never reach the provider.
-    attachRunScope(merged, { middleware: functionMiddleware, session });
     return merged;
   }
 }

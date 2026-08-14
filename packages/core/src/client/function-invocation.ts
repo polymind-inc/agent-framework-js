@@ -1,6 +1,6 @@
+import type { AgentSession } from '../agent/session.js';
 import { throwIfAborted, validateSafeInteger } from '../errors.js';
 import type { FunctionMiddleware } from '../middleware/middleware.js';
-import { readRunScope, stripRunScope } from '../middleware/run-scope.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import {
   approvalReason,
@@ -243,6 +243,19 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
   client: ChatClient<TOptions>,
   config: FunctionInvocationConfig = {},
 ): ChatClient<TOptions> {
+  return createFunctionInvocationClientFactory(client, config)();
+}
+
+/**
+ * Prepares the function-invocation layer once, then binds values that belong to an individual
+ * agent run when that run starts.
+ *
+ * @internal
+ */
+export function createFunctionInvocationClientFactory<TOptions extends ChatOptions>(
+  client: ChatClient<TOptions>,
+  config: FunctionInvocationConfig = {},
+): (session?: AgentSession, middleware?: readonly FunctionMiddleware[]) => ChatClient<TOptions> {
   const enabled = config.enabled ?? true;
   const maxIterations = validateSafeInteger(
     'maxIterations',
@@ -550,18 +563,13 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
     stream: boolean,
     messages: Message[],
     options: (TOptions & { signal?: AbortSignal }) | undefined,
+    session: AgentSession | undefined,
+    middleware: readonly FunctionMiddleware[],
   ): AsyncGenerator<ChatResponseUpdate> {
     const signal = options?.signal;
-    // The run scope is the agent layer's private channel; the provider must never see it.
-    const scope = readRunScope(options);
-    const env: InvocationEnv = {
-      signal,
-      middleware: [...configMiddleware, ...(scope?.middleware ?? [])],
-      session: scope?.session,
-    };
-    // The spread is a deliberate defensive copy, not redundancy: stripRunScope only copies when
-    // the run-scope key is present, and the inner client must never receive the caller's object.
-    let current = stripRunScope({ ...options }) as TOptions & { signal?: AbortSignal };
+    const env: InvocationEnv = { signal, middleware, session };
+    // Keep the inner client isolated from mutations made while advancing tool rounds.
+    let current = { ...options } as TOptions & { signal?: AbortSignal };
 
     const resolved = await resolveInboundApprovals(
       messages,
@@ -685,23 +693,22 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
     }
   }
 
-  return {
+  return (session, middleware = []) => ({
     metadata: client.metadata,
     getResponse(
       messages: Message[],
       options?: TOptions & { signal?: AbortSignal },
     ): ChatResponseStream<unknown> {
       if (!enabled) {
-        // Still the layer that owns the run scope, so it is stripped even when the loop is off.
-        return client.getResponse(messages, options === undefined ? undefined : stripRunScope(options));
+        return client.getResponse(messages, options);
       }
       const init = {
         start: (ctx: { stream: boolean }): AsyncGenerator<ChatResponseUpdate> =>
-          loop(ctx.stream, messages, options),
+          loop(ctx.stream, messages, options, session, [...configMiddleware, ...middleware]),
         finalize: (updates: ChatResponseUpdate[]) => mergeChatUpdates<unknown>(updates),
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
       };
       return createResponseStream(init);
     },
-  };
+  });
 }

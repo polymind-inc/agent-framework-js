@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // Web-standard globals are available, while accidental Node API use remains a type error.
+    "lib": ["es2024", "dom"],
+    "types": []
+  }
+}

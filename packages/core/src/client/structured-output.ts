@@ -1,11 +1,12 @@
 import { ChatClientError } from '../errors.js';
-import { pipeStream } from '../streaming/response-stream.js';
+import { createResponseStream } from '../streaming/response-stream.js';
 import type { JsonSchema } from '../tools/json-schema.js';
 import { resolveJsonSchema } from '../tools/json-schema.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
 import { formatSchemaIssues, isStandardSchema } from '../tools/standard-schema.js';
 import { isUserInputRequest } from '../types/content.js';
-import type { ResponseBase } from '../types/response.js';
+import type { ChatResponseUpdate, ResponseBase } from '../types/response.js';
+import { chatResponseToUpdates } from '../types/response.js';
 import type {
   ChatClient,
   ChatOptions,
@@ -227,7 +228,15 @@ export function withStructuredOutput<TOptions extends ChatOptions>(
       if (format === undefined) {
         return inner;
       }
-      return pipeStream(inner, {
+      const relay = async function* (stream: boolean): AsyncGenerator<ChatResponseUpdate> {
+        if (stream) {
+          yield* inner;
+        } else {
+          yield* chatResponseToUpdates(await inner);
+        }
+      };
+      return createResponseStream({
+        start: (ctx) => relay(ctx.stream),
         finalize: async () => inner.finalResponse(),
         // Parsing is a result hook rather than part of `finalize` so it can see whether the caller
         // abandoned the stream: a `break` leaves a truncated answer that was never meant to be a

@@ -2,8 +2,15 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"],
+    "allowImportingTsExtensions": true,
     "declaration": false,
     "declarationMap": false,
     "isolatedDeclarations": false
-  }
+  },
+  "include": [
+    "vitest.config.ts",
+    "packages/*/tsdown.config.ts",
+    "packages/*/vitest.config.ts",
+    "scripts/*.ts"
+  ]
 }

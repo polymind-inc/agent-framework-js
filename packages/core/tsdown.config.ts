@@ -1,14 +1,7 @@
-import { defineConfig } from 'tsdown';
+import { definePackageBuild } from '../../scripts/tsdown-config.ts';
 
-export default defineConfig({
+export default definePackageBuild({
   entry: ['src/index.ts', 'src/testing.ts', 'src/node.ts'],
-  format: ['esm'],
   platform: 'neutral',
-  dts: { oxc: true, sourcemap: false },
-  clean: true,
-  treeshake: true,
-  target: 'es2024',
-  sourcemap: true,
-  outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
-  deps: { neverBundle: ['@opentelemetry/api'] },
+  neverBundle: ['@opentelemetry/api'],
 });

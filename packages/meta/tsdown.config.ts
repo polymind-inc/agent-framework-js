@@ -1,6 +1,6 @@
-import { defineConfig } from 'tsdown';
+import { definePackageBuild } from '../../scripts/tsdown-config.ts';
 
-export default defineConfig({
+export default definePackageBuild({
   entry: [
     'src/index.ts',
     'src/testing.ts',
@@ -15,23 +15,14 @@ export default defineConfig({
     'src/agentserver/node.ts',
     'src/agentserver/observability.ts',
   ],
-  format: ['esm'],
   platform: 'node',
-  dts: { oxc: true, sourcemap: false },
-  clean: true,
-  treeshake: true,
-  target: 'es2024',
-  sourcemap: true,
-  outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
-  deps: {
-    neverBundle: [
-      '@polymind-inc/agent-framework-a2a',
-      '@polymind-inc/agent-framework-agentserver',
-      '@polymind-inc/agent-framework-anthropic',
-      '@polymind-inc/agent-framework-core',
-      '@polymind-inc/agent-framework-foundry',
-      '@polymind-inc/agent-framework-mcp',
-      '@polymind-inc/agent-framework-openai',
-    ],
-  },
+  neverBundle: [
+    '@polymind-inc/agent-framework-a2a',
+    '@polymind-inc/agent-framework-agentserver',
+    '@polymind-inc/agent-framework-anthropic',
+    '@polymind-inc/agent-framework-core',
+    '@polymind-inc/agent-framework-foundry',
+    '@polymind-inc/agent-framework-mcp',
+    '@polymind-inc/agent-framework-openai',
+  ],
 });

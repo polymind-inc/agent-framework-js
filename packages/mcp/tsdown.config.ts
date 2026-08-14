@@ -1,13 +1,7 @@
-import { defineConfig } from 'tsdown';
+import { definePackageBuild } from '../../scripts/tsdown-config.ts';
 
-export default defineConfig({
+export default definePackageBuild({
   entry: ['src/index.ts'],
-  format: ['esm'],
   platform: 'neutral',
-  dts: { oxc: true, sourcemap: false },
-  clean: true,
-  treeshake: true,
-  target: 'es2024',
-  sourcemap: true,
-  deps: { neverBundle: ['@polymind-inc/agent-framework-core', '@modelcontextprotocol/client'] },
+  neverBundle: ['@polymind-inc/agent-framework-core', '@modelcontextprotocol/client'],
 });
