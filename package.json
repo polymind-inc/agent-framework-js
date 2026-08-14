@@ -18,7 +18,8 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && pnpm test:scripts",
+    "test:scripts": "node --test scripts/workspace.test.mjs",
     "test:coverage": "vitest run --coverage --testTimeout=30000",
     "typecheck": "pnpm -r typecheck && pnpm run typecheck:resolution",
     "typecheck:resolution": "tsc -p scripts/type-resolution/tsconfig.json --module nodenext --moduleResolution nodenext",

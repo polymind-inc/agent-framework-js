@@ -29,7 +29,7 @@ describe('function result rendering', () => {
     expect(outputOf({ ok: true })).toBe('{"ok":true}');
   });
 
-  it('renders a result JSON.stringify throws on as its string form instead of failing the request', () => {
+  it('renders a result as its string form when JSON.stringify throws', () => {
     // A caller-built transcript can carry a result the tool loop never normalized. `JSON.stringify`
     // throws on a cycle and on a BigInt; failing the whole request over one such result is worse
     // than the degraded string rendering (Python's `Content.from_function_result` falls back to
@@ -47,8 +47,8 @@ describe('function result rendering', () => {
     expect(outputOf(unrenderable)).toBe('[unserializable]');
   });
 
-  it('renders a result JSON.stringify answers undefined for as its string form', () => {
-    // `JSON.stringify` answers `undefined` for a symbol or a function; passing that through put a
+  it('renders a result as its string form when JSON.stringify returns undefined', () => {
+    // `JSON.stringify` returns `undefined` for a symbol or a function; passing that through put a
     // non-string into the wire's string field.
     expect(outputOf(Symbol('opaque'))).toBe('Symbol(opaque)');
   });
