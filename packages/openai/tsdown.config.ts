@@ -1,13 +1,7 @@
-import { defineConfig } from 'tsdown';
+import { definePackageBuild } from '../../scripts/tsdown-config.ts';
 
-export default defineConfig({
+export default definePackageBuild({
   entry: ['src/index.ts', 'src/internal.ts'],
-  format: ['esm'],
   platform: 'neutral',
-  dts: { oxc: true, sourcemap: false },
-  clean: true,
-  treeshake: true,
-  target: 'es2024',
-  sourcemap: true,
-  deps: { neverBundle: ['@polymind-inc/agent-framework-core', 'openai'] },
+  neverBundle: ['@polymind-inc/agent-framework-core', 'openai'],
 });

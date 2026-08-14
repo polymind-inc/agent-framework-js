@@ -497,6 +497,41 @@ describe('function middleware', () => {
     expect(seen).toBe(session.sessionId);
   });
 
+  it('isolates run middleware and sessions across concurrent runs', async () => {
+    const mock = new MockChatClient([
+      { contents: [{ type: 'function_call', callId: 'call_a', name: 'echo', arguments: { value: 'a' } }] },
+      { contents: [{ type: 'function_call', callId: 'call_b', name: 'echo', arguments: { value: 'b' } }] },
+      { contents: [textContent('done')] },
+    ]);
+    const agent = new Agent({ client: mock, tools: [echo] });
+    const sessionA = agent.createSession();
+    const sessionB = agent.createSession();
+    const seen: Array<[string, string | undefined]> = [];
+    let release!: () => void;
+    const bothEntered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const scoped = (label: string) =>
+      functionMiddleware(async (ctx, next) => {
+        seen.push([label, ctx.session?.sessionId]);
+        if (seen.length === 2) release();
+        await bothEntered;
+        await next();
+      });
+
+    await Promise.all([
+      agent.run('a', { session: sessionA, middleware: [scoped('a')] }),
+      agent.run('b', { session: sessionB, middleware: [scoped('b')] }),
+    ]);
+
+    expect(seen).toEqual(
+      expect.arrayContaining([
+        ['a', sessionA.sessionId],
+        ['b', sessionB.sessionId],
+      ]),
+    );
+  });
+
   it('never reaches the provider through the chat options', async () => {
     const mock = callingClient('echo', { value: 'hi' }, 'done');
     const agent = new Agent({

@@ -21,7 +21,7 @@
     "test": "pnpm -r test && pnpm test:scripts",
     "test:scripts": "node --test scripts/workspace.test.mjs",
     "test:coverage": "vitest run --coverage --testTimeout=30000",
-    "typecheck": "pnpm -r typecheck && pnpm run typecheck:resolution",
+    "typecheck": "pnpm -r typecheck && tsc -p tsconfig.tools.json --noEmit && pnpm run typecheck:resolution",
     "typecheck:resolution": "tsc -p scripts/type-resolution/tsconfig.json --module nodenext --moduleResolution nodenext",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

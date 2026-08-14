@@ -142,17 +142,6 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
     this.#init = init;
   }
 
-  /**
-   * Claims the stream and returns its raw iterator.
-   *
-   * @internal Used by {@link pipeStream} so an outer stream can drive an inner one while
-   * propagating the caller's consumption mode.
-   */
-  beginInternal(stream: boolean): AsyncIterator<TUpdate, void, void> {
-    this.#claim();
-    return this.#createIterator(stream);
-  }
-
   #claim(): void {
     if (this.#claimed) {
       throw new StreamConsumedError();
@@ -465,70 +454,4 @@ export function createResponseStream<TUpdate, TFinal>(
   init: ResponseStreamInit<TUpdate, TFinal>,
 ): ResponseStream<TUpdate, TFinal> {
   return new HybridResponseStream(init);
-}
-
-/** Configuration for {@link pipeStream}. */
-export interface PipeStreamInit<TIn, TOut, TFinal> {
-  /** Maps each inner update to an outer update. Defaults to the identity when omitted. */
-  map?: (update: TIn) => TOut | Promise<TOut>;
-  /** Folds the mapped updates into the outer final result. */
-  finalize: (updates: TOut[]) => TFinal | Promise<TFinal>;
-  /** Outer cleanup hooks; run after the inner stream's own cleanup and finalization. */
-  cleanup?: Array<(failure?: unknown) => void | Promise<void>>;
-  /** Outer result hooks; run last. See {@link StreamResultContext} for the second argument. */
-  // biome-ignore lint/suspicious/noConfusingVoidType: void in the union lets hooks return nothing to keep the result unchanged
-  onResult?: Array<(final: TFinal, ctx: StreamResultContext) => TFinal | Promise<TFinal | void> | void>;
-  signal?: AbortSignal;
-}
-
-/**
- * Wraps a stream in an outer stream that transforms each update and produces its own final result.
- *
- * Used to build the chat-layer → agent-layer pipeline. Finalization order matches Python's
- * `ResponseStream.map`:
- *
- * 1. inner cleanup hooks
- * 2. inner finalizer
- * 3. inner result hooks
- * 4. outer cleanup hooks
- * 5. outer finalizer
- * 6. outer result hooks
- *
- * The inner stream is claimed by this call, so it can no longer be consumed directly. Early
- * `break` on the outer stream propagates `return()` inward, so both layers' cleanup hooks still
- * run exactly once.
- *
- * @internal Not part of the public v1 API; exported for use inside the framework.
- */
-export function pipeStream<TIn, TOut, TFinal>(
-  inner: ResponseStream<TIn, unknown>,
-  init: PipeStreamInit<TIn, TOut, TFinal>,
-): ResponseStream<TOut, TFinal> {
-  const map = init.map;
-  const streamInit: ResponseStreamInit<TOut, TFinal> = {
-    start: (ctx) => {
-      const source = (inner as HybridResponseStream<TIn, unknown>).beginInternal(ctx.stream);
-      return {
-        [Symbol.asyncIterator]: (): AsyncIterator<TOut> => ({
-          next: async (): Promise<IteratorResult<TOut>> => {
-            const result = await source.next();
-            if (result.done === true) {
-              return { done: true, value: undefined };
-            }
-            const value = map === undefined ? (result.value as unknown as TOut) : await map(result.value);
-            return { done: false, value };
-          },
-          return: async (): Promise<IteratorResult<TOut>> => {
-            await source.return?.();
-            return { done: true, value: undefined };
-          },
-        }),
-      };
-    },
-    finalize: init.finalize,
-  };
-  if (init.cleanup !== undefined) streamInit.cleanup = init.cleanup;
-  if (init.onResult !== undefined) streamInit.onResult = init.onResult;
-  if (init.signal !== undefined) streamInit.signal = init.signal;
-  return createResponseStream(streamInit);
 }

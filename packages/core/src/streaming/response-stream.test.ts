@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StreamConsumedError } from '../errors.js';
-import { createResponseStream, pipeStream } from './response-stream.js';
+import { createResponseStream } from './response-stream.js';
 
 async function* numbers(count: number, onNext?: (i: number) => void): AsyncGenerator<number> {
   for (let i = 0; i < count; i++) {
@@ -506,76 +506,5 @@ describe('createResponseStream cleanup failures', () => {
     expect(thrown).toBeInstanceOf(AggregateError);
     expect((thrown as AggregateError).errors).toEqual([consumerError, cleanupError]);
     await expect(stream.finalResponse()).rejects.toBe(thrown);
-  });
-});
-
-describe('pipeStream', () => {
-  it('finalizes inner before outer and runs both hook sets in order', async () => {
-    const order: string[] = [];
-    const inner = createResponseStream<number, number>({
-      start: () => numbers(3),
-      finalize: (updates) => {
-        order.push('inner-finalize');
-        return sum(updates);
-      },
-      cleanup: [() => void order.push('inner-cleanup')],
-      onResult: [
-        (value) => {
-          order.push('inner-result');
-          return value;
-        },
-      ],
-    });
-
-    const outer = pipeStream(inner, {
-      map: (value) => value * 2,
-      finalize: (updates) => {
-        order.push('outer-finalize');
-        return sum(updates);
-      },
-      cleanup: [() => void order.push('outer-cleanup')],
-      onResult: [
-        (value) => {
-          order.push('outer-result');
-          return value;
-        },
-      ],
-    });
-
-    expect(await outer).toBe(6);
-    expect(order).toEqual([
-      'inner-cleanup',
-      'inner-finalize',
-      'inner-result',
-      'outer-cleanup',
-      'outer-finalize',
-      'outer-result',
-    ]);
-  });
-
-  it('propagates early break to the inner stream', async () => {
-    const innerCleanup = vi.fn();
-    const outerCleanup = vi.fn();
-    const inner = createResponseStream({
-      start: () => numbers(10),
-      finalize: sum,
-      cleanup: [innerCleanup],
-    });
-    const outer = pipeStream(inner, { finalize: sum, cleanup: [outerCleanup] });
-
-    for await (const value of outer) {
-      if (value === 0) {
-        break;
-      }
-    }
-    expect(innerCleanup).toHaveBeenCalledTimes(1);
-    expect(outerCleanup).toHaveBeenCalledTimes(1);
-  });
-
-  it('claims the inner stream, so it can no longer be consumed directly', async () => {
-    const inner = createResponseStream({ start: () => numbers(2), finalize: sum });
-    const outer = pipeStream(inner, { finalize: sum });
-    await outer;
-    expect(() => inner[Symbol.asyncIterator]()).toThrow(StreamConsumedError);
   });
 });
