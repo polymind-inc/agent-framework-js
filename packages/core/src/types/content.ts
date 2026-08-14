@@ -270,7 +270,27 @@ export interface OAuthConsentRequestContent extends ContentBase {
  * Content that suspends the run until a human responds — what
  * `AgentResponse.userInputRequests` surfaces (.NET `UserInputRequestContent`).
  */
-export type UserInputRequestContent = FunctionApprovalRequestContent | OAuthConsentRequestContent;
+export type UserInputRequestContent =
+  | FunctionApprovalRequestContent
+  | OAuthConsentRequestContent
+  | (UnknownContent & { userInputRequest: true });
+
+/**
+ * `true` when `content` suspends the run until a human responds — the filter behind
+ * `AgentResponse.userInputRequests`, expressed as a type guard like .NET's
+ * `content is UserInputRequestContent` check.
+ *
+ * Matches the serialized `userInputRequest` marker as well as the two request discriminators, so
+ * a request variant this framework version does not model (deserialized as unknown content with
+ * the marker set) is still surfaced.
+ */
+export function isUserInputRequest(content: Content): content is UserInputRequestContent {
+  return (
+    content.userInputRequest === true ||
+    content.type === 'function_approval_request' ||
+    content.type === 'oauth_consent_request'
+  );
+}
 
 /**
  * A content item whose wire `type` this version of the framework does not know.

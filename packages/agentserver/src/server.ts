@@ -41,7 +41,7 @@ import { resolveAgentReference, resolveAgentSessionId } from './session-id.js';
 import { InMemoryResponseProvider } from './store/memory.js';
 import type { ResponseGeneration, ResponseProvider } from './store/provider.js';
 import { sameOwner } from './store/provider.js';
-import { conversationIdOf, parseCreateRequest, validateResponseId } from './validation.js';
+import { conversationIdOf, parseCreateRequest, positiveLimit, validateResponseId } from './validation.js';
 import type {
   AgentReference,
   CreateResponseRequest,
@@ -180,9 +180,9 @@ export class ResponsesServer {
     this.#onViolation = options.onViolation;
     this.#hosted = options.hosted ?? isHosted();
     this.#limits = {
-      maxBodyBytes: options.limits?.maxBodyBytes ?? maxBodyBytes(),
-      maxInputItems: options.limits?.maxInputItems ?? maxInputItems(),
-      maxStreamEvents: options.limits?.maxStreamEvents ?? maxStreamEvents(),
+      maxBodyBytes: positiveLimit('maxBodyBytes', options.limits?.maxBodyBytes ?? maxBodyBytes()),
+      maxInputItems: positiveLimit('maxInputItems', options.limits?.maxInputItems ?? maxInputItems()),
+      maxStreamEvents: positiveLimit('maxStreamEvents', options.limits?.maxStreamEvents ?? maxStreamEvents()),
     };
     this.#resources = { store: this.#store, claims: this.#claims };
   }
@@ -214,16 +214,16 @@ export class ResponsesServer {
   /**
    * Whether `claim` is still the current holder of `id` — the guard on every deferred write.
    *
-   * `undefined` means the turn never took a claim (a foreground turn), which is always allowed to
-   * write: nothing else can be holding an id it never registered.
+   * Every create takes a claim, foreground turns included: they need the same exclusion as
+   * detached ones or two model/tool runs can share one id.
    */
-  #holds(id: string, claim: IdClaim | undefined): boolean {
-    return claim === undefined || this.#claims.get(id) === claim;
+  #holds(id: string, claim: IdClaim): boolean {
+    return this.#claims.get(id) === claim;
   }
 
   /** Drops `claim`, and only `claim`: whoever holds the id now keeps it. */
-  #releaseClaim(id: string, claim: IdClaim | undefined): void {
-    if (claim !== undefined && this.#claims.get(id) === claim) {
+  #releaseClaim(id: string, claim: IdClaim): void {
+    if (this.#claims.get(id) === claim) {
       this.#claims.delete(id);
     }
   }
@@ -438,10 +438,8 @@ export class ResponsesServer {
     // safe fence: two writers could both call their first turn generation 1. A UUID identifies the
     // turn globally and is round-tripped through both the response and its replay log.
     const generation = crypto.randomUUID();
-    const claim: IdClaim | undefined = background ? newClaim(context.userId, generation) : undefined;
-    if (claim !== undefined) {
-      this.#claims.set(responseId, claim);
-    }
+    const claim = newClaim(context.userId, generation);
+    this.#claims.set(responseId, claim);
 
     try {
       return await this.#createClaimed({
@@ -462,7 +460,7 @@ export class ResponsesServer {
       // run has taken it over the release belongs to that run's teardown, and only to the claim it
       // was given — whoever holds the id now keeps it. The wait goes with it: a claim that never
       // became a run owes nothing, and a `drain()` already holding its promise must not hang on it.
-      if (claim !== undefined && claim.run === undefined) {
+      if (claim.run === undefined) {
         this.#releaseClaim(responseId, claim);
         claim.settle();
       }
@@ -489,7 +487,7 @@ export class ResponsesServer {
     background: boolean;
     responseId: string;
     generation: ResponseGeneration;
-    claim: IdClaim | undefined;
+    claim: IdClaim;
   }): Promise<Response> {
     const { request, context, telemetry, created, conversationId, previousResponseId } = args;
     const { history, background, responseId, generation, claim } = args;
@@ -539,10 +537,17 @@ export class ResponsesServer {
       request.signal.addEventListener('abort', onShutdown, { once: true });
     }
     // `#shutdown.signal` lives as long as the server; a listener left on it after the turn ends
-    // is a leak that grows with every request served. Every exit path below releases both.
+    // is a leak that grows with every request served. Every exit path below releases both. The
+    // paths that share this teardown can each reach it, so every step is idempotent: removing a
+    // removed listener is a no-op, `#releaseClaim` only drops the claim it is given, and a
+    // settled claim stays settled.
     const releaseSignals = (): void => {
       this.#shutdown.signal.removeEventListener('abort', onShutdown);
       request.signal.removeEventListener('abort', onShutdown);
+      if (!background) {
+        this.#releaseClaim(responseId, claim);
+        claim.settle();
+      }
     };
     // `addEventListener` is not a subscription to *state*: an `AbortSignal` that was already
     // aborted never fires again, so a request whose client hung up before this turn was routed —
@@ -678,7 +683,11 @@ export class ResponsesServer {
             // request can resolve it without knowing the response id. Local stores get that from
             // this alias record; a service-linked store resolves the conversation itself (and its
             // alias create would collide with the item ids the service already holds).
-            await this.#store.put({ ...stored, response: { ...response, id: conversationId } });
+            await this.#store.put({
+              ...stored,
+              response: { ...response, id: conversationId },
+              aliasOf: response.id,
+            });
           }
         });
       const persist = async (): Promise<void> => {
@@ -688,9 +697,9 @@ export class ResponsesServer {
         await persistSnapshot(tracker.response);
       };
 
-      // A claim is taken for exactly the background creates, so this *is* the background branch —
-      // written against `claim` rather than `background` because the run it starts needs it.
-      if (claim !== undefined) {
+      // A background run takes ownership of its claim until detached winddown. Foreground turns
+      // release the same kind of claim through `releaseSignals` when collection or SSE ends.
+      if (background) {
         const answer = await startBackground({
           responseId,
           claim,
@@ -719,7 +728,14 @@ export class ResponsesServer {
       if (created.stream === true) {
         // Set only once the 200 is real: a failure before the commit is answered by this request,
         // so this request is what has to flush the spans it produced.
-        const answer = await streamResponse(events, tracker, persist, sessionId, releaseSignals);
+        const answer = await streamResponse(
+          events,
+          tracker,
+          persist,
+          sessionId,
+          releaseSignals,
+          abort.signal,
+        );
         telemetry.deferred = true;
         return answer;
       }

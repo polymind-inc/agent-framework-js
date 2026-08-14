@@ -1,5 +1,5 @@
 import type { AgentSession } from '../agent/session.js';
-import { AgentFrameworkError, ConfigurationError, errorMessageOf, ToolInvocationError } from '../errors.js';
+import { AgentFrameworkError, errorMessageOf, ToolInvocationError, validateSafeInteger } from '../errors.js';
 import type { Content } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { JsonSchema, SchemaInput } from './json-schema.js';
@@ -115,7 +115,11 @@ export type AnyFunctionTool = FunctionTool<never, unknown>;
 
 /** Resolves the argument type a tool's `execute` receives. */
 export type ToolInputOf<TParams> =
-  TParams extends StandardSchemaV1<unknown, infer Output> ? Output : Record<string, unknown>;
+  TParams extends StandardSchemaV1<unknown, infer Output>
+    ? Output
+    : TParams extends { readonly type: 'object' }
+      ? Record<string, unknown>
+      : unknown;
 
 /** Configuration accepted by {@link tool}. */
 export interface FunctionToolConfig<TParams extends SchemaInput, TOutput> {
@@ -152,13 +156,19 @@ export interface FunctionToolConfig<TParams extends SchemaInput, TOutput> {
  *
  * @throws {SchemaResolutionError} When `parameters` cannot be converted to a JSON Schema.
  */
+export function tool<TOutput = unknown>(
+  config: FunctionToolConfig<JsonSchema & { type: 'object' }, TOutput>,
+): FunctionTool<Record<string, unknown>, TOutput>;
+export function tool<TParams extends SchemaInput, TOutput = unknown>(
+  config: FunctionToolConfig<TParams, TOutput>,
+): FunctionTool<ToolInputOf<TParams>, TOutput>;
 export function tool<TParams extends SchemaInput, TOutput = unknown>(
   config: FunctionToolConfig<TParams, TOutput>,
 ): FunctionTool<ToolInputOf<TParams>, TOutput> {
-  if (config.maxInvocations !== undefined && config.maxInvocations < 1) {
+  if (config.maxInvocations !== undefined) {
     // Python raises the same way. A cap below 1 declares a tool the model can see and can never
     // use, which is a configuration mistake rather than a runtime state worth reporting.
-    throw new ConfigurationError('maxInvocations must be at least 1.');
+    validateSafeInteger('maxInvocations', config.maxInvocations, 1);
   }
   const declared: FunctionTool<ToolInputOf<TParams>, TOutput> = {
     kind: 'function',

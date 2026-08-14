@@ -132,6 +132,21 @@ describe('request mapping', () => {
     expect(request.max_tokens).toBe(1024);
   });
 
+  it.each([
+    { type: 'enabled' },
+    { type: 'enabled', budgetTokens: 1023 },
+    { type: 'enabled', budgetTokens: 2048.5 },
+    { type: 'enabled', budgetTokens: Number.POSITIVE_INFINITY },
+    { type: 'disabled', budgetTokens: 2048 },
+  ])('rejects an invalid thinking configuration ($type, $budgetTokens)', (thinking) => {
+    const { client } = clientWith([message('hi')]);
+    expect(() =>
+      client.buildRequest([{ role: 'user', contents: [textContent('hello')] }], {
+        thinking: thinking as never,
+      }),
+    ).toThrow(ConfigurationError);
+  });
+
   it('drops options the Messages API has no equivalent for', () => {
     const { client } = clientWith([message('hi')]);
     const request = client.buildRequest([{ role: 'user', contents: [textContent('hello')] }], {
@@ -520,6 +535,51 @@ describe('response parsing', () => {
     expect(contents[1]).toMatchObject({ type: 'function_call', callId: 'call_1', name: 'search' });
     expect(contents[2]).toMatchObject({ type: 'function_call', informationalOnly: true });
     expect(contents[3]).toMatchObject({ type: 'unknown', unknownType: 'future_block' });
+  });
+
+  it('maps Anthropic text citations to framework annotations', () => {
+    const response = parseMessage({
+      id: 'msg_citations',
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: 'Cited answer',
+          citations: [
+            {
+              type: 'char_location',
+              title: 'Source document',
+              cited_text: 'supporting text',
+              file_id: 'file-1',
+              start_char_index: 4,
+              end_char_index: 19,
+            },
+            {
+              type: 'web_search_result_location',
+              title: 'Web source',
+              cited_text: 'web snippet',
+              url: 'https://example.test/source',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.messages[0]?.contents[0]?.annotations).toEqual([
+      expect.objectContaining({
+        type: 'citation',
+        title: 'Source document',
+        snippet: 'supporting text',
+        fileId: 'file-1',
+        annotatedRegions: [{ type: 'text_span', startIndex: 4, endIndex: 19 }],
+      }),
+      expect.objectContaining({
+        type: 'citation',
+        title: 'Web source',
+        snippet: 'web snippet',
+        url: 'https://example.test/source',
+      }),
+    ]);
   });
 
   it('parses an MCP call and its result', () => {

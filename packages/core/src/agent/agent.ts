@@ -47,7 +47,7 @@ import type {
   ChatResponseUpdate,
   ContinuationToken,
 } from '../types/response.js';
-import { chatResponseToUpdates, chatToAgentUpdate, mergeUpdates } from '../types/response.js';
+import { agentResponse, chatResponseToUpdates, chatToAgentUpdate, mergeUpdates } from '../types/response.js';
 import type { AgentAsToolOptions } from './as-tool.js';
 import { agentAsTool } from './as-tool.js';
 import { parseContinuationToken, wrapContinuationToken } from './continuation.js';
@@ -437,7 +437,14 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       },
       // The pipeline owns the result: an awaited run folded inside the inner stream, and a
       // middleware may have replaced it outright. Re-folding the updates here would lose both.
-      finalize: (): Promise<Final> => (pipeline as { final: () => Promise<Final> }).final(),
+      finalize: (): Promise<Final> =>
+        pipeline?.final() ??
+        Promise.resolve(
+          agentResponse<StructuredValue<TFormat>>({
+            messages: [],
+            agentId: this.id,
+          }),
+        ),
       ...(signal === undefined ? {} : { signal }),
     });
   }

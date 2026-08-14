@@ -137,7 +137,8 @@ const done = await agent.run(undefined, { session, continuationToken: accepted.c
 ```
 
 A token is `{"taskId": "..."}` and is JSON-serializable, so a resume can happen in another process.
-Tokens are parsed strictly: anything that is not one this package issued is refused.
+Tokens are parsed strictly. The token alone identifies the task to resume; when a session is also
+passed, its recorded task state is updated from the resumed task.
 
 Tokens are issued only while a task is still going to produce something (`submitted`, `working`). A
 task that stopped to ask a question (`input-required`) is continued by sending the next message, not

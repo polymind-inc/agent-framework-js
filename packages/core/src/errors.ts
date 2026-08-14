@@ -125,6 +125,20 @@ export class StreamConsumedError extends AgentFrameworkError {
 }
 
 /**
+ * Validates an integer configuration value at the boundary where it is declared.
+ *
+ * Returns `value` when it is a safe integer of at least `minimum`, and throws a
+ * {@link ConfigurationError} naming the offending option otherwise — eagerly, so a bad limit
+ * fails where it is written rather than on the first call that reaches it.
+ */
+export function validateSafeInteger(name: string, value: number, minimum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new ConfigurationError(`${name} must be a safe integer greater than or equal to ${minimum}.`);
+  }
+  return value;
+}
+
+/**
  * Throws the abort reason when `signal` is already aborted.
  *
  * The thrown value is whatever the caller's {@link AbortController} carries — by default a

@@ -1,7 +1,7 @@
 import { supportsMcp, supportsWebSearch, textContent } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it } from 'vitest';
 import { AnthropicChatClient } from './chat-client.js';
-import { webSearchTool } from './hosted-tools.js';
+import { mcpTool, webSearchTool } from './hosted-tools.js';
 
 function client(): AnthropicChatClient {
   const fake = { beta: { messages: { create: () => Promise.resolve({}) } } };
@@ -56,6 +56,18 @@ describe('hosted tool capability protocol', () => {
   it('delegates getWebSearchTool to the factory', () => {
     const declared = client().getWebSearchTool({ userLocation: { country: 'JP' } });
     expect(declared).toEqual(webSearchTool({ userLocation: { country: 'JP' } }));
+  });
+});
+
+describe('MCP tool declaration', () => {
+  it('reads Authorization case-insensitively', () => {
+    expect(
+      mcpTool({
+        serverLabel: 'docs',
+        serverUrl: 'https://mcp.example',
+        headers: { Authorization: 'Bearer secret' },
+      }).spec,
+    ).toMatchObject({ authorization_token: 'Bearer secret' });
   });
 });
 

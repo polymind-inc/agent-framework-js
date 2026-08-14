@@ -46,20 +46,21 @@ function snapshot(request: FunctionApprovalRequestContent): FunctionApprovalRequ
     type: 'function_approval_request',
     id: request.id,
     userInputRequest: true,
+    ...(request.callId === undefined ? {} : { callId: request.callId }),
     // Kept because it carries why the request exists — `requiredByMiddleware` above all, which the
     // bypass layer reads on the turn that replays it.
     ...(request.additionalProperties === undefined
       ? {}
-      : { additionalProperties: { ...request.additionalProperties } }),
+      : { additionalProperties: structuredClone(request.additionalProperties) }),
     functionCall: {
       type: 'function_call',
       callId: call.callId,
       name: call.name,
-      arguments: typeof call.arguments === 'string' ? call.arguments : { ...call.arguments },
+      arguments: typeof call.arguments === 'string' ? call.arguments : structuredClone(call.arguments),
       ...(call.informationalOnly === undefined ? {} : { informationalOnly: call.informationalOnly }),
       ...(call.additionalProperties === undefined
         ? {}
-        : { additionalProperties: { ...call.additionalProperties } }),
+        : { additionalProperties: structuredClone(call.additionalProperties) }),
     },
   };
 }
@@ -252,7 +253,11 @@ function autoApprovableNames(
 ): Set<string> {
   const names = new Set<string>();
   for (const candidate of [...(tools ?? []), ...additionalTools]) {
-    if (isFunctionTool(candidate) && candidate.approvalMode !== 'always_require') {
+    if (
+      isFunctionTool(candidate) &&
+      candidate.execute !== undefined &&
+      candidate.approvalMode !== 'always_require'
+    ) {
       names.add(candidate.name);
     }
   }
@@ -321,10 +326,13 @@ export function withToolApproval<TOptions extends ChatOptions>(
             } else if (autoApprovable.has(content.functionCall.name) && !isMiddlewareApproval(content)) {
               // A middleware asked for this specific call, not for every call of this tool, so the
               // tool's `never_require` declaration does not answer it.
-              suppressed.push(content);
+              suppressed.push(snapshot(content));
             } else {
+              // The caller gets its own deep snapshot, so nothing the caller mutates can reach the
+              // original request — which is what the store records when the run winds down. One
+              // clone keeps the binding record independent from the object yielded to the caller.
               surfaced.push(content);
-              kept.push(content);
+              kept.push(snapshot(content));
             }
           }
           // An update that carried nothing but suppressed approvals has nothing left to report.

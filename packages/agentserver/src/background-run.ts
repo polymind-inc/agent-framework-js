@@ -1,5 +1,6 @@
 import type { ResponseTracker } from './lifecycle.js';
 import type { ResponseGeneration, ResponseOwner } from './store/provider.js';
+import { positiveLimit } from './validation.js';
 import type { OutputItem, ResponseEvent, ResponseObject } from './wire.js';
 
 /** The event's replay cursor position. Events this server persists are always stamped. */
@@ -63,7 +64,7 @@ export class BackgroundRun {
     this.inputItems = options.inputItems;
     this.abort = options.abort;
     this.persistSnapshot = options.persistSnapshot;
-    this.#maxEvents = options.maxEvents;
+    this.#maxEvents = positiveLimit('maxEvents', options.maxEvents);
     const { promise, resolve } = Promise.withResolvers<void>();
     this.firstEvent = promise;
     this.#firstEventSeen = resolve;
@@ -214,8 +215,9 @@ export interface IdClaim {
    */
   readonly done: Promise<void>;
   /**
-   * Ends the wait, optionally by adopting the work that replaces it. Called exactly once — either
-   * with the run's completion, or bare when the create failed before there was a run.
+   * Ends the wait, optionally by adopting the work that replaces it — with the run's completion,
+   * or bare when the turn ended without a run taking over. First call wins: a settled claim stays
+   * settled, so the teardown paths that share a claim may each settle it without coordinating.
    */
   readonly settle: (work?: Promise<void>) => void;
 }

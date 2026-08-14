@@ -1,14 +1,17 @@
 import type { ChatOptions } from '@polymind-inc/agent-framework-core';
 
 /** Extended thinking configuration (maps to Anthropic `thinking`). */
-export interface AnthropicThinkingOptions {
-  type: 'enabled' | 'disabled' | (string & {});
-  /**
-   * Maps to `budget_tokens`. Minimum 1024, and counted against `maxTokens`. Required when
-   * `type` is `'enabled'`.
-   */
-  budgetTokens?: number;
-}
+export type AnthropicThinkingOptions =
+  | {
+      type: 'enabled';
+      /** Maps to `budget_tokens`. Minimum 1024, and counted against `maxTokens`. */
+      budgetTokens: number;
+    }
+  | {
+      type: 'disabled';
+      /** Disabled thinking cannot carry a token budget. */
+      budgetTokens?: never;
+    };
 
 /**
  * {@link ChatOptions} plus the Anthropic-specific knobs.

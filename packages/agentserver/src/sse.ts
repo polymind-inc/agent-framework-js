@@ -68,7 +68,11 @@ export function toSseStream(
       if (keepAliveMs > 0) {
         keepAlive = setInterval(() => {
           try {
-            controller.enqueue(encoder.encode(SSE_KEEPALIVE));
+            // Keep at most one comment queued. A disconnected or slow client must not turn the
+            // timer into an unbounded memory queue while the source is silent.
+            if ((controller.desiredSize ?? 0) > 0) {
+              controller.enqueue(encoder.encode(SSE_KEEPALIVE));
+            }
           } catch {
             // The stream is already closed; the pull loop will clean up.
           }

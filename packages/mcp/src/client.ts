@@ -146,6 +146,11 @@ export class McpClient {
         'McpClient needs exactly one of `url`, `transport`, or `transportFactory`.',
       );
     }
+    if (config.url === undefined && (config.headers !== undefined || config.fetch !== undefined)) {
+      throw new ConfigurationError(
+        'A custom transport owns its own fetch; configure `headers` and `fetch` on it instead.',
+      );
+    }
     this.#config = config;
     this.#allowedTools = config.allowedTools === undefined ? undefined : new Set(config.allowedTools);
     this.#target = config.url === undefined ? 'mcp' : String(config.url);

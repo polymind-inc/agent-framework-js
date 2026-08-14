@@ -70,6 +70,41 @@ describe('message serialization', () => {
     expect(serializeMessage(deserializeMessage(wire))).toEqual(wire);
   });
 
+  it('round-trips a plain-JSON tool result carrying type keys untouched', () => {
+    // A tool result is arbitrary JSON. `[{type: 'row', id: 1}]` merely happens to carry a `type`
+    // key; rewriting it to `{type: 'unknown', unknownType: 'row', ...}` on deserialization would
+    // hand the model corrupted data when the session is re-sent.
+    const msg: Message = {
+      role: 'tool',
+      contents: [{ type: 'function_result', callId: 'c1', result: [{ type: 'row', id: 1 }] }],
+    };
+
+    expect(deserializeMessage(serializeMessage(msg))).toEqual(msg);
+  });
+
+  it('round-trips a single plain-JSON object result carrying a type key untouched', () => {
+    const msg: Message = {
+      role: 'tool',
+      contents: [{ type: 'function_result', callId: 'c1', result: { type: 'row', id: 1 } }],
+    };
+
+    expect(deserializeMessage(serializeMessage(msg))).toEqual(msg);
+  });
+
+  it('strips rawRepresentation from Content values inside a function result result', () => {
+    const circular: Record<string, unknown> = { type: 'sdk_block' };
+    circular.self = circular;
+    const wire = serializeContent({
+      type: 'function_result',
+      callId: 'c1',
+      result: [{ type: 'text', text: 'from a tool', rawRepresentation: circular }],
+    });
+
+    const result = wire.result as Array<Record<string, unknown>>;
+    expect(result[0]).not.toHaveProperty('rawRepresentation');
+    expect(() => JSON.stringify(wire)).not.toThrow();
+  });
+
   it('drops rawRepresentation inside an mcp_server_tool_result output', () => {
     // `output` carries a Content list (Python `fields_to_capture` includes it and recurses
     // structurally), so the "dropped at every level" contract has to hold inside it too.

@@ -1,4 +1,5 @@
 import type {
+  Annotation,
   ChatResponse,
   ChatResponseUpdate,
   Content,
@@ -33,6 +34,67 @@ function parseFinishReason(stopReason: unknown): FinishReason | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/** Maps the citation metadata attached to a complete Anthropic text block. */
+function parseCitations(block: AnthropicBlock): Annotation[] | undefined {
+  if (!Array.isArray(block.citations) || block.citations.length === 0) {
+    return undefined;
+  }
+  const annotations: Annotation[] = [];
+  for (const candidate of block.citations) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const citation = candidate as AnthropicBlock;
+    const annotation: Annotation = {
+      type: 'citation',
+      rawRepresentation: candidate,
+    };
+    const snippet = typeof citation.cited_text === 'string' ? citation.cited_text : undefined;
+    if (snippet !== undefined) annotation.snippet = snippet;
+    if (typeof citation.file_id === 'string' && citation.file_id !== '') annotation.fileId = citation.file_id;
+
+    let start: number | undefined;
+    let end: number | undefined;
+    switch (citation.type) {
+      case 'char_location':
+        if (typeof citation.title === 'string') annotation.title = citation.title;
+        start = asNumber(citation.start_char_index);
+        end = asNumber(citation.end_char_index);
+        break;
+      case 'page_location':
+        if (typeof citation.document_title === 'string') annotation.title = citation.document_title;
+        start = asNumber(citation.start_page_number);
+        end = asNumber(citation.end_page_number);
+        break;
+      case 'content_block_location':
+        if (typeof citation.document_title === 'string') annotation.title = citation.document_title;
+        start = asNumber(citation.start_block_index);
+        end = asNumber(citation.end_block_index);
+        break;
+      case 'web_search_result_location':
+      case 'web_fetch_result_location':
+        if (typeof citation.title === 'string') annotation.title = citation.title;
+        if (typeof citation.url === 'string') annotation.url = citation.url;
+        break;
+      case 'search_result_location':
+        if (typeof citation.title === 'string') annotation.title = citation.title;
+        if (typeof citation.source === 'string') annotation.url = citation.source;
+        start = asNumber(citation.start_block_index);
+        end = asNumber(citation.end_block_index);
+        break;
+    }
+    if (start !== undefined || end !== undefined) {
+      annotation.annotatedRegions = [
+        {
+          type: 'text_span',
+          ...(start === undefined ? {} : { startIndex: start }),
+          ...(end === undefined ? {} : { endIndex: end }),
+        },
+      ];
+    }
+    annotations.push(annotation);
+  }
+  return annotations.length === 0 ? undefined : annotations;
 }
 
 /**
@@ -166,9 +228,11 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
     switch (block.type) {
       case 'text':
       case 'text_delta': {
+        const annotations = block.type === 'text' ? parseCitations(block) : undefined;
         contents.push({
           type: 'text',
           text: String(block.text ?? ''),
+          ...(annotations === undefined ? {} : { annotations }),
           rawRepresentation: block,
         });
         break;
@@ -334,6 +398,20 @@ export function parseStreamEvent(event: unknown, state: StreamParseState): ChatR
     case 'content_block_start':
     case 'content_block_delta': {
       const block = raw.type === 'content_block_start' ? raw.content_block : raw.delta;
+      if (raw.type === 'content_block_delta') {
+        const deltaType = (block as AnthropicBlock | null | undefined)?.type;
+        if (
+          deltaType !== 'text_delta' &&
+          deltaType !== 'thinking_delta' &&
+          deltaType !== 'signature_delta' &&
+          deltaType !== 'input_json_delta'
+        ) {
+          // A delta is a fragment, not a replayable Messages API content block. Preserving an
+          // unknown fragment as UnknownContent would send that fragment as a whole block on the
+          // next turn and permanently poison the transcript.
+          return undefined;
+        }
+      }
       const contents = parseContentBlocks([block], state);
       return contents.length === 0
         ? undefined

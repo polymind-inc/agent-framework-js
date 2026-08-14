@@ -127,6 +127,8 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
 
   #claimed = false;
   #iterator: AsyncIterator<TUpdate> | undefined;
+  #sourcePromise: Promise<AsyncIterator<TUpdate>> | undefined;
+  #drainPromise: Promise<TFinal> | undefined;
   #sourceDone = false;
   /** The consumer stopped early (`break`), so the folded result describes an unfinished run. */
   #abandoned = false;
@@ -188,15 +190,21 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
   }
 
   async #source(stream: boolean): Promise<AsyncIterator<TUpdate>> {
-    if (this.#iterator === undefined) {
+    if (this.#iterator !== undefined) {
+      return this.#iterator;
+    }
+    // Assign before `start` can suspend so concurrent result readers share one provider call.
+    this.#sourcePromise ??= (async (): Promise<AsyncIterator<TUpdate>> => {
       const ctx: StreamStartContext = { stream };
       if (this.#init.signal !== undefined) {
         ctx.signal = this.#init.signal;
       }
       const iterable = await this.#init.start(ctx);
-      this.#iterator = iterable[Symbol.asyncIterator]();
-    }
-    return this.#iterator;
+      const iterator = iterable[Symbol.asyncIterator]();
+      this.#iterator = iterator;
+      return iterator;
+    })();
+    return this.#sourcePromise;
   }
 
   async #next(stream: boolean): Promise<IteratorResult<TUpdate, void>> {
@@ -395,14 +403,19 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
     return this.#finalizing;
   }
 
-  async #drain(stream: boolean): Promise<TFinal> {
-    for (;;) {
-      const result = await this.#next(stream);
-      if (result.done === true) {
-        break;
+  #drain(stream: boolean): Promise<TFinal> {
+    // Sharing source initialization is not enough: two drains would still pull one iterator in
+    // parallel and race update recording and cleanup.
+    this.#drainPromise ??= (async (): Promise<TFinal> => {
+      for (;;) {
+        const result = await this.#next(stream);
+        if (result.done === true) {
+          break;
+        }
       }
-    }
-    return this.#finalize();
+      return this.#finalize();
+    })();
+    return this.#drainPromise;
   }
 
   [Symbol.asyncIterator](): AsyncIterator<TUpdate, void, void> {

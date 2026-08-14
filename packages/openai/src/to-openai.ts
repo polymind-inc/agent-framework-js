@@ -25,14 +25,40 @@ function stringifyArguments(args: Record<string, unknown> | string): string {
   return typeof args === 'string' ? args : JSON.stringify(args);
 }
 
-function resultToOutput(result: unknown): string {
-  if (typeof result === 'string') {
-    return result;
+/**
+ * Renders a tool or model result value as the string a wire field carries.
+ *
+ * A string passes through, an absent value (`undefined` / `null`) becomes an empty string, and
+ * anything else is JSON-encoded — the same shape Python's `Content.from_function_result` and
+ * .NET's `EncodeFunctionResultAsJsonStringPayload` give a function result. A value
+ * `JSON.stringify` cannot encode — it throws on a cycle or a `BigInt`, and answers `undefined`
+ * for a symbol or a function — degrades to `String(value)` instead, mirroring Python's
+ * `str(result)` fallback: a wire mapper renders a transcript that already exists, so failing the
+ * whole request over one unencodable value is not an option, and the string form still says
+ * *something* about what the tool answered.
+ *
+ * The single implementation of this rendering: the live provider path and the Foundry hosting
+ * replay and persist paths all go through it, so they cannot drift apart.
+ */
+export function stringifyResult(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
   }
-  if (result === undefined || result === null) {
+  if (value === undefined || value === null) {
     return '';
   }
-  return JSON.stringify(result);
+  const fallback = (): string => {
+    try {
+      return String(value);
+    } catch {
+      return '[unserializable]';
+    }
+  };
+  try {
+    return JSON.stringify(value) ?? fallback();
+  } catch {
+    return fallback();
+  }
 }
 
 /**
@@ -250,7 +276,7 @@ function answeredCallIds(messages: readonly Message[]): Set<string> {
 function functionCallOutput(content: FunctionResultContent): string | ResponsesInputItem[] {
   const items = content.items;
   if (items === undefined || !items.some((item) => item.type === 'data' || item.type === 'uri')) {
-    return resultToOutput(content.result);
+    return stringifyResult(content.result);
   }
   const parts: ResponsesInputItem[] = [];
   for (const item of items) {
@@ -259,7 +285,7 @@ function functionCallOutput(content: FunctionResultContent): string | ResponsesI
       parts.push(part);
     }
   }
-  return parts.length === 0 ? resultToOutput(content.result) : parts;
+  return parts.length === 0 ? stringifyResult(content.result) : parts;
 }
 
 /**

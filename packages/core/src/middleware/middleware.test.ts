@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../agent/agent.js';
 import type { ChatOptions } from '../client/chat-client.js';
 import { MockChatClient } from '../client/test-support.js';
 import type { ContextProvider } from '../context/context-provider.js';
+import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError } from '../errors.js';
 import { approvalResponse } from '../tools/approval.js';
 import { supportsMcp, supportsWebSearch } from '../tools/hosted.js';
@@ -243,6 +244,36 @@ describe('agent middleware', () => {
 
     expect(seen).toEqual(['QUIET']);
     expect((await stream.finalResponse()).text).toBe('quiet');
+  });
+
+  it('classifies an onUpdate failure as a failed run and does not persist a partial turn', async () => {
+    const boom = new Error('update hook failed');
+    const afterRun = vi.fn();
+    const history = new InMemoryHistoryProvider();
+    const fail = agentMiddleware(async (ctx, next) => {
+      ctx.onUpdate(() => {
+        throw boom;
+      });
+      await next();
+    });
+    const agent = new Agent({
+      client: client('partial'),
+      middleware: [fail],
+      contextProviders: [{ sourceId: 'observer', afterRun }],
+      historyProvider: history,
+    });
+    const session = agent.createSession();
+
+    await expect(async () => {
+      for await (const _update of agent.run('x', { session })) {
+        // The hook fails before an update reaches the caller.
+      }
+    }).rejects.toBe(boom);
+
+    expect(afterRun).toHaveBeenCalledTimes(1);
+    expect(afterRun.mock.calls[0]?.[0]).toMatchObject({ error: boom });
+    expect(afterRun.mock.calls[0]?.[0].response).toBeUndefined();
+    expect(await history.getMessages(session, session.partition(history.sourceId))).toEqual([]);
   });
 
   it('transforms the folded result of a streamed run', async () => {

@@ -590,6 +590,37 @@ describe('SSE keep-alive', () => {
     }
   });
 
+  it('does not queue an unbounded number of keep-alives for a slow reader', async () => {
+    vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      const server = makeServer({ handler: sseHandler(gate.promise) });
+      const response = await server.handle(invoke());
+      const reader = must(response.body).getReader();
+      const decoder = new TextDecoder();
+
+      expect(decoder.decode((await reader.read()).value)).toBe('data: first\n\n');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(decoder.decode((await reader.read()).value)).toBe(': keep-alive\n\n');
+
+      let resolved = false;
+      const next = reader.read().then((result) => {
+        resolved = true;
+        return result;
+      });
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(decoder.decode((await next).value)).toBe(': keep-alive\n\n');
+
+      gate.resolve();
+      await reader.cancel();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('propagates a stream failure that lands after keep-alives', async () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();

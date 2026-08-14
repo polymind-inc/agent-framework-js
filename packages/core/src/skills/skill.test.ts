@@ -49,7 +49,7 @@ describe('skillScript', () => {
       properties: { value: { type: 'number' }, factor: { type: 'number' } },
       required: ['value', 'factor'],
     },
-    run: (args) => Number(args.value) * Number(args.factor),
+    run: (args: Record<string, unknown>) => Number(args.value) * Number(args.factor),
   });
 
   it('advertises the resolved JSON Schema', () => {
@@ -83,6 +83,26 @@ describe('skillScript', () => {
 
     expect(await typed.run({ name: 'ada' }, invocation(skill))).toBe('hello ada');
     await expect(typed.run({ name: 7 }, invocation(skill))).rejects.toThrow(ToolInvocationError);
+  });
+
+  it('validates raw JSON Schema arguments before running a skill script', async () => {
+    let executed = false;
+    const raw = skillScript({
+      name: 'raw',
+      parameters: {
+        type: 'object',
+        properties: { value: { type: 'number' } },
+        required: ['value'],
+        additionalProperties: false,
+      },
+      run: () => {
+        executed = true;
+      },
+    });
+    const skill = inlineSkill({ name: 'a', description: 'x', instructions: 'y', scripts: [raw] });
+
+    await expect(raw.run({ value: 'not a number' }, invocation(skill))).rejects.toThrow(ToolInvocationError);
+    expect(executed).toBe(false);
   });
 });
 

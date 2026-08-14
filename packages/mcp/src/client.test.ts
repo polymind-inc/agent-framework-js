@@ -155,6 +155,9 @@ describe('tool enumeration', () => {
     expect(() => new McpClient({ transport: server(), transportFactory: server })).toThrow(
       ConfigurationError,
     );
+    expect(() => new McpClient({ transportFactory: server, headers: { authorization: 'secret' } })).toThrow(
+      ConfigurationError,
+    );
   });
 });
 

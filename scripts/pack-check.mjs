@@ -11,7 +11,7 @@
 // Usage: node scripts/pack-check.mjs
 
 import { execSync } from 'node:child_process';
-import { readPackageManifests, workspaceRoot } from './workspace.mjs';
+import { assertLockstepVersions, readPackageManifests, workspaceRoot } from './workspace.mjs';
 
 const stdout = execSync('pnpm -r --filter "./packages/*" pack --dry-run --json', {
   cwd: workspaceRoot,
@@ -25,7 +25,9 @@ const packed = JSON.parse(stdout.slice(stdout.indexOf('[')));
 
 // Map package name -> manifest, so a packed result can be checked against what it promised.
 const manifests = new Map();
-for (const { manifest } of readPackageManifests()) {
+const packageManifests = readPackageManifests();
+const releaseVersion = assertLockstepVersions(packageManifests);
+for (const { manifest } of packageManifests) {
   manifests.set(manifest.name, manifest);
 }
 
@@ -50,6 +52,12 @@ for (const result of packed) {
   }
 
   const files = new Set(result.files.map((file) => file.path.replaceAll('\\', '/')));
+
+  if (result.version !== manifest.version || result.version !== releaseVersion) {
+    problems.push(
+      `${result.name}: packed version ${result.version} does not match manifest/release version ${manifest.version}`,
+    );
+  }
 
   for (const target of exportTargets(manifest.exports)) {
     if (!files.has(target)) {

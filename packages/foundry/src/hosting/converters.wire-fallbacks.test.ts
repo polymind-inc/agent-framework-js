@@ -1,5 +1,6 @@
 import type { OutputItem } from '@polymind-inc/agent-framework-agentserver';
 import type { Message } from '@polymind-inc/agent-framework-core';
+import { stringifyResult } from '@polymind-inc/agent-framework-openai/internal';
 import { describe, expect, it } from 'vitest';
 import {
   approvalResponseTarget,
@@ -23,8 +24,17 @@ function messageOf(item: OutputItem): Message {
 }
 
 describe('function output codec fallbacks', () => {
-  it('encodes a value JSON.stringify cannot represent as an empty string', () => {
-    expect(encodeFunctionOutput(Symbol('opaque'))).toBe('""');
+  it('encodes a value JSON.stringify cannot represent as its string form', () => {
+    // `JSON.stringify` answers `undefined` for a symbol; the inner text degrades to `String(...)`
+    // (Python's `Content.from_function_result` renders unencodable results via `str` the same
+    // way), so the persisted payload still says what the tool answered instead of "".
+    expect(encodeFunctionOutput(Symbol('opaque'))).toBe('"Symbol(opaque)"');
+  });
+
+  it('encodes a cyclic result as its string form instead of failing the persist', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(encodeFunctionOutput(circular)).toBe('"[object Object]"');
   });
 
   it('decodes an absent payload to an empty string', () => {
@@ -241,6 +251,37 @@ describe('call and result item fallbacks', () => {
   it('stringifies a non-string custom tool output', () => {
     expect(messageOf({ type: 'custom_tool_call_output', output: 7 }).contents[0]).toMatchObject({
       result: '7',
+    });
+    expect(
+      messageOf({ type: 'custom_tool_call_output', output: { status: 'ok', count: 2 } }).contents[0],
+    ).toMatchObject({ result: '{"status":"ok","count":2}' });
+  });
+
+  it('renders an unencodable custom tool output identically to the live provider path', () => {
+    // Replay and the live provider path share one stringify implementation (`stringifyResult`),
+    // so a value `JSON.stringify` throws on renders the same both ways.
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const replayed = messageOf({ type: 'custom_tool_call_output', call_id: 'call_1', output: circular });
+    expect(replayed.contents[0]).toMatchObject({ type: 'function_result', result: '[object Object]' });
+    expect(replayed.contents[0]).toMatchObject({ result: stringifyResult(circular) });
+  });
+
+  it('replays an unencodable structured output as its string form instead of failing the replay', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(messageOf({ type: 'structured_outputs', output: circular }).contents[0]).toMatchObject({
+      type: 'text',
+      text: '[object Object]',
+    });
+  });
+
+  it('replays a JSON null structured output as its JSON text', () => {
+    // `null` is a value the model can produce under a nullable schema; it renders as the JSON
+    // text `null`, not as an absent output.
+    expect(messageOf({ type: 'structured_outputs', output: null }).contents[0]).toMatchObject({
+      type: 'text',
+      text: 'null',
     });
   });
 });

@@ -127,7 +127,7 @@ export function agentAsTool(
     name: toolName,
     description,
     parameters: {
-      type: 'object',
+      type: 'object' as const,
       properties: {
         [argName]: { type: 'string', description: `Task for ${toolName}` },
       },

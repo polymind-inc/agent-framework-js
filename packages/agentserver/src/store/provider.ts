@@ -7,6 +7,8 @@ export type ResponseGeneration = string;
 /** A stored response plus what the protocol needs that is not on the resource itself. */
 export interface StoredResponse {
   response: ResponseObject;
+  /** Local-store alias target when this record is addressed by a conversation id. */
+  aliasOf?: string;
   /** The request's input items, for `GET /responses/{id}/input_items`. */
   inputItems?: OutputItem[];
   /** The user this response belongs to, for cross-user isolation. */

@@ -30,6 +30,10 @@ function event(sequenceNumber: number, type = 'response.output_text.delta'): Res
 }
 
 describe('BackgroundRun retention', () => {
+  it('rejects a zero-sized retention window instead of breaking live delivery', () => {
+    expect(() => backgroundRun(0)).toThrow(/maxEvents.*at least 1/i);
+  });
+
   it('keeps the complete replay log until the cap is crossed', () => {
     const run = backgroundRun(3);
     const events = [event(0), event(1), event(2)];

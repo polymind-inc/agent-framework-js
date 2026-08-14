@@ -1,6 +1,6 @@
 import { coalesceContents } from './coalesce.js';
 import type { Content, UserInputRequestContent } from './content.js';
-import { textOfContents } from './content.js';
+import { isUserInputRequest, textOfContents } from './content.js';
 import type { Message, Role } from './message.js';
 import { textOfMessages } from './message.js';
 import type { UsageDetails } from './usage.js';
@@ -62,8 +62,9 @@ export interface ResponseBase<T> {
   readonly text: string;
   /**
    * The parsed structured output when the run specified a `responseFormat`, otherwise `undefined`.
+   * A suspended run also has no value until it is resumed and completes.
    */
-  value: T;
+  value: T | undefined;
   responseId?: string;
   /** ISO 8601 timestamp. */
   createdAt?: string;
@@ -132,21 +133,16 @@ export function agentResponseUpdate(init: AgentResponseUpdateInit): AgentRespons
 
 /** Creates a {@link ChatResponse} with a live `text` getter. */
 export function chatResponse<T = undefined>(init: ChatResponseInit<T>): ChatResponse<T> {
-  const response = { value: undefined as T, ...init } as ChatResponse<T>;
+  const response = { value: undefined, ...init } as ChatResponse<T>;
   return defineDerived(response, 'text', () => textOfMessages(response.messages));
 }
 
 /** Creates an {@link AgentResponse} with live `text` and `userInputRequests` getters. */
 export function agentResponse<T = undefined>(init: AgentResponseInit<T>): AgentResponse<T> {
-  const response = { value: undefined as T, ...init } as AgentResponse<T>;
+  const response = { value: undefined, ...init } as AgentResponse<T>;
   defineDerived(response, 'text', () => textOfMessages(response.messages));
   return defineDerived(response, 'userInputRequests', () =>
-    response.messages.flatMap((msg) =>
-      msg.contents.filter(
-        (content): content is UserInputRequestContent =>
-          content.type === 'function_approval_request' || content.type === 'oauth_consent_request',
-      ),
-    ),
+    response.messages.flatMap((msg) => msg.contents.filter(isUserInputRequest)),
   );
 }
 

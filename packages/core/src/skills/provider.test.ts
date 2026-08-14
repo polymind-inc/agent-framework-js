@@ -26,7 +26,7 @@ const unitConverter = inlineSkill({
         type: 'object',
         properties: { value: { type: 'number' }, factor: { type: 'number' } },
       },
-      run: (args) => Number(args.value) * Number(args.factor),
+      run: (args: Record<string, unknown>) => Number(args.value) * Number(args.factor),
     }),
   ],
 });

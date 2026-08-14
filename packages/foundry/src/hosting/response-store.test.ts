@@ -37,7 +37,7 @@ let replayDirCount = 0;
 /** A store whose every request is recorded, with scripted replies. */
 function store(
   replies: Array<{ status?: number; body?: unknown; networkError?: boolean }>,
-  options: { forwardCallId?: boolean; replayRoot?: string } = {},
+  options: { credential?: TokenCredential; forwardCallId?: boolean; replayRoot?: string } = {},
 ): {
   store: FoundryResponseStore;
   calls: Call[];
@@ -71,7 +71,7 @@ function store(
   return {
     store: new FoundryResponseStore({
       projectEndpoint: PROJECT,
-      credential,
+      credential: options.credential ?? credential,
       fetch: fetchStub,
       replayRoot: options.replayRoot ?? join(replayScratch, `store-${replayDirCount++}`),
       retry: { baseDelayMs: 0 },
@@ -698,6 +698,24 @@ describe('replay mirror integrity', () => {
 });
 
 describe('bounded retry', () => {
+  it('retries a transient credential failure before sending the request', async () => {
+    let tokenAttempts = 0;
+    const transientCredential: TokenCredential = {
+      async getToken(): Promise<AccessToken> {
+        tokenAttempts++;
+        if (tokenAttempts === 1) throw new Error('credential temporarily unavailable');
+        return { token: 'refreshed-token', expiresOnTimestamp: Date.now() + 3_600_000 };
+      },
+    };
+    const { store: subject, calls } = store([{ status: 201 }], { credential: transientCredential });
+
+    await subject.put({ response: response() });
+
+    expect(tokenAttempts).toBe(2);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.headers.authorization).toBe('Bearer refreshed-token');
+  });
+
   it('retries a transient failure and succeeds', async () => {
     const { store: subject, calls } = store([{ status: 503 }, { status: 201 }]);
 

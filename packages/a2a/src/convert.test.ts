@@ -295,6 +295,145 @@ describe('payloads to response updates', () => {
     expect(must(updates[1]).continuationToken).toBeUndefined();
   });
 
+  it('surfaces a terminal status message, including a failure reason', () => {
+    const updates = updatesFromPayload(
+      {
+        $case: 'task',
+        value: task({
+          id: 'task-1',
+          contextId: 'ctx-1',
+          status: {
+            state: 'TASK_STATE_FAILED',
+            message: {
+              messageId: 'failure-1',
+              role: 'ROLE_AGENT',
+              parts: [{ text: 'invoice service failed' }],
+            },
+          },
+        }),
+      },
+      {},
+    );
+
+    expect(updates.map((update) => update.text)).toContain('invoice service failed');
+  });
+
+  it('falls back to the last agent history message when a task has no artifacts', () => {
+    const updates = updatesFromPayload(
+      {
+        $case: 'task',
+        value: task({
+          id: 'task-1',
+          contextId: 'ctx-1',
+          status: { state: 'TASK_STATE_COMPLETED' },
+          history: [
+            { messageId: 'u1', role: 'ROLE_USER', parts: [{ text: 'question' }] },
+            { messageId: 'a1', role: 'ROLE_AGENT', parts: [{ text: 'answer from history' }] },
+          ],
+        }),
+      },
+      {},
+    );
+
+    expect(updates.map((update) => update.text)).toContain('answer from history');
+  });
+
+  it('does not replay a history message while a task is still working', () => {
+    const working = task({
+      id: 'task-1',
+      contextId: 'ctx-1',
+      status: { state: 'TASK_STATE_WORKING' },
+      history: [
+        { messageId: 'u1', role: 'ROLE_USER', parts: [{ text: 'question' }] },
+        { messageId: 'a1', role: 'ROLE_AGENT', parts: [{ text: 'stale answer' }] },
+      ],
+    });
+
+    // Two polls of the same unfinished task, as resuming produces: neither may present the
+    // history as fresh output, or every poll would repeat it.
+    for (let poll = 0; poll < 2; poll += 1) {
+      const updates = updatesFromPayload({ $case: 'task', value: working }, {});
+
+      expect(updates.map((update) => update.text)).not.toContain('stale answer');
+      expect(must(updates.at(-1)).continuationToken).toEqual({ taskId: 'task-1' });
+    }
+  });
+
+  it('does not fall back to history when the terminal task repeats only streamed artifacts', () => {
+    const observed: ObservedTaskState = {};
+    const streamed = streamEvent({
+      artifactUpdate: {
+        taskId: 'task-1',
+        contextId: 'ctx-1',
+        artifact: { artifactId: 'a1', parts: [{ text: 'the answer' }] },
+      },
+    });
+    updatesFromPayload(must(streamed.payload), observed);
+
+    const terminal = updatesFromPayload(
+      {
+        $case: 'task',
+        value: task({
+          id: 'task-1',
+          contextId: 'ctx-1',
+          status: { state: 'TASK_STATE_COMPLETED' },
+          artifacts: [{ artifactId: 'a1', parts: [{ text: 'the answer' }] }],
+          history: [{ messageId: 'h1', role: 'ROLE_AGENT', parts: [{ text: 'the answer' }] }],
+        }),
+      },
+      observed,
+    );
+
+    // The artifact already delivered the answer; the history copy of it must not bring it back.
+    expect(terminal.flatMap((update) => update.contents)).toEqual([]);
+  });
+
+  it('emits a message mirrored in both the status and the history exactly once', () => {
+    const finalMessage = { messageId: 'final-1', role: 'ROLE_AGENT', parts: [{ text: 'the answer' }] };
+
+    const updates = updatesFromPayload(
+      {
+        $case: 'task',
+        value: task({
+          id: 'task-1',
+          contextId: 'ctx-1',
+          status: { state: 'TASK_STATE_COMPLETED', message: finalMessage },
+          history: [finalMessage],
+        }),
+      },
+      {},
+    );
+
+    expect(updates.map((update) => update.text).filter((text) => text === 'the answer')).toHaveLength(1);
+  });
+
+  it('does not emit an artifact again when the terminal task repeats a streamed artifact', () => {
+    const observed: ObservedTaskState = {};
+    const streamed = streamEvent({
+      artifactUpdate: {
+        taskId: 'task-1',
+        contextId: 'ctx-1',
+        artifact: { artifactId: 'a1', parts: [{ text: 'once' }] },
+      },
+    });
+    const first = updatesFromPayload(must(streamed.payload), observed);
+    const terminal = updatesFromPayload(
+      {
+        $case: 'task',
+        value: task({
+          id: 'task-1',
+          contextId: 'ctx-1',
+          status: { state: 'TASK_STATE_COMPLETED' },
+          artifacts: [{ artifactId: 'a1', parts: [{ text: 'once' }] }],
+        }),
+      },
+      observed,
+    );
+
+    expect(first.map((update) => update.text)).toEqual(['once']);
+    expect(terminal.map((update) => update.text)).not.toContain('once');
+  });
+
   it.each([
     ['TASK_STATE_SUBMITTED', true, undefined],
     ['TASK_STATE_WORKING', true, undefined],

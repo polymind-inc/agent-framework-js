@@ -10,6 +10,7 @@ import { runMiddlewareChain, terminateMiddleware } from '../middleware/middlewar
 import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
 import { capturesContent, recordSpanError, setAttr, spanName, withSpan } from '../observability/tracing.js';
 import { isApprovalRequest } from '../tools/approval.js';
+import { validateJsonSchema } from '../tools/json-schema.js';
 import { formatSchemaIssues, isStandardSchema } from '../tools/standard-schema.js';
 import type { AnyFunctionTool, ToolContext } from '../tools/tool.js';
 import { claimInvocation, normalizeToolResult } from '../tools/tool.js';
@@ -366,6 +367,13 @@ async function resolveArguments(
       };
     }
     return { ok: true, value: validation.value };
+  }
+  const issues = validateJsonSchema(parsed.value, target.jsonSchema);
+  if (issues.length > 0) {
+    return {
+      ok: false,
+      error: new ToolInvocationError(call.name, `Invalid arguments: ${issues.join('; ')}`),
+    };
   }
   return { ok: true, value: parsed.value };
 }

@@ -189,6 +189,26 @@ export class AnthropicChatClient
     // Framework option names are camelCase; rebuild the snake_case wire form here.
     const thinking = options?.thinking;
     if (thinking !== undefined) {
+      // Re-read through an unknown-shaped view: JavaScript callers and deserialized config can
+      // violate the public discriminated union, and must still fail locally rather than at HTTP.
+      const rawThinking = thinking as { type?: unknown; budgetTokens?: unknown };
+      if (rawThinking.type === 'enabled') {
+        if (
+          typeof rawThinking.budgetTokens !== 'number' ||
+          !Number.isSafeInteger(rawThinking.budgetTokens) ||
+          rawThinking.budgetTokens < 1024
+        ) {
+          throw new ConfigurationError(
+            'thinking.budgetTokens must be a safe integer of at least 1024 when thinking is enabled.',
+          );
+        }
+      } else if (rawThinking.type === 'disabled') {
+        if (rawThinking.budgetTokens !== undefined) {
+          throw new ConfigurationError('thinking.budgetTokens must be omitted when thinking is disabled.');
+        }
+      } else {
+        throw new ConfigurationError(`Unsupported Anthropic thinking type '${String(rawThinking.type)}'.`);
+      }
       const { budgetTokens, ...thinkingRest } = thinking;
       request.thinking = {
         ...thinkingRest,

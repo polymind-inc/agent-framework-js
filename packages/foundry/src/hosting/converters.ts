@@ -12,6 +12,7 @@ import {
   codeInterpreterCallContents,
   mcpCallContents,
   searchCallContents,
+  stringifyResult,
 } from '@polymind-inc/agent-framework-openai/internal';
 
 /**
@@ -34,18 +35,13 @@ export const AGENT_FRAMEWORK_SERVER_LABEL = 'agent_framework';
  * - a result that merely *looks* like JSON (`"42"`, `'{"k":1}'`) sent unquoted silently changes
  *   type on the wire, arriving as a number or an object.
  *
- * Mirrors .NET `OutputConverter.EncodeFunctionResultAsJsonStringPayload`.
+ * Mirrors .NET `OutputConverter.EncodeFunctionResultAsJsonStringPayload`. The inner text comes
+ * from {@link stringifyResult}, the shared rendering the live provider path uses, so a persisted
+ * result and a re-sent one read identically — including its degraded `String(...)` form for a
+ * value `JSON.stringify` cannot encode.
  */
 export function encodeFunctionOutput(result: unknown): string {
-  let inner: string;
-  if (result === undefined || result === null) {
-    inner = '';
-  } else if (typeof result === 'string') {
-    inner = result;
-  } else {
-    inner = JSON.stringify(result) ?? '';
-  }
-  return JSON.stringify(inner);
+  return JSON.stringify(stringifyResult(result));
 }
 
 /**
@@ -360,8 +356,7 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       // a call id carrying the `mcp_` prefix routes back to a hosted-MCP result content, anything
       // else replays as an ordinary function result (Python `_item_to_message`, issue #5546).
       const callId = typeof item.call_id === 'string' ? item.call_id : '';
-      const raw = item.output;
-      const output = typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : String(raw);
+      const output = stringifyResult(item.output);
       if (callId.startsWith('mcp_')) {
         return {
           role: 'tool',
@@ -508,9 +503,11 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       };
 
     case 'structured_outputs': {
-      // Replayed as its JSON text, which is exactly what the model produced.
+      // Replayed as its JSON text, which is exactly what the model produced. A JSON `null`
+      // output is a value under a nullable schema, so it renders as its JSON text rather than
+      // as an absent output.
       const output = item.output;
-      const text = typeof output === 'string' ? output : (JSON.stringify(output) ?? '');
+      const text = output === null ? 'null' : stringifyResult(output);
       return { role: 'assistant', contents: [{ type: 'text', text, rawRepresentation: item }] };
     }
 

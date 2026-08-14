@@ -149,14 +149,54 @@ async function* transform(
   source: AsyncIterable<AgentResponseUpdate> | Iterable<AgentResponseUpdate>,
   hooks: readonly UpdateHook[],
 ): AsyncGenerator<AgentResponseUpdate> {
-  for await (const update of source) {
-    let current = update;
-    for (const hook of hooks) {
-      const hooked = await hook(current);
-      if (hooked !== undefined && hooked !== null) {
-        current = hooked;
+  const iterator: AsyncIterator<AgentResponseUpdate> | Iterator<AgentResponseUpdate> =
+    Symbol.asyncIterator in source
+      ? source[Symbol.asyncIterator]()
+      : (source[Symbol.iterator]() as Iterator<AgentResponseUpdate>);
+  let cleanupHandled = false;
+  try {
+    for (;;) {
+      let result: IteratorResult<AgentResponseUpdate>;
+      try {
+        result = await iterator.next();
+      } catch (error) {
+        // A failing source has already performed its own cleanup on the way out.
+        cleanupHandled = true;
+        throw error;
       }
+      if (result.done === true) {
+        // Normal completion: the source finished by itself, so there is nothing left to close.
+        cleanupHandled = true;
+        return;
+      }
+
+      let current = result.value;
+      try {
+        for (const hook of hooks) {
+          const hooked = await hook(current);
+          if (hooked !== undefined && hooked !== null) {
+            current = hooked;
+          }
+        }
+      } catch (error) {
+        // A hook failure is a failure of the run, not an early consumer `break`. Forward it into
+        // the ResponseStream so its cleanup observes the error and history does not persist a
+        // partial response as a successful turn — deliberately `throw()` instead of `return()`.
+        cleanupHandled = true;
+        if (iterator.throw !== undefined) {
+          await iterator.throw(error);
+        } else {
+          await iterator.return?.();
+        }
+        throw error;
+      }
+      yield current;
     }
-    yield current;
+  } finally {
+    // Preserve normal early-break semantics: only a consumer that stopped iterating mid-stream
+    // leaves an iterator that still needs to be closed here.
+    if (!cleanupHandled) {
+      await iterator.return?.();
+    }
   }
 }

@@ -22,10 +22,8 @@ import { tokenProvider } from './credential.js';
 import type { FoundryTarget } from './target.js';
 import { FOUNDRY_SCOPE, isModelDeployment, resolveEndpoint } from './target.js';
 
-/** Construction options for {@link FoundryChatClient}. */
-export interface FoundryChatClientConfig {
-  /** The Foundry project endpoint, for example `https://my-project.services.ai.azure.com/api/projects/p`. */
-  projectEndpoint: string;
+/** Options shared by both construction paths for {@link FoundryChatClient}. */
+interface FoundryChatClientConfigBase {
   /** Which agent to talk to: a model deployment in the project, or an existing server agent. */
   target: FoundryTarget;
   /** Defaults to {@link DefaultAzureCredential}. */
@@ -39,6 +37,22 @@ export interface FoundryChatClientConfig {
   /** Replaces the SDK's `fetch`, for proxies, custom agents, or tests. */
   fetch?: OpenAI['fetch'];
 }
+
+/** Construction options for {@link FoundryChatClient}. */
+export type FoundryChatClientConfig = FoundryChatClientConfigBase &
+  (
+    | {
+        /** A preconfigured SDK client. Its endpoint is used directly. */
+        client: OpenAI;
+        /** Ignored when `client` is supplied; retained for source compatibility. */
+        projectEndpoint?: string;
+      }
+    | {
+        client?: undefined;
+        /** The Foundry project endpoint, for example `https://my-project.services.ai.azure.com/api/projects/p`. */
+        projectEndpoint: string;
+      }
+  );
 
 /**
  * A {@link ChatClient} for Microsoft Foundry.
@@ -83,23 +97,24 @@ export class FoundryChatClient
   readonly #baseURL: string;
 
   constructor(config: FoundryChatClientConfig) {
-    const endpoint = resolveEndpoint(config.projectEndpoint, config.target);
     // A server agent is addressed by its endpoint, and the agent definition picks the model, so
     // there is nothing to name here: .NET removes `$.model` from the request and Go leaves it
     // unset. Sending a placeholder would reach the wire, `metadata.modelId` and telemetry alike.
     const model = isModelDeployment(config.target) ? config.target.modelDeployment : undefined;
+    const endpoint =
+      config.client === undefined ? resolveEndpoint(config.projectEndpoint, config.target) : undefined;
 
-    this.#baseURL = endpoint.baseURL;
+    this.#baseURL = config.client?.baseURL ?? (endpoint as { baseURL: string }).baseURL;
     const client =
       config.client ??
       new OpenAI({
-        baseURL: endpoint.baseURL,
+        baseURL: (endpoint as { baseURL: string }).baseURL,
         // The SDK calls this before every request, so rotation is handled for us.
         apiKey: tokenProvider(
           config.credential ?? new DefaultAzureCredential(),
           config.scope ?? FOUNDRY_SCOPE,
         ),
-        ...(endpoint.defaultQuery === undefined ? {} : { defaultQuery: endpoint.defaultQuery }),
+        ...(endpoint?.defaultQuery === undefined ? {} : { defaultQuery: endpoint.defaultQuery }),
         ...(config.defaultHeaders === undefined ? {} : { defaultHeaders: config.defaultHeaders }),
         ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       });

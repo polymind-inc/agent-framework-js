@@ -228,6 +228,43 @@ describe('a streamed turn', () => {
     expect(streamed.finishReason).toBe(awaited.finishReason);
   });
 
+  it('does not repeat a streamed artifact when the final task snapshot carries it again', async () => {
+    const { client } = fakeClient({
+      sendMessageStream: [
+        streamEvent({
+          artifactUpdate: {
+            taskId: 'task-1',
+            contextId: 'ctx-1',
+            artifact: { artifactId: 'a1', parts: [{ text: 'Invoice 42 is paid.' }] },
+          },
+        }),
+        // Some agents close a stream with a full task snapshot whose artifacts were already
+        // streamed one by one. That snapshot must contribute its state, not its content.
+        streamEvent({
+          task: {
+            id: 'task-1',
+            contextId: 'ctx-1',
+            status: { state: 'TASK_STATE_COMPLETED' },
+            artifacts: [{ artifactId: 'a1', parts: [{ text: 'Invoice 42 is paid.' }] }],
+          },
+        }),
+      ],
+    });
+    const agent = new A2AAgent({ client });
+    const session = agent.createSession();
+
+    const stream = agent.run('Is invoice 42 paid?', { session });
+    for await (const _ of stream) {
+      // Drain.
+    }
+    const response = await stream.finalResponse();
+
+    expect(response.text).toBe('Invoice 42 is paid.');
+    expect(readA2ASessionState(session)).toEqual({ taskId: 'task-1', taskState: 'TASK_STATE_COMPLETED' });
+    // The dedup bookkeeping is per-run state; a serialized session carries none of it.
+    expect(JSON.stringify(session)).not.toContain('streamedArtifacts');
+  });
+
   it('keeps progress commentary out of the folded transcript', async () => {
     const { client } = fakeClient({
       sendMessageStream: [
@@ -505,6 +542,45 @@ describe('resuming a background turn', () => {
     expect(must(transport.calls[0]).params).toMatchObject({ id: 'task-1' });
     expect(response.text).toBe('done');
     expect(response.continuationToken).toBeUndefined();
+  });
+
+  it('resumes from the token alone, without a session', async () => {
+    const { client, transport } = fakeClient({
+      getTask: task({
+        id: 'task-1',
+        contextId: 'ctx-1',
+        status: { state: 'TASK_STATE_COMPLETED' },
+        artifacts: [{ artifactId: 'a1', parts: [{ text: 'done' }] }],
+      }),
+    });
+
+    // The task is server-side state: its id is all a resumed run needs.
+    const response = await new A2AAgent({ client }).run(undefined, {
+      continuationToken: { taskId: 'task-1' },
+    });
+
+    expect(must(transport.calls[0]).method).toBe('getTask');
+    expect(response.text).toBe('done');
+  });
+
+  it('updates a session from the resumed task rather than gating on its recorded state', async () => {
+    const { client } = fakeClient({
+      getTask: task({
+        id: 'task-1',
+        contextId: 'ctx-1',
+        status: { state: 'TASK_STATE_COMPLETED' },
+        artifacts: [{ artifactId: 'a1', parts: [{ text: 'done' }] }],
+      }),
+    });
+    const agent = new A2AAgent({ client });
+    // The session recorded another task — a later turn moved on while the background run was out.
+    // The resumed task is what the remote side reports, and the session follows it.
+    const session = agent.createSession({ serviceSessionId: 'ctx-1', taskId: 'task-other' });
+
+    const response = await agent.run(undefined, { session, continuationToken: { taskId: 'task-1' } });
+
+    expect(response.text).toBe('done');
+    expect(readA2ASessionState(session)).toEqual({ taskId: 'task-1', taskState: 'TASK_STATE_COMPLETED' });
   });
 
   it('re-subscribes when iterated', async () => {

@@ -18,7 +18,8 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && pnpm test:scripts",
+    "test:scripts": "node --test scripts/workspace.test.mjs",
     "test:coverage": "vitest run --coverage --testTimeout=30000",
     "typecheck": "pnpm -r typecheck && pnpm run typecheck:resolution",
     "typecheck:resolution": "tsc -p scripts/type-resolution/tsconfig.json --module nodenext --moduleResolution nodenext",
@@ -29,7 +30,7 @@
     "pack:check": "node scripts/pack-check.mjs",
     "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm run pack:check",
     "version:set": "node scripts/set-version.mjs",
-    "publish:packages": "pnpm -r --filter \"./packages/*\" publish --access public --provenance --no-git-checks"
+    "publish:packages": "node scripts/publish-packages.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",

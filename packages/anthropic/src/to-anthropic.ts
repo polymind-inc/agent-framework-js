@@ -108,7 +108,22 @@ function toolResultContent(result: unknown): AnthropicBlock[] | string {
     }
     return blocks.length > 0 ? blocks : '';
   }
-  return JSON.stringify(result);
+  // Caller-built or replayed transcripts can carry results JSON cannot encode (circular
+  // references, bigints, symbols); degrade to the value's string form rather than failing the
+  // whole request, as Python does with json.dumps falling back to str(). Same contract as
+  // stringifyResult in the OpenAI package, which this package cannot depend on.
+  const fallback = (): string => {
+    try {
+      return String(result);
+    } catch {
+      return '[unserializable]';
+    }
+  };
+  try {
+    return JSON.stringify(result) ?? fallback();
+  } catch {
+    return fallback();
+  }
 }
 
 /**

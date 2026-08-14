@@ -35,14 +35,25 @@ export type A2APayload = NonNullable<StreamResponse['payload']>;
 /**
  * What a run learned about the remote conversation while its events went by.
  *
- * Every field is explicitly resettable: a turn that came back as a plain message ended on no task,
- * and the session has to record that rather than keep the previous turn's.
+ * Every identity field is explicitly resettable: a turn that came back as a plain message ended on
+ * no task, and the session has to record that rather than keep the previous turn's.
  */
 export interface ObservedTaskState {
   contextId?: string | undefined;
   taskId?: string | undefined;
   /** The protocol spelling, e.g. `TASK_STATE_WORKING`. */
   taskState?: string | undefined;
+  /**
+   * Keys of artifacts already surfaced by streamed artifact-update events, so a terminal task
+   * snapshot repeating them does not emit them twice. Per-run bookkeeping, never persisted: the
+   * session writer copies the identity fields one by one and leaves this behind.
+   */
+  streamedArtifacts?: Set<string>;
+}
+
+/** An artifact id is only unique within its task, so the dedup key carries both. */
+function artifactKey(taskId: string, artifactId: string): string {
+  return `${taskId}\u0000${artifactId}`;
 }
 
 function omitEmpty(value: string | undefined): string | undefined {
@@ -264,6 +275,15 @@ function artifactUpdate(
   });
 }
 
+function isTerminalState(state: TaskState | undefined): boolean {
+  return (
+    state === TaskState.TASK_STATE_COMPLETED ||
+    state === TaskState.TASK_STATE_FAILED ||
+    state === TaskState.TASK_STATE_CANCELED ||
+    state === TaskState.TASK_STATE_REJECTED
+  );
+}
+
 /**
  * Turns a whole task into updates: one per artifact, plus the question it is waiting on.
  *
@@ -271,13 +291,41 @@ function artifactUpdate(
  * progress commentary the agent may or may not send, and folding it into the transcript would put
  * "working on it" in front of the answer.
  */
-function updatesFromTask(task: Task): AgentResponseUpdate[] {
+function updatesFromTask(task: Task, observed: ObservedTaskState): AgentResponseUpdate[] {
   const state = task.status?.state;
-  const updates: AgentResponseUpdate[] = task.artifacts.map((artifact) =>
-    artifactUpdate(artifact, task.id, mergeMetadata(artifact.metadata, task.metadata), task),
-  );
+  const alreadyStreamed = observed.streamedArtifacts;
+  const updates: AgentResponseUpdate[] = (task.artifacts ?? [])
+    .filter((artifact) => !alreadyStreamed?.has(artifactKey(task.id, artifact.artifactId)))
+    .map((artifact) =>
+      artifactUpdate(artifact, task.id, mergeMetadata(artifact.metadata, task.metadata), task),
+    );
+
   const statusMessage = task.status?.message;
-  if (state === TaskState.TASK_STATE_INPUT_REQUIRED && statusMessage !== undefined) {
+  if (isTerminalState(state) && (task.artifacts ?? []).length === 0) {
+    // A finished task that produced no artifacts at all may still have answered as a plain
+    // message, kept in its history. Only that case falls back to the history: an unfinished
+    // task's history would be replayed by every poll, a task whose artifacts were merely
+    // filtered as already streamed has delivered its answer, and a history message the status
+    // branch below is about to surface would arrive twice.
+    const historyAnswer = [...(task.history ?? [])]
+      .reverse()
+      .find((message) => message.role === Role.ROLE_AGENT);
+    if (historyAnswer !== undefined && historyAnswer.messageId !== statusMessage?.messageId) {
+      updates.push(
+        update({
+          contents: fromA2AParts(historyAnswer.parts),
+          responseId: task.id,
+          messageId: historyAnswer.messageId,
+          additionalProperties: mergeMetadata(historyAnswer.metadata, task.metadata),
+          rawRepresentation: task,
+        }),
+      );
+    }
+  }
+  if (
+    (state === TaskState.TASK_STATE_INPUT_REQUIRED || isTerminalState(state)) &&
+    statusMessage !== undefined
+  ) {
     updates.push(
       update({
         contents: fromA2AParts(statusMessage.parts),
@@ -393,7 +441,7 @@ export function updatesFromPayload(payload: A2APayload, observed: ObservedTaskSt
     case 'task': {
       const task = payload.value;
       observeTaskStatus(observed, task.contextId, task.id, task.status?.state);
-      return updatesFromTask(task);
+      return updatesFromTask(task, observed);
     }
     case 'statusUpdate': {
       const event = payload.value;
@@ -407,6 +455,8 @@ export function updatesFromPayload(payload: A2APayload, observed: ObservedTaskSt
       if (artifact === undefined) {
         throw new A2AAgentError('The A2A agent sent an artifact update with no artifact.');
       }
+      observed.streamedArtifacts ??= new Set();
+      observed.streamedArtifacts.add(artifactKey(event.taskId, artifact.artifactId));
       // The event's own metadata wins over the artifact's, and neither is dropped: a streamed
       // artifact has to fold into the same content an awaited run would have returned whole.
       return [

@@ -85,6 +85,7 @@ bundler tree-shakes whatever you do not import.
 | Import                                            | Provides                                                                                                                            |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `@polymind-inc/agent-framework`                   | `Agent`, `AgentSession`, the `Message`/`Content` model, `tool()`, middleware, and the `ChatClient` seam                              |
+| `@polymind-inc/agent-framework/node`              | Node-only adapters, including `directorySkillsSource` and file-backed history                                                       |
 | `@polymind-inc/agent-framework/openai`            | OpenAI and Azure OpenAI chat client (Responses API)                                                                                  |
 | `@polymind-inc/agent-framework/anthropic`         | Anthropic chat client (Messages API)                                                                                                 |
 | `@polymind-inc/agent-framework/mcp`               | Model Context Protocol client integration — MCP server tools as framework tools                                                      |
@@ -206,10 +207,9 @@ environment variables each one needs.
   implement the `ChatClient` interface directly.
 - The MCP integration covers **tools, and resources for skill discovery** — no sampling,
   elicitation or prompts.
-- Agent Skills are served from code, from a `SKILL.md` document you supply, or over MCP. Walking a
-  directory of `SKILL.md` files is a recipe in the examples rather than an API, because the core
-  has no filesystem; MCP `archive` skills, resource templates and direct `skill://` references are
-  not implemented.
+- Agent Skills are served from code, from a `SKILL.md` document you supply, over MCP, or from a
+  local directory through the Node-only `directorySkillsSource`. MCP `archive` skills, resource
+  templates and direct `skill://` references are not implemented.
 - The A2A package is a **client**. Serving a framework agent over A2A, push notifications, task
   listing and cancellation are not covered; use [`@a2a-js/sdk`][a2a-sdk] directly for those.
 - A hosted container persists responses in the Foundry storage service by default (matching the

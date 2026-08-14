@@ -26,7 +26,10 @@ const response = await agent.run('Taro Tanaka is 30 years old and enjoys hiking 
   responseFormat: Person,
 });
 
-// `response.value` is typed as { name: string; age: number; hobbies: string[] }.
+// A suspended response has no value yet, so narrow it before use.
+if (response.value === undefined) {
+  throw new Error('The run stopped before producing its structured output.');
+}
 console.log('name:   ', response.value.name);
 console.log('age:    ', response.value.age);
 console.log('hobbies:', response.value.hobbies.join(', '));
