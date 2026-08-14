@@ -50,6 +50,12 @@ describe('Foundry endpoint construction', () => {
     expect(() => resolveEndpoint(PROJECT, { modelDeployment: ' ' })).toThrow(ConfigurationError);
     expect(() => resolveEndpoint(PROJECT, { serverAgent: '' })).toThrow(ConfigurationError);
   });
+
+  it('rejects a target with both selectors at runtime', () => {
+    expect(() =>
+      resolveEndpoint(PROJECT, { modelDeployment: 'gpt-4o', serverAgent: 'support-bot' } as never),
+    ).toThrow(ConfigurationError);
+  });
 });
 
 describe('Foundry token provider', () => {
@@ -95,6 +101,21 @@ describe('Foundry token provider', () => {
 });
 
 describe('FoundryChatClient', () => {
+  it('uses a preconfigured SDK endpoint without requiring or resolving projectEndpoint', () => {
+    const sdk = {
+      responses: { create: vi.fn() },
+      baseURL: 'https://custom.example/v1',
+    } as unknown as OpenAI;
+
+    const client = new FoundryChatClient({
+      target: { modelDeployment: 'gpt-4o' },
+      client: sdk,
+    });
+
+    expect(client.baseURL).toBe('https://custom.example/v1');
+    expect(client.client).toBe(sdk);
+  });
+
   it('points at the right endpoint and reports the Foundry provider', () => {
     const deployment = new FoundryChatClient({
       projectEndpoint: PROJECT,

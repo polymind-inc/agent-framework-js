@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeBase64 } from './base64.js';
 import { coalesceContents } from './coalesce.js';
-import { dataContent, textContent } from './content.js';
+import { dataContent, textContent, unknownContent } from './content.js';
 import type { AgentResponseUpdate, ChatResponseUpdate } from './response.js';
 import {
   agentResponse,
@@ -441,5 +441,18 @@ describe('agentResponse.userInputRequests', () => {
       'function_approval_request',
       'oauth_consent_request',
     ]);
+  });
+
+  it('surfaces a forward-compatible unknown content item marked as a user-input request', () => {
+    const futureRequest = unknownContent({
+      type: 'future_approval',
+      id: 'request-1',
+      userInputRequest: true,
+    });
+    const response = agentResponse({
+      messages: [{ role: 'assistant', contents: [futureRequest] }],
+    });
+
+    expect(response.userInputRequests).toEqual([futureRequest]);
   });
 });

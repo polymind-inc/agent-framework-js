@@ -994,6 +994,28 @@ describe('OpenAIChatClient background responses', () => {
     expect(response.conversationId).toBe('resp_bg');
   });
 
+  it.each([
+    {
+      name: 'additionalProperties',
+      options: { store: true, additionalProperties: { store: false } },
+    },
+    {
+      name: 'rawRequestTransform',
+      options: {
+        store: true,
+        rawRequestTransform: (request: Record<string, unknown>) => ({ ...request, store: false }),
+      },
+    },
+  ])('parses service storage from the final request after $name', async ({ options }) => {
+    const create = vi.fn().mockResolvedValue(completedResponse({ id: 'resp_not_stored' }));
+    const client = new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' });
+
+    const response = await client.getResponse(HI, options);
+
+    expect(create.mock.calls[0]?.[0].store).toBe(false);
+    expect(response.conversationId).toBeUndefined();
+  });
+
   it('offers a continuation token while a background response is still running', async () => {
     const create = vi.fn().mockResolvedValue(completedResponse({ id: 'resp_1', status: 'in_progress' }));
     const client = new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' });

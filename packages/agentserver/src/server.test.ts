@@ -1,5 +1,5 @@
 import { getEventListeners } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HEADERS } from './context.js';
 import { ProtocolError } from './errors.js';
 import { partitionKeyOf } from './ids.js';
@@ -99,6 +99,20 @@ describe('routes', () => {
     expect(body.status).toBe('completed');
     expect(body.output).toHaveLength(1);
     expect(JSON.stringify(body.output[0])).toContain('Echo: Hi');
+  });
+
+  it('keeps the response addressable when a conversation alias is stored at capacity one', async () => {
+    const store = new InMemoryResponseProvider({ maxResponses: 1 });
+    const server = new ResponsesServer({ handler: echoHandler(), store, hosted: false });
+    const conversationId = `caresp_${'c'.repeat(18)}${'d'.repeat(32)}`;
+
+    const created = (await (
+      await server.handle(post({ input: 'Hi', conversation: { id: conversationId } }))
+    ).json()) as ResponseObject;
+    const fetched = await server.handle(new Request(`http://localhost:8088/responses/${created.id}`));
+
+    expect(fetched.status).toBe(200);
+    expect(store.size).toBe(1);
   });
 
   it('stamps the agent identity onto every response resource', async () => {
@@ -476,6 +490,30 @@ describe('cross-user isolation', () => {
     ).json()) as ResponseObject;
     expect(JSON.stringify(own.output)).toContain('Echo: mine');
   });
+
+  it('admits only one foreground create for the same response_id', async () => {
+    const gate = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    let handlerCalls = 0;
+    const server = makeServer(async function* (_request, context) {
+      handlerCalls += 1;
+      entered.resolve();
+      await gate.promise;
+      yield { type: 'response.created', response: context.response };
+      yield { type: 'response.completed', response: { ...context.response, status: 'completed' } };
+    });
+    const id = `caresp_${'a'.repeat(18)}${'b'.repeat(32)}`;
+
+    const first = server.handle(post({ input: 'one', response_id: id }));
+    await entered.promise;
+    const second = server.handle(post({ input: 'two', response_id: id }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    gate.resolve();
+    const responses = await Promise.all([first, second]);
+
+    expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([200, 409]);
+    expect(handlerCalls).toBe(1);
+  });
 });
 
 describe('route-level errors', () => {
@@ -702,6 +740,19 @@ describe('validation', () => {
 });
 
 describe('request limits', () => {
+  it.each([
+    ['maxBodyBytes', 0],
+    ['maxInputItems', Number.NaN],
+  ] as const)('rejects an invalid explicit %s at construction', (name, value) => {
+    expect(
+      () =>
+        new ResponsesServer({
+          handler: echoHandler(),
+          limits: { [name]: value },
+        }),
+    ).toThrow(`${name} must be a safe integer of at least 1`);
+  });
+
   it('answers 413 for a body over the configured bound, before the handler runs', async () => {
     let ran = false;
     const server = new ResponsesServer({
@@ -1487,5 +1538,52 @@ describe('draining', () => {
 
     const probe = await server.handle(new Request('http://localhost:8088/readiness'));
     expect(probe.status).toBe(200);
+  });
+
+  it('releases a committed SSE turn whose body was abandoned without being cancelled', async () => {
+    // `ResponsesServer.fetch` is documented to run on any Web-standard host, and not every host
+    // cancels an abandoned response body: some simply stop reading and abort the request signal.
+    // The stream generator is then parked at a `yield` forever — its `finally` never runs — so the
+    // abort signal, not stream consumption, must be what frees the id and settles the shutdown
+    // wait.
+    const responseId = `caresp_${'a'.repeat(18)}${'b'.repeat(32)}`;
+    const controller = new AbortController();
+    const response = await server.handle(
+      new Request('http://localhost:8088/responses', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: 'x', stream: true, store: false, response_id: responseId }),
+        signal: controller.signal,
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    // Pull one chunk so the generator is genuinely parked at a `yield` past the committed 200,
+    // then walk away from the body: no further reads, and — the crux — no cancel.
+    const reader = must(response.body).getReader();
+    await reader.read();
+    reader.releaseLock();
+
+    // While the claim lives, the id answers 409 to its own owner.
+    const conflicted = await server.handle(post({ input: 'y', store: false, response_id: responseId }));
+    expect(conflicted.status).toBe(409);
+    expect(((await conflicted.json()) as { error: { code: string } }).error.code).toBe('response_in_flight');
+
+    controller.abort();
+
+    // The abort alone must free the id: a follow-up create for it stops conflicting …
+    await vi.waitFor(
+      async () => {
+        const retry = await server.handle(post({ input: 'y', store: false, response_id: responseId }));
+        expect(retry.status).toBe(200);
+      },
+      { timeout: 2000, interval: 20 },
+    );
+
+    // … and the shutdown wait settles without anyone ever finishing the stream.
+    await Promise.race([
+      server.drain(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('drain hung')), 2000)),
+    ]);
   });
 });

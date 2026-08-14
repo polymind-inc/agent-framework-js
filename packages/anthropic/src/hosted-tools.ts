@@ -55,7 +55,10 @@ export function mcpTool(options: McpToolOptions): HostedTool {
   // openai package. Only spaces are replaced — matching the reference implementation exactly rather
   // than sanitising every character the API might dislike.
   const serverLabel = options.serverLabel.replaceAll(' ', '_');
-  const authorization = options.headers?.authorization;
+  const authorizationEntry = Object.entries(options.headers ?? {}).find(
+    ([name]) => name.toLowerCase() === 'authorization',
+  );
+  const authorization = authorizationEntry?.[1];
   return hostedTool(
     serverLabel,
     withoutUndefined({

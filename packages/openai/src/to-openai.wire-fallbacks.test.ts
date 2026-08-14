@@ -29,6 +29,30 @@ describe('function result rendering', () => {
     expect(outputOf({ ok: true })).toBe('{"ok":true}');
   });
 
+  it('renders a result JSON.stringify throws on as its string form instead of failing the request', () => {
+    // A caller-built transcript can carry a result the tool loop never normalized. `JSON.stringify`
+    // throws on a cycle and on a BigInt; failing the whole request over one such result is worse
+    // than the degraded string rendering (Python's `Content.from_function_result` falls back to
+    // `str(result)` the same way).
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(outputOf(circular)).toBe('[object Object]');
+    expect(outputOf(10n)).toBe('10');
+  });
+
+  it('uses a stable placeholder when neither JSON nor string conversion is possible', () => {
+    const unrenderable = Object.create(null) as Record<string, unknown>;
+    unrenderable.self = unrenderable;
+
+    expect(outputOf(unrenderable)).toBe('[unserializable]');
+  });
+
+  it('renders a result JSON.stringify answers undefined for as its string form', () => {
+    // `JSON.stringify` answers `undefined` for a symbol or a function; passing that through put a
+    // non-string into the wire's string field.
+    expect(outputOf(Symbol('opaque'))).toBe('Symbol(opaque)');
+  });
+
   it('falls back to the string result when rich items carry nothing sendable', () => {
     // The rich-output gate needs a data/uri item, but conversion can still drop it (here: an
     // unsupported audio codec); the string result is what remains.

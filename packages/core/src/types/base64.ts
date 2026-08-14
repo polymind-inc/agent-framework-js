@@ -16,23 +16,29 @@ const BASE64_LOOKUP: Record<string, number> = (() => {
 
 /** Encodes bytes as standard base64. */
 export function encodeBase64(bytes: Uint8Array): string {
-  let out = '';
+  const output = new Uint8Array(Math.ceil(bytes.length / 3) * 4);
+  let outputIndex = 0;
   for (let i = 0; i < bytes.length; i += 3) {
     const b0 = bytes[i] ?? 0;
     const b1 = bytes[i + 1];
     const b2 = bytes[i + 2];
     const triplet = (b0 << 16) | ((b1 ?? 0) << 8) | (b2 ?? 0);
-    out += BASE64_ALPHABET[(triplet >> 18) & 63];
-    out += BASE64_ALPHABET[(triplet >> 12) & 63];
-    out += b1 === undefined ? '=' : BASE64_ALPHABET[(triplet >> 6) & 63];
-    out += b2 === undefined ? '=' : BASE64_ALPHABET[triplet & 63];
+    output[outputIndex++] = BASE64_ALPHABET.charCodeAt((triplet >> 18) & 63);
+    output[outputIndex++] = BASE64_ALPHABET.charCodeAt((triplet >> 12) & 63);
+    output[outputIndex++] = b1 === undefined ? 61 : BASE64_ALPHABET.charCodeAt((triplet >> 6) & 63);
+    output[outputIndex++] = b2 === undefined ? 61 : BASE64_ALPHABET.charCodeAt(triplet & 63);
   }
-  return out;
+  return new TextDecoder().decode(output);
 }
 
 /** Decodes standard base64 into bytes. Characters outside the alphabet (including padding) are ignored. */
 export function decodeBase64(value: string): Uint8Array {
-  const out: number[] = [];
+  let sextetCount = 0;
+  for (const char of value) {
+    if (BASE64_LOOKUP[char] !== undefined) sextetCount++;
+  }
+  const output = new Uint8Array(Math.floor((sextetCount * 6) / 8));
+  let outputIndex = 0;
   let buffer = 0;
   let bits = 0;
   for (const char of value) {
@@ -44,8 +50,8 @@ export function decodeBase64(value: string): Uint8Array {
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
-      out.push((buffer >> bits) & 0xff);
+      output[outputIndex++] = (buffer >> bits) & 0xff;
     }
   }
-  return Uint8Array.from(out);
+  return output;
 }

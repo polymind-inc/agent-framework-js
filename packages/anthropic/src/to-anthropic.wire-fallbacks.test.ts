@@ -57,6 +57,20 @@ describe('tool_result content rendering', () => {
     expect(resultContentOf(null)).toBe('');
   });
 
+  it('degrades a result JSON cannot encode to its string form instead of throwing', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(resultContentOf(circular)).toBe('[object Object]');
+    expect(resultContentOf(Symbol('opaque'))).toBe('Symbol(opaque)');
+  });
+
+  it('uses a stable placeholder when neither JSON nor string conversion is possible', () => {
+    const unrenderable = Object.create(null) as Record<string, unknown>;
+    unrenderable.self = unrenderable;
+
+    expect(resultContentOf(unrenderable)).toBe('[unserializable]');
+  });
+
   it('renders a content list as text and image blocks, dropping the unrepresentable', () => {
     expect(
       resultContentOf([

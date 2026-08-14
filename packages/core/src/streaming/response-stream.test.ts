@@ -57,6 +57,35 @@ describe('createResponseStream', () => {
     expect(await stream.finalResponse()).toBe(6);
   });
 
+  it('shares one source and drain across concurrent finalResponse() calls', async () => {
+    const gate = Promise.withResolvers<void>();
+    const starts: number[] = [];
+    const closed: number[] = [];
+    const stream = createResponseStream({
+      start: async () => {
+        const id = starts.push(starts.length + 1);
+        await gate.promise;
+        return (async function* () {
+          try {
+            yield id;
+          } finally {
+            closed.push(id);
+          }
+        })();
+      },
+      finalize: sum,
+    });
+
+    const first = stream.finalResponse();
+    const second = stream.finalResponse();
+    await Promise.resolve();
+    gate.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([1, 1]);
+    expect(starts).toEqual([1]);
+    expect(closed).toEqual([1]);
+  });
+
   it('rejects a second consumption synchronously', async () => {
     const awaited = createResponseStream({ start: () => numbers(2), finalize: sum });
     await awaited;

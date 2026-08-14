@@ -42,28 +42,20 @@ function attributesOf(span: ApiSpan): Record<string, unknown> {
   return typeof attributes === 'object' && attributes !== null ? (attributes as Record<string, unknown>) : {};
 }
 
-/**
- * The map key for one span. Span ids are unique only within a trace, so the trace id has to be
- * part of the key — two concurrent traces may legally carry the same span id.
- */
-function spanKey(span: { spanContext(): { traceId: string; spanId: string } }): string {
-  const { traceId, spanId } = span.spanContext();
-  return `${traceId}-${spanId}`;
-}
-
 export class GenAIMainAgentSpanProcessor implements SpanProcessor {
   /**
-   * trace+span id → parent span, so {@link onEnd} can retry the copy for children whose parent
-   * attributes were not yet written when the child started. Entries leave when the span ends.
+   * child span → parent span, so {@link onEnd} can retry the copy for children whose parent
+   * attributes were not yet written when the child started. Weak keys also release an abandoned
+   * child that is never ended, instead of retaining it for the lifetime of the process.
    */
-  readonly #parents = new Map<string, ApiSpan>();
+  readonly #parents = new WeakMap<object, ApiSpan>();
 
   onStart(span: Span, parentContext: Context): void {
     const parent = trace.getSpan(parentContext);
     if (parent === undefined || !trace.isSpanContextValid(parent.spanContext())) {
       return;
     }
-    this.#parents.set(spanKey(span), parent);
+    this.#parents.set(span, parent);
 
     const parentAttributes = attributesOf(parent);
     for (const [target, fallback] of PROPAGATION) {
@@ -81,9 +73,8 @@ export class GenAIMainAgentSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
-    const key = spanKey(span);
-    const parent = this.#parents.get(key);
-    this.#parents.delete(key);
+    const parent = this.#parents.get(span);
+    this.#parents.delete(span);
 
     const attributes = span.attributes as Record<string, unknown>;
     const parentAttributes = parent === undefined ? {} : attributesOf(parent);
@@ -137,7 +128,6 @@ export class GenAIMainAgentSpanProcessor implements SpanProcessor {
   }
 
   shutdown(): Promise<void> {
-    this.#parents.clear();
     return Promise.resolve();
   }
 }

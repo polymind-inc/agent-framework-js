@@ -19,11 +19,20 @@ export const FOUNDRY_API_VERSION = 'v1';
  * version field could only ever be ignored — and a caller who set one would reasonably believe it
  * pinned something.
  */
-export type FoundryTarget = { modelDeployment: string } | { serverAgent: string };
+export type FoundryTarget =
+  | { modelDeployment: string; serverAgent?: never }
+  | { serverAgent: string; modelDeployment?: never };
 
 /** Narrows a {@link FoundryTarget} to the model-deployment case. */
 export function isModelDeployment(target: FoundryTarget): target is { modelDeployment: string } {
-  return 'modelDeployment' in target;
+  const hasModelDeployment = typeof target.modelDeployment === 'string';
+  const hasServerAgent = typeof target.serverAgent === 'string';
+  if (hasModelDeployment === hasServerAgent) {
+    throw new ConfigurationError(
+      'Foundry target must specify exactly one of modelDeployment or serverAgent.',
+    );
+  }
+  return hasModelDeployment;
 }
 
 /**

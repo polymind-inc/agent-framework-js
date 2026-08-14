@@ -200,7 +200,7 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
     description: 'Loads the full instructions for a specific skill.',
     approvalMode: approvals.loadSkill ?? 'always_require',
     parameters: {
-      type: 'object',
+      type: 'object' as const,
       properties: {
         skill_name: { type: 'string', description: 'The name of the skill to load.' },
       },
@@ -224,7 +224,7 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
     description: 'Reads a resource associated with a skill, such as references, assets, or dynamic data.',
     approvalMode: approvals.readSkillResource ?? 'always_require',
     parameters: {
-      type: 'object',
+      type: 'object' as const,
       properties: {
         skill_name: { type: 'string', description: 'The name of the skill.' },
         resource_name: { type: 'string', description: 'The name of the resource.' },
@@ -260,7 +260,7 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
     description: 'Runs a script associated with a skill.',
     approvalMode: approvals.runSkillScript ?? 'always_require',
     parameters: {
-      type: 'object',
+      type: 'object' as const,
       properties: {
         skill_name: { type: 'string', description: 'The name of the skill.' },
         script_name: {

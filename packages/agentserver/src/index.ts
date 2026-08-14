@@ -10,7 +10,8 @@
  * The Node adapter is in the `./node` subpath, so the protocol itself stays on Web standards.
  */
 
-export { isHosted, projectEndpoint, stateRoot } from './config.js';
+export { readJsonBody } from './body.js';
+export { isHosted, maxBodyBytes, projectEndpoint, stateRoot } from './config.js';
 export type { RequestContext } from './context.js';
 export {
   createRequestContext,

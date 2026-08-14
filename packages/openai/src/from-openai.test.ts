@@ -290,6 +290,35 @@ describe('failed responses surface their error', () => {
     );
   });
 
+  it('surfaces a standalone stream error event even when no response.failed follows', () => {
+    const updates = fold([
+      { type: 'response.output_text.delta', delta: 'partial' },
+      { type: 'error', code: 'rate_limit_exceeded', message: 'Rate limited.' },
+    ]);
+
+    expect(updates.flatMap((update) => update.contents)).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'Rate limited.', errorCode: 'rate_limit_exceeded' }),
+    );
+  });
+
+  it('surfaces an error field on an incomplete stream response', () => {
+    const updates = fold([
+      {
+        type: 'response.incomplete',
+        response: {
+          id: 'resp_1',
+          status: 'incomplete',
+          error: { code: 'server_error', message: 'Connection ended.' },
+          output: [],
+        },
+      },
+    ]);
+
+    expect(updates.flatMap((update) => update.contents)).toContainEqual(
+      expect.objectContaining({ type: 'error', message: 'Connection ended.', errorCode: 'server_error' }),
+    );
+  });
+
   it('adds nothing to a successful response', () => {
     const awaited = parseResponse({ id: 'resp_1', status: 'completed', output: [] });
     expect(contentsOf(awaited).some((content) => content.type === 'error')).toBe(false);
@@ -416,6 +445,24 @@ describe('unmodelled output items round-trip through serialization', () => {
 
     const merged = mergeChatUpdates(updates);
     expect(serializeMessage(must(merged.messages[0])).contents).toEqual([futureItem]);
+  });
+
+  it('keeps an unmodelled part inside an awaited message item', () => {
+    const part = { type: 'future_output', id: 'part_1', payload: { value: 42 } };
+    const response = parseResponse({
+      id: 'resp_1',
+      status: 'completed',
+      output: [{ type: 'message', role: 'assistant', content: [part] }],
+    });
+
+    expect(serializeMessage(must(response.messages[0])).contents).toEqual([part]);
+  });
+
+  it('keeps an unmodelled streamed content part', () => {
+    const part = { type: 'future_output', id: 'part_1', payload: { value: 42 } };
+    const updates = fold([{ type: 'response.content_part.added', output_index: 0, part }]);
+
+    expect(serializeMessage(must(mergeChatUpdates(updates).messages[0])).contents).toEqual([part]);
   });
 
   it('restores the same content after a full JSON session round trip', () => {

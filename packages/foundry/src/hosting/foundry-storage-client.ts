@@ -86,8 +86,18 @@ export class FoundryStorageClient {
       const last = attempt === RETRY_ATTEMPTS - 1;
       // Rebuilt per attempt: the token may have refreshed, and the platform headers belong to the
       // request in flight, never to construction time — one container serves many users.
+      let token: string;
+      try {
+        token = await this.#getToken();
+      } catch (error) {
+        // Credential refresh is transient too, but no request reached the service, so it cannot
+        // make a later conflict ambiguous.
+        if (last) throw error;
+        await delay(this.#retryBaseDelayMs * 2 ** attempt);
+        continue;
+      }
       const headers: Record<string, string> = {
-        authorization: `Bearer ${await this.#getToken()}`,
+        authorization: `Bearer ${token}`,
         accept: 'application/json',
         ...(this.#forwardCallId ? platformHeaders() : {}),
       };

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { ConfigurationError, SchemaResolutionError, UserInputRequiredError } from '../errors.js';
 import { functionMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -37,9 +37,8 @@ function must<T>(value: T | null | undefined): T {
 const echoSchema = {
   type: 'object',
   properties: { value: { type: 'string' } },
-  required: ['value'],
   additionalProperties: false,
-};
+} as const;
 
 describe('withFunctionInvocation', () => {
   it('executes a tool and feeds the result back to the model', async () => {
@@ -192,6 +191,36 @@ describe('withFunctionInvocation', () => {
     expect(results[0]?.exception).toContain('value must be a string');
     expect(results[0]?.result).toContain('Exception: ');
     expect(response.text).toBe('done');
+  });
+
+  it('validates raw JSON Schema arguments before invoking the tool', async () => {
+    const execute = vi.fn(async () => 'ok');
+    const validating = tool({
+      name: 'strict_raw',
+      description: 'd',
+      parameters: {
+        type: 'object',
+        properties: { resource: { type: 'string' } },
+        required: ['resource'],
+        additionalProperties: false,
+      },
+      execute,
+    });
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'strict_raw', 'null')], finishReason: 'tool_calls' },
+      { contents: [call('c2', 'strict_raw', '{"resource":"safe"}')], finishReason: 'tool_calls' },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+
+    const response = await withFunctionInvocation(inner, { includeDetailedErrors: true }).getResponse([], {
+      tools: [validating],
+    } as ChatOptions);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({ resource: 'safe' }, expect.anything());
+    expect(resultsOf(response.messages.flatMap((m) => m.contents))[0]?.exception).toContain(
+      'expected object',
+    );
   });
 
   it('aborts the run after maxConsecutiveErrors failing rounds', async () => {
@@ -488,6 +517,18 @@ describe('tool()', () => {
     expect(t.jsonSchema).toEqual({ type: 'object', properties: { a: { type: 'number' } } });
   });
 
+  it('does not claim a non-object raw JSON Schema produces a Record input', () => {
+    tool({
+      name: 'string_input',
+      description: 'd',
+      parameters: { type: 'string' },
+      execute: (input) => {
+        expectTypeOf(input).toEqualTypeOf<unknown>();
+        return String(input);
+      },
+    });
+  });
+
   it('defaults approvalMode to never_require', () => {
     expect(tool({ name: 'x', description: 'd', parameters: echoSchema }).approvalMode).toBe('never_require');
   });
@@ -502,6 +543,15 @@ describe('tool()', () => {
       ConfigurationError,
     );
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 1.5])(
+    'rejects a non-finite or fractional maxInvocations value (%s)',
+    (maxInvocations) => {
+      expect(() => tool({ name: 'x', description: 'd', parameters: echoSchema, maxInvocations })).toThrow(
+        ConfigurationError,
+      );
+    },
+  );
 });
 
 describe('maxInvocations', () => {
@@ -792,6 +842,53 @@ describe('generated function_result metadata (Python parity)', () => {
     expect(result?.result).toContain('rejected by user');
     expect(result?.additionalProperties).toEqual({ serverLabel: 'github' });
   });
+
+  it('correlates an approval to a new logical occurrence when a provider reuses callId', async () => {
+    const execute = vi.fn(() => 'new result');
+    const gated = tool({
+      name: 'gated',
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: {} },
+      approvalMode: 'always_require',
+      execute: execute as never,
+    });
+    const reused = call('reused', 'gated');
+    const client = withFunctionInvocation(
+      new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]),
+    );
+
+    await client.getResponse(
+      [
+        { role: 'assistant', contents: [call('reused', 'gated')] },
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'reused', result: 'old result' }] },
+        {
+          role: 'assistant',
+          contents: [
+            {
+              type: 'function_approval_request',
+              id: 'ficc_reused',
+              functionCall: reused,
+              userInputRequest: true,
+            },
+          ],
+        },
+        {
+          role: 'user',
+          contents: [
+            {
+              type: 'function_approval_response',
+              id: 'ficc_reused',
+              approved: true,
+              functionCall: reused,
+            },
+          ],
+        },
+      ],
+      { tools: [gated] },
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('toolChoice across the approval boundary (Go parity)', () => {
@@ -896,6 +993,141 @@ describe('replayed unanswered approval requests', () => {
       .filter((c): c is FunctionApprovalRequestContent => c.type === 'function_approval_request');
     expect(requests.map((request) => request.id)).toEqual(['a1']);
     expect(requests.map((request) => request.functionCall.callId)).toEqual(['c1']);
+  });
+});
+
+describe('replayed and standalone approval decisions', () => {
+  function pendingRequest(): FunctionApprovalRequestContent {
+    return {
+      type: 'function_approval_request',
+      id: 'ficc_c1',
+      userInputRequest: true,
+      functionCall: call('c1', 'gated'),
+    };
+  }
+
+  it('executes a decision replayed twice for the same call only once', async () => {
+    // A caller replaying a session transcript can carry the same approval response twice, as two
+    // distinct (deserialized) objects. One decision answers one call: the call must run once and
+    // reach the wire once.
+    const execute = vi.fn(() => 'ran');
+    const gated = tool({
+      name: 'gated',
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: {} },
+      approvalMode: 'always_require',
+      execute: execute as never,
+    });
+    const decision: Content = {
+      type: 'function_approval_response',
+      id: 'ficc_c1',
+      approved: true,
+      functionCall: call('c1', 'gated'),
+    };
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    const response = await withFunctionInvocation(mock).getResponse(
+      [
+        { role: 'assistant', contents: [pendingRequest()] },
+        { role: 'user', contents: [decision, { ...decision }] },
+      ],
+      { tools: [gated] } as ChatOptions,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const emitted = response.messages.flatMap((msg) => msg.contents);
+    expect(emitted.filter((content) => content.type === 'function_call')).toHaveLength(1);
+    expect(resultsOf(emitted)).toHaveLength(1);
+    expect(response.text).toBe('done');
+  });
+
+  it('retires a pending request answered by a decision matching only its callId', async () => {
+    // A wire-compatible caller can hand-build the response with a fresh id; it is accepted and
+    // executed through the callId match, so the same match must retire the request it answers —
+    // re-surfacing the request would ask the human to approve a call that already ran, and a
+    // second yes would run it again.
+    const execute = vi.fn(() => 'ran');
+    const gated = tool({
+      name: 'gated',
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: {} },
+      approvalMode: 'always_require',
+      execute: execute as never,
+    });
+    const decision: Content = {
+      type: 'function_approval_response',
+      id: 'fresh_id_from_caller',
+      approved: true,
+      functionCall: call('c1', 'gated'),
+    };
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    const response = await withFunctionInvocation(mock).getResponse(
+      [
+        { role: 'assistant', contents: [pendingRequest()] },
+        { role: 'user', contents: [decision] },
+      ],
+      { tools: [gated] } as ChatOptions,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const emitted = response.messages.flatMap((msg) => msg.contents);
+    expect(emitted.filter((content) => content.type === 'function_approval_request')).toEqual([]);
+    expect(response.text).toBe('done');
+  });
+
+  it('accepts a callId-only decision for a new occurrence after an older result', async () => {
+    // Providers may reuse a call id after its previous occurrence has already produced a result.
+    // A fresh-id decision is still a documented wire-compatible answer to the later request, so
+    // the old result must not make that decision disappear merely because the ids differ.
+    const execute = vi.fn(() => 'ran again');
+    const gated = tool({
+      name: 'gated',
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: {} },
+      approvalMode: 'always_require',
+      execute: execute as never,
+    });
+    const laterRequest: FunctionApprovalRequestContent = {
+      ...pendingRequest(),
+      id: 'ficc_c1_second',
+    };
+    const laterDecision: Content = {
+      type: 'function_approval_response',
+      id: 'fresh_id_from_caller',
+      approved: true,
+      functionCall: call('c1', 'gated'),
+    };
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    const response = await withFunctionInvocation(mock).getResponse(
+      [
+        { role: 'assistant', contents: [pendingRequest()] },
+        {
+          role: 'user',
+          contents: [
+            {
+              type: 'function_approval_response',
+              id: 'ficc_c1',
+              approved: true,
+              functionCall: call('c1', 'gated'),
+            },
+          ],
+        },
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'c1', result: 'old result' }] },
+        { role: 'assistant', contents: [laterRequest] },
+        { role: 'user', contents: [laterDecision] },
+      ],
+      { tools: [gated] } as ChatOptions,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(
+      response.messages
+        .flatMap((msg) => msg.contents)
+        .some((content) => content.type === 'function_approval_request'),
+    ).toBe(false);
+    expect(response.text).toBe('done');
   });
 });
 

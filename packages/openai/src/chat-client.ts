@@ -495,6 +495,12 @@ export class OpenAIChatClient
         }
 
         const request = this.buildRequest(messages, options);
+        // Raw pass-through options are allowed to override `store`, so parsing must follow the
+        // final request body rather than the typed option captured before buildRequest.
+        const requestParseContext: ParseContext = {
+          ...(configuredModel === undefined ? {} : { model: configuredModel }),
+          ...(typeof request.store === 'boolean' ? { store: request.store } : {}),
+        };
 
         if (!ctx.stream) {
           const { data, servedModel } = await this.#callWithHeaders(
@@ -507,7 +513,7 @@ export class OpenAIChatClient
               ),
             options?.signal,
           );
-          directResponse = parseResponse(data, withServedModel(parseContext, servedModel));
+          directResponse = parseResponse(data, withServedModel(requestParseContext, servedModel));
           return arrayToStream(chatResponseToUpdates(directResponse));
         }
 
@@ -521,7 +527,7 @@ export class OpenAIChatClient
         );
         return this.#parseStream(
           OpenAIChatClient.#untilTerminalEvent(created.data as unknown as AsyncIterable<unknown>),
-          withServedModel(parseContext, created.servedModel),
+          withServedModel(requestParseContext, created.servedModel),
           options?.signal,
         );
       },

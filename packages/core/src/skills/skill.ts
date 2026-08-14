@@ -1,7 +1,7 @@
 import type { AgentSession } from '../agent/session.js';
 import { ConfigurationError, ToolInvocationError } from '../errors.js';
 import type { JsonSchema, SchemaInput } from '../tools/json-schema.js';
-import { resolveJsonSchema } from '../tools/json-schema.js';
+import { resolveJsonSchema, validateJsonSchema } from '../tools/json-schema.js';
 import { formatSchemaIssues, isStandardSchema } from '../tools/standard-schema.js';
 import type { ToolInputOf } from '../tools/tool.js';
 import type { SkillFrontmatter } from './frontmatter.js';
@@ -154,6 +154,12 @@ export interface SkillScriptConfig<TParams extends SchemaInput, TOutput> {
  *
  * @throws {SchemaResolutionError} When `parameters` cannot be converted to a JSON Schema.
  */
+export function skillScript<TOutput = unknown>(
+  config: SkillScriptConfig<JsonSchema & { type: 'object' }, TOutput>,
+): SkillScript;
+export function skillScript<TParams extends SchemaInput, TOutput = unknown>(
+  config: SkillScriptConfig<TParams, TOutput>,
+): SkillScript;
 export function skillScript<TParams extends SchemaInput, TOutput = unknown>(
   config: SkillScriptConfig<TParams, TOutput>,
 ): SkillScript {
@@ -182,7 +188,12 @@ async function validateScriptArguments<TParams extends SchemaInput>(
   args: SkillScriptArguments,
 ): Promise<ToolInputOf<TParams>> {
   if (!isStandardSchema(parameters)) {
-    return (args ?? {}) as ToolInputOf<TParams>;
+    const value = args ?? {};
+    const issues = validateJsonSchema(value, resolveJsonSchema(parameters));
+    if (issues.length > 0) {
+      throw new ToolInvocationError(name, `Invalid arguments: ${issues.join('; ')}`);
+    }
+    return value as ToolInputOf<TParams>;
   }
   const result = await parameters['~standard'].validate(args ?? {});
   if (result.issues !== undefined) {

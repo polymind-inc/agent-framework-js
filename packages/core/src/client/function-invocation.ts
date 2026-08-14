@@ -1,4 +1,4 @@
-import { ConfigurationError, throwIfAborted } from '../errors.js';
+import { throwIfAborted, validateSafeInteger } from '../errors.js';
 import type { FunctionMiddleware } from '../middleware/middleware.js';
 import { readRunScope, stripRunScope } from '../middleware/run-scope.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -11,7 +11,12 @@ import {
 } from '../tools/approval.js';
 import type { AnyFunctionTool, Tool, ToolContext } from '../tools/tool.js';
 import { isFunctionTool } from '../tools/tool.js';
-import type { Content, FunctionApprovalRequestContent, FunctionCallContent } from '../types/content.js';
+import type {
+  Content,
+  FunctionApprovalRequestContent,
+  FunctionApprovalResponseContent,
+  FunctionCallContent,
+} from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { ChatResponseUpdate } from '../types/response.js';
 import { chatResponseToUpdates, chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
@@ -59,14 +64,6 @@ export interface FunctionInvocationConfig {
 
 const DEFAULT_MAX_ITERATIONS = 40;
 const DEFAULT_MAX_CONSECUTIVE_ERRORS = 3;
-
-/** Validates a numeric loop limit at the configuration boundary. */
-function loopLimit(name: 'maxIterations' | 'maxConsecutiveErrors', value: number, minimum: number): number {
-  if (!Number.isSafeInteger(value) || value < minimum) {
-    throw new ConfigurationError(`${name} must be a safe integer greater than or equal to ${minimum}.`);
-  }
-  return value;
-}
 
 /** A `function_call` this layer is expected to act on, rather than one the provider already ran. */
 function isPendingCall(content: Content): content is FunctionCallContent {
@@ -247,8 +244,12 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
   config: FunctionInvocationConfig = {},
 ): ChatClient<TOptions> {
   const enabled = config.enabled ?? true;
-  const maxIterations = loopLimit('maxIterations', config.maxIterations ?? DEFAULT_MAX_ITERATIONS, 1);
-  const maxConsecutiveErrors = loopLimit(
+  const maxIterations = validateSafeInteger(
+    'maxIterations',
+    config.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+    1,
+  );
+  const maxConsecutiveErrors = validateSafeInteger(
     'maxConsecutiveErrors',
     config.maxConsecutiveErrors ?? DEFAULT_MAX_CONSECUTIVE_ERRORS,
     0,
@@ -321,40 +322,99 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       }
     | undefined
   > {
-    const answered = new Set<string>();
-    const respondedCallIds = new Set<string>();
-    const requested = new Map<string, FunctionApprovalRequestContent>();
-    let hasApprovalContent = false;
+    // One pass collects everything the acceptance and retirement rules below need: the position
+    // of every content object (per occurrence, keyed by identity), the latest position of each
+    // result / request / response, and the approval contents themselves.
+    const positions = new WeakMap<object, number>();
+    const lastResultPosition = new Map<string, number>();
+    const lastRequestPosition = new Map<string, number>();
+    const lastRequestPositionByCallId = new Map<string, number>();
+    const lastResponsePosition = new Map<string, number>();
+    const requested: FunctionApprovalRequestContent[] = [];
+    const responses: FunctionApprovalResponseContent[] = [];
+    let position = 0;
     for (const msg of messages) {
       for (const content of msg.contents) {
+        const contentPosition = position++;
+        positions.set(content, contentPosition);
         if (content.type === 'function_result') {
-          answered.add(content.callId);
+          lastResultPosition.set(content.callId, contentPosition);
         } else if (
           (isApprovalRequest(content) || isApprovalResponse(content)) &&
           !isHostedApproval(content)
         ) {
-          hasApprovalContent = true;
           if (isApprovalRequest(content)) {
-            requested.set(content.functionCall.callId, content);
+            requested.push(content);
+            lastRequestPosition.set(content.id, contentPosition);
+            lastRequestPositionByCallId.set(content.functionCall.callId, contentPosition);
           } else {
-            respondedCallIds.add(content.functionCall.callId);
+            responses.push(content);
+            lastResponsePosition.set(content.id, contentPosition);
           }
         }
       }
     }
-    if (!hasApprovalContent) {
+    if (requested.length === 0 && responses.length === 0) {
       return undefined;
     }
 
-    const pending = [...requested.entries()]
-      .filter(([callId]) => !answered.has(callId) && !respondedCallIds.has(callId))
-      .map(([, request]) => request);
+    const isActionableResponse = (response: FunctionApprovalResponseContent): boolean => {
+      const responsePosition = positions.get(response) ?? -1;
+      const callId = response.functionCall.callId;
+      const resultPosition = lastResultPosition.get(callId) ?? -1;
+      // Prefer the exact request id: if it names an older closed occurrence, falling back to a
+      // newer request with the same call id would let that stale decision approve the new call.
+      // A response whose id names no request is the documented callId-only path, so correlate it
+      // with the latest request for that call instead.
+      const requestPosition = lastRequestPosition.get(response.id) ?? lastRequestPositionByCallId.get(callId);
+      // A result after the response closes that logical occurrence. When a provider reuses a
+      // call id, a later request opens a new occurrence even though an older result has the same
+      // id. A matched decision must come after that request as well; a response with no request
+      // remains accepted only when no prior result makes it ambiguous, preserving the
+      // wire-compatible standalone-decision path.
+      return requestPosition === undefined
+        ? resultPosition < 0
+        : requestPosition > resultPosition && responsePosition > requestPosition;
+    };
+    const respondedCallIds = new Set(
+      responses.filter(isActionableResponse).map((response) => response.functionCall.callId),
+    );
+    const pendingById = new Map<string, FunctionApprovalRequestContent>();
+    for (const request of requested.filter((request) => {
+      const requestPosition = positions.get(request) ?? -1;
+      const resultPosition = lastResultPosition.get(request.functionCall.callId) ?? -1;
+      const responsePosition = lastResponsePosition.get(request.id) ?? -1;
+      // A request is retired by the response that answers it — matched by id, or, like the
+      // standalone-decision path above, by its call's callId alone. The retirement criteria must
+      // mirror the acceptance criteria: a decision this turn executes cannot leave its own
+      // request pending, or the re-surfaced request would ask the human to approve a call that
+      // already ran.
+      return (
+        requestPosition > resultPosition &&
+        requestPosition > responsePosition &&
+        !respondedCallIds.has(request.functionCall.callId)
+      );
+    })) {
+      // Session replay may contain the same still-pending control item more than once. Keep its
+      // latest copy without asking the human twice; a genuinely reused id after a closed
+      // occurrence is the only surviving copy because the earlier request was filtered above.
+      pendingById.delete(request.id);
+      pendingById.set(request.id, request);
+    }
+    const pending = [...pendingById.values()];
 
     // Strip every local approval control item from provider-visible history. Answered calls are
     // re-materialized below as assistant tool calls; unanswered requests are returned to the
     // caller again and keep the loop paused.
     const history: Message[] = [];
-    const decided = new Map<string, { approved: boolean; call: FunctionCallContent; reason?: string }>();
+    // Keyed by callId: a replayed transcript can carry the same decision more than once, but one
+    // call is answered by exactly one result, so only one decision per call may survive — the
+    // latest occurrence, like Python, which collects responses into a dict and lets a later
+    // entry overwrite an earlier one.
+    const decidedByCallId = new Map<
+      string,
+      { approved: boolean; call: FunctionCallContent; reason?: string }
+    >();
     for (const msg of messages) {
       const kept: Content[] = [];
       for (const content of msg.contents) {
@@ -367,9 +427,9 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
         }
         if (isApprovalResponse(content)) {
           const call = content.functionCall;
-          if (!answered.has(call.callId) && call.informationalOnly !== true) {
+          if (isActionableResponse(content) && call.informationalOnly !== true) {
             const reason = approvalReason(content);
-            decided.set(call.callId, {
+            decidedByCallId.set(call.callId, {
               approved: content.approved,
               call,
               ...(reason === undefined ? {} : { reason }),
@@ -381,7 +441,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
           content.type === 'function_call' &&
           content.informationalOnly !== true &&
           respondedCallIds.has(content.callId) &&
-          !answered.has(content.callId)
+          (positions.get(content) ?? -1) > (lastResultPosition.get(content.callId) ?? -1)
         ) {
           // A middleware-deferred round leaves the *raw* call in the transcript (it was flushed to
           // the caller before the middleware asked for a human), unlike the `approvalMode` path
@@ -397,7 +457,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       }
     }
 
-    if (decided.size === 0) {
+    if (decidedByCallId.size === 0) {
       if (pending.length === 0) {
         return { history, emitted: [], terminated: false, errorCount: 0, invoked: false };
       }
@@ -413,7 +473,7 @@ export function withFunctionInvocation<TOptions extends ChatOptions>(
       };
     }
 
-    const decisions = [...decided.values()];
+    const decisions = [...decidedByCallId.values()];
     const callMessage: Message = {
       role: 'assistant',
       contents: decisions.map((decision) => decision.call),

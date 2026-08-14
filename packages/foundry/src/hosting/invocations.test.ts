@@ -1,10 +1,20 @@
 import { HEADERS, INVOCATION_ID_HEADER } from '@polymind-inc/agent-framework-agentserver';
 import type { AgentLike } from '@polymind-inc/agent-framework-core';
-import { Agent, textContent } from '@polymind-inc/agent-framework-core';
+import {
+  Agent,
+  agentResponseUpdate,
+  createResponseStream,
+  mergeUpdates,
+  textContent,
+} from '@polymind-inc/agent-framework-core';
 import type { MockTurn } from '@polymind-inc/agent-framework-core/testing';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InvocationsHostServer } from './invocations.js';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function say(text: string): MockTurn {
   return { contents: [textContent(text)], finishReason: 'stop' };
@@ -41,6 +51,148 @@ describe('InvocationsHostServer', () => {
     expect(await response.text()).toBe('Hello there');
     expect(response.headers.get(INVOCATION_ID_HEADER)).toBeTruthy();
     expect(response.headers.get(HEADERS.sessionId)).toBeTruthy();
+  });
+
+  it('answers 413 before parsing a request body over the configured bound', async () => {
+    const app = new InvocationsHostServer({
+      agent: new Agent({ client: new MockChatClient([say('unused')]) }),
+      hosted: false,
+      maxBodyBytes: 32,
+    });
+    const response = await app.handle(invoke({ message: 'x'.repeat(100) }));
+
+    expect(response.status).toBe(413);
+    expect(errorCodeOf(await response.json())).toBe('request_too_large');
+  });
+
+  it('honours a raised AGENTSERVER_MAX_BODY_BYTES like the Responses endpoint does', async () => {
+    // One container, one bound: the operator raising the environment override must raise it for
+    // every endpoint the container serves, not only for POST /responses.
+    vi.stubEnv('AGENTSERVER_MAX_BODY_BYTES', String(12 * 1024 * 1024));
+    const app = server(new MockChatClient([say('big body ok')]));
+    const response = await app.handle(invoke({ message: 'x'.repeat(11 * 1024 * 1024) }));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('big body ok');
+  });
+
+  it('lets an explicit maxBodyBytes win over the environment override', async () => {
+    vi.stubEnv('AGENTSERVER_MAX_BODY_BYTES', String(1024));
+    const app = new InvocationsHostServer({
+      agent: new Agent({ client: new MockChatClient([say('unused')]) }),
+      hosted: false,
+      maxBodyBytes: 32,
+    });
+    const response = await app.handle(invoke({ message: 'x'.repeat(100) }));
+
+    expect(response.status).toBe(413);
+  });
+
+  it('serializes concurrent turns for the same session', async () => {
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    let active = 0;
+    let maxActive = 0;
+    const base = new Agent({ client: new MockChatClient([say('one'), say('two')]) });
+    const wrapped: AgentLike = {
+      id: base.id,
+      createSession: base.createSession.bind(base),
+      deserializeSession: base.deserializeSession.bind(base),
+      asTool: base.asTool.bind(base),
+      run: (async (...args: Parameters<AgentLike['run']>) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        if (active === 1) {
+          markFirstStarted();
+          await gate;
+        }
+        try {
+          return await base.run(...args);
+        } finally {
+          active--;
+        }
+      }) as never,
+    };
+    const app = new InvocationsHostServer({ agent: wrapped, hosted: false });
+    const first = app.handle(invoke({ message: 'first' }, {}, '?agent_session_id=same'));
+    await firstStarted;
+    const second = app.handle(invoke({ message: 'second' }, {}, '?agent_session_id=same'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(maxActive).toBe(1);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(maxActive).toBe(1);
+  });
+
+  it('releases a streamed session when its abandoned request is aborted', async () => {
+    const base = new Agent({ client: new MockChatClient([say('second reply')]) });
+    const hanging: AgentLike = {
+      id: base.id,
+      createSession: base.createSession.bind(base),
+      deserializeSession: base.deserializeSession.bind(base),
+      asTool: base.asTool.bind(base),
+      run: ((input, options) => {
+        if (input !== 'first') return base.run(input, options);
+        return createResponseStream({
+          start: async function* () {
+            yield agentResponseUpdate({ role: 'assistant', contents: [textContent('first chunk')] });
+            await new Promise<void>(() => undefined);
+          },
+          finalize: mergeUpdates,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        });
+      }) as AgentLike['run'],
+    };
+    const app = new InvocationsHostServer({ agent: hanging, hosted: false });
+    const controller = new AbortController();
+    const first = await app.handle(
+      new Request('http://localhost:8088/invocations?agent_session_id=same', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: 'first', stream: true }),
+        signal: controller.signal,
+      }),
+    );
+    expect(first.status).toBe(200);
+
+    let secondSettled = false;
+    const second = app
+      .handle(invoke({ message: 'second' }, {}, '?agent_session_id=same'))
+      .then((response) => {
+        secondSettled = true;
+        return response;
+      });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    controller.abort();
+    await vi.waitFor(() => expect(secondSettled).toBe(true), { timeout: 1000, interval: 10 });
+    expect(await (await second).text()).toBe('second reply');
+  });
+
+  it('evicts an idle least-recently-used session at the configured capacity', async () => {
+    const created: Array<string | undefined> = [];
+    const agent = new Agent({ client: new MockChatClient([say('one'), say('two'), say('three')]) });
+    const app = new InvocationsHostServer({
+      agent: recording(agent, created),
+      hosted: false,
+      maxSessions: 1,
+    });
+
+    await app.handle(invoke({ message: 'a' }, {}, '?agent_session_id=a'));
+    await app.handle(invoke({ message: 'b' }, {}, '?agent_session_id=b'));
+    await app.handle(invoke({ message: 'a again' }, {}, '?agent_session_id=a'));
+
+    expect(created).toEqual(['a', 'b', 'a']);
   });
 
   it('streams the update text under text/event-stream when asked to', async () => {

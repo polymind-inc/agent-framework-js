@@ -1,8 +1,9 @@
 /**
  * Integration tests against a real Microsoft Foundry project.
  *
- * Skipped unless `FOUNDRY_PROJECT_ENDPOINT` is set, so `pnpm -r test` stays offline by default.
- * Authentication uses `DefaultAzureCredential`, so `az login` (or a managed identity) is enough.
+ * Skipped unless `RUN_INTEGRATION_TESTS=1` and `FOUNDRY_PROJECT_ENDPOINT` are set, so ordinary
+ * test runs stay offline. Authentication uses `DefaultAzureCredential`, so `az login` (or a
+ * managed identity) is enough.
  *
  * - `FOUNDRY_PROJECT_ENDPOINT` — e.g. `https://<resource>.services.ai.azure.com/api/projects/<p>`
  * - `AZURE_AI_MODEL_DEPLOYMENT_NAME` — model deployment name (default `gpt-4o-mini`). This is the
@@ -25,6 +26,7 @@ const modelDeployment =
   process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? process.env.FOUNDRY_MODEL_DEPLOYMENT ?? 'gpt-4o-mini';
 const serverAgent = process.env.FOUNDRY_SERVER_AGENT;
 const toolboxName = process.env.FOUNDRY_TOOLBOX_NAME;
+const runIntegration = process.env.RUN_INTEGRATION_TESTS === '1';
 const TIMEOUT = 60_000;
 
 /** Narrows away undefined; a missing value fails the test with a clear error. */
@@ -36,52 +38,57 @@ function must<T>(value: T | null | undefined): T {
 const deploymentClient = (): FoundryChatClient =>
   new FoundryChatClient({ projectEndpoint: must(projectEndpoint), target: { modelDeployment } });
 
-describe.runIf(projectEndpoint !== undefined && projectEndpoint !== '')('Foundry (integration)', () => {
-  it('answers a basic prompt', { timeout: TIMEOUT }, async () => {
-    const response = await new Agent({ client: deploymentClient() }).run('Reply with the single word: pong');
+describe.runIf(runIntegration && projectEndpoint !== undefined && projectEndpoint !== '')(
+  'Foundry (integration)',
+  () => {
+    it('answers a basic prompt', { timeout: TIMEOUT }, async () => {
+      const response = await new Agent({ client: deploymentClient() }).run(
+        'Reply with the single word: pong',
+      );
 
-    expect(response.text.toLowerCase()).toContain('pong');
-    expect(response.usageDetails?.inputTokenCount).toBeGreaterThan(0);
-  });
-
-  it('runs the tool loop end to end', { timeout: TIMEOUT }, async () => {
-    let executed = 0;
-    const getWeather = tool({
-      name: 'get_weather',
-      description: 'Get the current weather for a location',
-      parameters: {
-        type: 'object',
-        properties: { location: { type: 'string' } },
-        required: ['location'],
-        additionalProperties: false,
-      },
-      execute: async () => {
-        executed++;
-        return 'Sunny, 25C';
-      },
+      expect(response.text.toLowerCase()).toContain('pong');
+      expect(response.usageDetails?.inputTokenCount).toBeGreaterThan(0);
     });
 
-    const agent = new Agent({ client: deploymentClient(), tools: [getWeather] });
-    const response = await agent.run("What's the weather in Tokyo? Use the tool.");
-
-    expect(executed).toBe(1);
-    expect(response.text).not.toBe('');
-  });
-
-  it.runIf(serverAgent !== undefined && serverAgent !== '')(
-    'talks to an existing server agent',
-    { timeout: TIMEOUT },
-    async () => {
-      const client = new FoundryChatClient({
-        projectEndpoint: must(projectEndpoint),
-        target: { serverAgent: must(serverAgent) },
+    it('runs the tool loop end to end', { timeout: TIMEOUT }, async () => {
+      let executed = 0;
+      const getWeather = tool({
+        name: 'get_weather',
+        description: 'Get the current weather for a location',
+        parameters: {
+          type: 'object',
+          properties: { location: { type: 'string' } },
+          required: ['location'],
+          additionalProperties: false,
+        },
+        execute: async () => {
+          executed++;
+          return 'Sunny, 25C';
+        },
       });
 
-      const response = await new Agent({ client }).run('Hello');
+      const agent = new Agent({ client: deploymentClient(), tools: [getWeather] });
+      const response = await agent.run("What's the weather in Tokyo? Use the tool.");
+
+      expect(executed).toBe(1);
       expect(response.text).not.toBe('');
-    },
-  );
-});
+    });
+
+    it.runIf(serverAgent !== undefined && serverAgent !== '')(
+      'talks to an existing server agent',
+      { timeout: TIMEOUT },
+      async () => {
+        const client = new FoundryChatClient({
+          projectEndpoint: must(projectEndpoint),
+          target: { serverAgent: must(serverAgent) },
+        });
+
+        const response = await new Agent({ client }).run('Hello');
+        expect(response.text).not.toBe('');
+      },
+    );
+  },
+);
 
 /**
  * Foundry Toolbox (hosted MCP tools).
@@ -90,7 +97,11 @@ describe.runIf(projectEndpoint !== undefined && projectEndpoint !== '')('Foundry
  * a managed identity) supplies the credential.
  */
 describe.runIf(
-  projectEndpoint !== undefined && projectEndpoint !== '' && toolboxName !== undefined && toolboxName !== '',
+  runIntegration &&
+    projectEndpoint !== undefined &&
+    projectEndpoint !== '' &&
+    toolboxName !== undefined &&
+    toolboxName !== '',
 )('Foundry Toolbox (integration)', () => {
   const toolbox = (): FoundryToolbox =>
     new FoundryToolbox({ name: must(toolboxName), projectEndpoint: must(projectEndpoint) });
@@ -144,7 +155,7 @@ describe.runIf(
  * The storage API is live on the project endpoint with nothing to enable: an Entra token for
  * `https://ai.azure.com/.default` is enough to reach it.
  */
-describe.runIf(projectEndpoint !== undefined && projectEndpoint !== '')(
+describe.runIf(runIntegration && projectEndpoint !== undefined && projectEndpoint !== '')(
   'Foundry storage (integration)',
   () => {
     const store = (): FoundryResponseStore =>
@@ -173,7 +184,12 @@ describe.runIf(projectEndpoint !== undefined && projectEndpoint !== '')(
  * write resolves platform-side caller context that only exists when the request is routed by
  * Foundry, i.e. from inside a deployed container; the error is opaque, so that stays a hypothesis.
  */
-describe.runIf(process.env.FOUNDRY_STORAGE_WRITABLE === '1')('Foundry storage writes (integration)', () => {
+describe.runIf(
+  runIntegration &&
+    projectEndpoint !== undefined &&
+    projectEndpoint !== '' &&
+    process.env.FOUNDRY_STORAGE_WRITABLE === '1',
+)('Foundry storage writes (integration)', () => {
   const store = (): FoundryResponseStore =>
     new FoundryResponseStore({ projectEndpoint: must(projectEndpoint) });
 

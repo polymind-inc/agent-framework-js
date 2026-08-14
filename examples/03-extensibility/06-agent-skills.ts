@@ -8,74 +8,30 @@
  *
  * Two ways of authoring one are shown: `SKILL.md` files on disk, and a skill defined in code.
  *
- * The core has no filesystem — it runs in browsers and on edge runtimes — so walking a directory
- * of `SKILL.md` files is a few lines of `node:fs` here rather than an API. `parseSkillMarkdown`
- * and `markdownSkill` are the parts worth sharing.
+ * The runtime-agnostic root has no filesystem — it runs in browsers and on edge runtimes. Node
+ * applications use the hardened `directorySkillsSource` from the `/node` subpath instead.
  *
  * Run: `OPENAI_API_KEY=... pnpm --filter example-03-extensibility skills`
  */
-import { readdir, readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Skill } from '@polymind-inc/agent-framework';
 import {
   Agent,
+  aggregateSkills,
+  cacheSkills,
   inlineSkill,
-  markdownSkill,
+  inMemorySkillsSource,
   SKILL_TOOL_NAMES,
   skillResource,
   skillScript,
   skillsProvider,
   toolApprovalMiddleware,
 } from '@polymind-inc/agent-framework';
+import { directorySkillsSource } from '@polymind-inc/agent-framework/node';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import { z } from 'zod';
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-/**
- * Loads every `SKILL.md` directory under `root`.
- *
- * Each skill's other files become resources, named by their path relative to the skill directory —
- * exactly the names the body refers to, so `references/factors.md` in the prose is the name the
- * model passes to `read_skill_resource`.
- *
- * ## Security considerations
- *
- * The resource name comes from the model, so it is joined and then checked to still be inside the
- * skill directory. Without that, `../../.env` is a readable path.
- */
-async function skillsFromDirectory(root: string): Promise<Skill[]> {
-  const skills: Skill[] = [];
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const directory = join(root, entry.name);
-    const files = await readdir(directory, { recursive: true, withFileTypes: true });
-    const resources = files
-      .filter((file) => file.isFile() && file.name !== 'SKILL.md')
-      .map((file) => {
-        // Posix-style, because that is how a Markdown body refers to a sibling file.
-        const name = relative(directory, join(file.parentPath, file.name)).split(sep).join('/');
-        return skillResource({
-          name,
-          read: async () => {
-            const path = join(directory, name);
-            // A `..` *segment* is the escape; a filename that merely starts with dots is fine.
-            const inside = relative(directory, path);
-            if (isAbsolute(inside) || inside === '..' || inside.startsWith(`..${sep}`)) {
-              throw new Error(`Refusing to read '${name}': outside the skill directory.`);
-            }
-            return await readFile(path, 'utf8');
-          },
-        });
-      });
-
-    skills.push(markdownSkill({ markdown: await readFile(join(directory, 'SKILL.md'), 'utf8'), resources }));
-  }
-  return skills;
-}
 
 /** A skill defined in code, with an action the model can run rather than reason through. */
 const roundTrip = inlineSkill({
@@ -109,8 +65,10 @@ const roundTrip = inlineSkill({
   ],
 });
 
-const skills = [...(await skillsFromDirectory(join(here, 'skills'))), roundTrip];
-console.log('[skills]', skills.map((skill) => skill.frontmatter.name).join(', '));
+const skills = aggregateSkills([
+  cacheSkills(directorySkillsSource({ paths: [join(here, 'skills')] })),
+  inMemorySkillsSource([roundTrip]),
+]);
 
 const agent = new Agent({
   client: new OpenAIChatClient({ model: 'gpt-4o-mini' }),

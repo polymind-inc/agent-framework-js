@@ -267,10 +267,28 @@ function skillRootUri(url: string): string {
  */
 function safeResourceName(name: string): string | undefined {
   const normalized = name.replaceAll('\\', '/');
-  if (normalized.startsWith('/') || normalized.includes('://') || normalized.split('/').includes('..')) {
-    return undefined;
+  // A downstream server or URI library may decode once or more before resolving the path. Run the
+  // same checks over every decoded stage so `%2e%2e` and double-encoded variants cannot become
+  // traversal only after they cross this trust boundary — but the decoding is inspection only:
+  // the name the server listed is the name it serves, so on success the request goes out with the
+  // original name, not a decoded one.
+  let stage = normalized;
+  for (let depth = 0; depth < 4; depth++) {
+    if (stage.startsWith('/') || stage.includes('://') || stage.split('/').includes('..')) {
+      return undefined;
+    }
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(stage).replaceAll('\\', '/');
+    } catch {
+      // Not valid percent-encoding, so no downstream decoder can unwrap it further either: the
+      // stages checked so far are all there are.
+      return normalized;
+    }
+    if (decoded === stage) return normalized;
+    stage = decoded;
   }
-  return normalized;
+  return undefined;
 }
 
 /** The text of every text block in a read result, joined; `''` when there is none. */

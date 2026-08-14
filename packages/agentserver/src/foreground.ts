@@ -49,6 +49,7 @@ export async function streamResponse(
   persist: () => Promise<void>,
   sessionId: string,
   releaseSignals: () => void,
+  signal: AbortSignal,
 ): Promise<Response> {
   // The first event is pulled *before* the 200 and the SSE headers go out. A handler that fails
   // during setup — an unauthorized session, a missing agent — therefore still reaches the
@@ -67,6 +68,26 @@ export async function streamResponse(
 
   const sequence = new SequenceNumberWriter();
   const persister = new TerminalPersister(persist, tracker);
+  // The whole teardown of one committed stream, run at most once: close the handler chain first
+  // so its own `finally` blocks run, then record the partial turn (a stream torn down before its
+  // terminal is resumable with `previous_response_id`), release the turn's claim and listeners,
+  // and flush before the platform freezes the sandbox (the reference's `trace_stream` flushes in
+  // its own `finally` the same way).
+  let torndown = false;
+  const windDown = async (): Promise<void> => {
+    if (torndown) {
+      return;
+    }
+    torndown = true;
+    try {
+      await iterator.return?.();
+    } catch {
+      // The generator's own failure must not mask the teardown.
+    }
+    await persister.ensureAttempted();
+    releaseSignals();
+    await flushTelemetry();
+  };
   const numbered = async function* (): AsyncGenerator<ResponseEvent> {
     try {
       let pending = first;
@@ -79,21 +100,24 @@ export async function streamResponse(
         pending = await iterator.next();
       }
     } finally {
-      // The client-disconnect path: the stream was torn down before the terminal event came
-      // through. Close the handler chain first so its own `finally` blocks run, then record the
-      // partial turn.
-      try {
-        await iterator.return?.();
-      } catch {
-        // The generator's own failure must not mask the teardown.
-      }
-      await persister.ensureAttempted();
-      releaseSignals();
-      // Stream over — flush before the platform freezes the sandbox (the reference's
-      // `trace_stream` flushes in its own `finally` the same way).
-      await flushTelemetry();
+      // The consumer-driven path: the stream ran to completion, or a cancel tore it down early.
+      await windDown();
     }
   };
+  // The consumer is not guaranteed: a host that mounts `fetch` directly may abandon the body
+  // without cancelling it, leaving the generator above parked at a `yield` where its `finally`
+  // can never run — and with it the claim on the response id, which would answer 409 and hold
+  // `drain()` open for the life of the process. The turn's abort signal fires for exactly the
+  // two ways such a stream dies — the client disconnecting, the container shutting down — so it
+  // triggers the same teardown directly. A stream with a live consumer is unharmed: closing the
+  // source lets a pending pull deliver what the handler winds down with, and whichever of the
+  // two paths gets there second is a no-op.
+  signal.addEventListener('abort', () => void windDown(), { once: true });
+  // A signal that aborted before the listener went up never fires it; re-read the state after
+  // registering so neither the edge nor the state can be missed.
+  if (signal.aborted) {
+    void windDown();
+  }
 
   const keepAliveMs = sseKeepAliveSeconds() * 1000;
   return new Response(toSseStream(numbered(), { keepAliveMs }), {

@@ -1,4 +1,5 @@
 import { notFound } from '../errors.js';
+import { positiveLimit } from '../validation.js';
 import type { OutputItem, ResponseEvent } from '../wire.js';
 import type { ResponseGeneration, ResponseOwner, ResponseProvider, StoredResponse } from './provider.js';
 import {
@@ -41,21 +42,74 @@ interface StoredEvents {
  */
 export class InMemoryResponseProvider implements ResponseProvider {
   readonly #responses = new Map<string, StoredResponse>();
+  /** Conversation ids are indexes over responses, not responses in the retention budget. */
+  readonly #aliases = new Map<string, StoredResponse>();
+  /**
+   * Which alias ids point at each response — the reverse of `#aliases`' `aliasOf` edges, kept in
+   * step by every write to that map. It is what makes dropping one response's aliases cost only
+   * those aliases: a scan of `#aliases` instead would run on every delete and, once the store
+   * sits at its cap, on every insert.
+   */
+  readonly #aliasIdsFor = new Map<string, Set<string>>();
   /** Replayable background streams, keyed by response id. Bounded by the same cap as responses. */
   readonly #events = new Map<string, StoredEvents>();
   readonly #maxResponses: number;
 
   constructor(options: InMemoryResponseProviderConfig = {}) {
-    this.#maxResponses = options.maxResponses ?? 10_000;
+    this.#maxResponses = positiveLimit('maxResponses', options.maxResponses ?? 10_000);
+  }
+
+  #lookup(id: string): StoredResponse | undefined {
+    return this.#responses.get(id) ?? this.#aliases.get(id);
+  }
+
+  /** Stores `stored` as an alias of `target`, moving the reverse edge when the id is re-pointed. */
+  #setAlias(id: string, stored: StoredResponse, target: string): void {
+    const previous = this.#aliases.get(id)?.aliasOf;
+    if (previous !== undefined && previous !== target) {
+      // The id no longer speaks for its old target; left indexed, dropping that target's aliases
+      // would take this one along even though it points somewhere else now.
+      this.#unindexAlias(id, previous);
+    }
+    this.#aliases.set(id, stored);
+    let ids = this.#aliasIdsFor.get(target);
+    if (ids === undefined) {
+      ids = new Set();
+      this.#aliasIdsFor.set(target, ids);
+    }
+    ids.add(id);
+  }
+
+  /** Removes one reverse edge, and the target's whole entry once no alias points at it. */
+  #unindexAlias(id: string, target: string): void {
+    const ids = this.#aliasIdsFor.get(target);
+    if (ids === undefined) {
+      return;
+    }
+    ids.delete(id);
+    if (ids.size === 0) {
+      this.#aliasIdsFor.delete(target);
+    }
+  }
+
+  #dropAliasesFor(responseId: string): void {
+    const ids = this.#aliasIdsFor.get(responseId);
+    if (ids === undefined) {
+      return;
+    }
+    this.#aliasIdsFor.delete(responseId);
+    for (const id of ids) {
+      this.#aliases.delete(id);
+    }
   }
 
   async get(id: string, owner: ResponseOwner): Promise<StoredResponse | undefined> {
-    return ownedOrUndefined(this.#responses.get(id), owner);
+    return ownedOrUndefined(this.#lookup(id), owner);
   }
 
   async assertWritable(id: string, owner: ResponseOwner): Promise<void> {
     // The same rule `put` applies, run before the turn does any work.
-    assertOwnerCanWrite(this.#responses.get(id), id, owner);
+    assertOwnerCanWrite(this.#lookup(id), id, owner);
   }
 
   /**
@@ -71,12 +125,21 @@ export class InMemoryResponseProvider implements ResponseProvider {
       }
       map.delete(oldest);
       alsoDrop?.delete(oldest);
+      if (map === this.#responses) this.#dropAliasesFor(oldest);
     }
   }
 
   async put(stored: StoredResponse): Promise<void> {
     const id = stored.response.id;
-    assertWritable(this.#responses.get(id), stored);
+    assertWritable(this.#lookup(id), stored);
+    if (stored.aliasOf !== undefined) {
+      this.#setAlias(id, stored, stored.aliasOf);
+      return;
+    }
+    const existing = this.#responses.get(id);
+    if (existing !== undefined && existing.generation !== stored.generation) {
+      this.#dropAliasesFor(id);
+    }
     // Overwriting an existing id does not grow the map, so only a genuinely new entry evicts.
     if (!this.#responses.has(id)) {
       this.#evictOldest(this.#responses, this.#events);
@@ -122,11 +185,21 @@ export class InMemoryResponseProvider implements ResponseProvider {
   }
 
   async delete(id: string, owner: ResponseOwner): Promise<boolean> {
-    if (ownedOrUndefined(this.#responses.get(id), owner) === undefined) {
+    const stored = ownedOrUndefined(this.#lookup(id), owner);
+    if (stored === undefined) {
       return false;
+    }
+    const alias = this.#aliases.get(id);
+    if (alias !== undefined) {
+      if (alias.aliasOf !== undefined) {
+        // Only `#setAlias` writes this map, so the edge is always there; the guard is for the type.
+        this.#unindexAlias(id, alias.aliasOf);
+      }
+      return this.#aliases.delete(id);
     }
     // The replay log is part of the response; a deleted response must not remain replayable.
     this.#events.delete(id);
+    this.#dropAliasesFor(id);
     return this.#responses.delete(id);
   }
 

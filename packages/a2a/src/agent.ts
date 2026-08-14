@@ -58,17 +58,22 @@ export interface A2AAgentConfig {
 
 /** Per-run options for {@link A2AAgent.run}. */
 export interface A2ARunOptions {
-  /** Continues an existing conversation; required to resume a background run later. */
+  /** Continues an existing conversation; required to start a background run. */
   session?: AgentSession;
   /** Sent as the request's `metadata`, for context the protocol does not model. */
   metadata?: Record<string, unknown>;
-  /** Resumes a task the agent is still working on. Pass no input alongside it. */
+  /**
+   * Resumes a task the agent is still working on. Pass no input alongside it.
+   *
+   * The token alone identifies the task; a `session` passed with it is updated from the resumed
+   * task's state.
+   */
   continuationToken?: ContinuationToken;
   /**
    * Returns as soon as the task is accepted, with a `continuationToken` to resume from.
    *
-   * Requires an explicit `session`: an auto-created session cannot be reached again, so the token
-   * would have nothing to resume into.
+   * Requires an explicit `session`: an auto-created session would be discarded with the response,
+   * and with it the conversation the background task belongs to.
    */
   allowBackgroundResponses?: boolean;
   signal?: AbortSignal;
@@ -253,6 +258,9 @@ export class A2AAgent implements AgentLike {
     if (background && session === undefined) {
       throw new ConfigurationError('A session must be provided when allowBackgroundResponses is enabled.');
     }
+    // A token alone identifies the task to resume: the task is server-side state, so no session is
+    // needed. When one is passed anyway, it is brought up to date from the resumed task at the end
+    // of the run, whatever it recorded before.
     const resumeTaskId =
       options?.continuationToken === undefined
         ? undefined

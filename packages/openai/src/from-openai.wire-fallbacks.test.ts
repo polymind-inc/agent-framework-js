@@ -168,11 +168,11 @@ describe('awaited message parts', () => {
     expect(contents).toEqual([expect.objectContaining({ type: 'text', text: 'cannot help' })]);
   });
 
-  it('skips message parts of an unknown type', () => {
+  it('preserves message parts of an unknown type', () => {
     const contents = contentsOf(
       parseResponse({ output: [{ type: 'message', content: [{ type: 'mystery_part' }] }] }),
     );
-    expect(contents).toEqual([]);
+    expect(contents).toEqual([expect.objectContaining({ type: 'unknown', unknownType: 'mystery_part' })]);
   });
 
   it('maps a message without content to no contents at all', () => {
@@ -448,8 +448,10 @@ describe('stream event fallbacks', () => {
     expect(update?.contents).toEqual([expect.objectContaining({ type: 'text', text: 'nope' })]);
   });
 
-  it('skips a streamed content part of an unknown type', () => {
-    expect(parseOne({ type: 'response.content_part.added', part: { type: 'mystery_part' } })).toBeUndefined();
+  it('preserves a streamed content part of an unknown type', () => {
+    expect(
+      parseOne({ type: 'response.content_part.added', part: { type: 'mystery_part' } })?.contents,
+    ).toEqual([expect.objectContaining({ type: 'unknown', unknownType: 'mystery_part' })]);
   });
 
   it('maps a text delta without a payload to empty text', () => {

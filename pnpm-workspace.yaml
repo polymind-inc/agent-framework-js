@@ -3,6 +3,8 @@ packages:
   - 'examples/*'
   - 'scripts/type-resolution'
 minimumReleaseAge: 1440
+overrides:
+  'nanoid@>=3.0.0 <3.3.18': 3.3.18
 catalog:
   '@types/node': ^24.0.0
   '@vitest/coverage-v8': 4.1.10

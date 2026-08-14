@@ -560,6 +560,8 @@ function outputItemToContents(item: unknown): Content[] {
           contents.push(content);
         } else if (part?.type === 'refusal') {
           contents.push({ type: 'text', text: part.refusal ?? '', rawRepresentation: part });
+        } else {
+          contents.push(unknownContent(part));
         }
       }
       return contents;
@@ -745,15 +747,25 @@ export function parseStreamEvent(
     if (usageDetails !== undefined) {
       contents.push({ type: 'usage', usageDetails, rawRepresentation: event });
     }
-    if (eventType === 'response.failed') {
-      const failure = failureContent(response, event);
-      if (failure !== undefined) {
-        contents.push(failure);
-      }
+    const failure = failureContent(response, event);
+    if (failure !== undefined) {
+      contents.push(failure);
     }
   }
 
   switch (raw?.type) {
+    case 'error': {
+      const message = typeof raw.message === 'string' ? raw.message : '';
+      const code = typeof raw.code === 'string' ? raw.code : '';
+      contents.push({
+        type: 'error',
+        message: message.trim() === '' ? DEFAULT_FAILURE_MESSAGE : message,
+        errorCode: code === '' ? DEFAULT_FAILURE_CODE : code,
+        rawRepresentation: event,
+      });
+      break;
+    }
+
     case 'response.content_part.added': {
       // The part's initial text is usually empty, but Python emits whatever it carries so a
       // pre-filled part is not lost; deltas then stream the rest.
@@ -763,7 +775,7 @@ export function parseStreamEvent(
       } else if (part?.type === 'refusal') {
         contents.push({ type: 'text', text: part.refusal ?? '', rawRepresentation: event });
       } else {
-        return undefined;
+        contents.push(unknownContent(part));
       }
       break;
     }

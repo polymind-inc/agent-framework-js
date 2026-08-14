@@ -232,6 +232,138 @@ describe('tool approval', () => {
     expect(executed).toEqual([{}]);
   });
 
+  it('binds an approval to a deep snapshot of object arguments', async () => {
+    const mock = new MockChatClient([
+      {
+        contents: [
+          {
+            type: 'function_call',
+            callId: 'c1',
+            name: 'delete_all',
+            arguments: { scope: { target: 'safe' } },
+          },
+        ],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const executed: unknown[] = [];
+    const guarded = tool({
+      name: 'delete_all',
+      description: 'Delete records',
+      parameters: { type: 'object', properties: { scope: { type: 'object' } } },
+      approvalMode: 'always_require',
+      execute: async (input) => {
+        executed.push(input);
+        return 'deleted';
+      },
+    });
+    const agent = new Agent({ client: mock, tools: [guarded] });
+    const session = agent.createSession();
+
+    const first = await agent.run('delete', { session });
+    const request = must(approvals(first)[0]);
+    const decision = approvalResponse(structuredClone(request), true);
+    const args = request.functionCall.arguments as { scope: { target: string } };
+    args.scope.target = 'everything';
+
+    await agent.run(decision, { session });
+    expect(executed).toEqual([{ scope: { target: 'safe' } }]);
+  });
+
+  it('records a streaming approval before exposing its mutable request object', async () => {
+    const mock = new MockChatClient([
+      {
+        contents: [
+          {
+            type: 'function_call',
+            callId: 'c1',
+            name: 'delete_all',
+            arguments: '{"scope":"safe"}',
+          },
+        ],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const executed: unknown[] = [];
+    const guarded = tool({
+      name: 'delete_all',
+      description: 'Delete records',
+      parameters: { type: 'object', properties: { scope: { type: 'string' } } },
+      approvalMode: 'always_require',
+      execute: async (input) => {
+        executed.push(input);
+        return 'deleted';
+      },
+    });
+    const agent = new Agent({ client: mock, tools: [guarded] });
+    const session = agent.createSession();
+    const stream = agent.run('delete', { session });
+    const iterator = stream[Symbol.asyncIterator]();
+    let request: FunctionApprovalRequestContent | undefined;
+
+    while (request === undefined) {
+      const next = await iterator.next();
+      if (next.done === true) throw new Error('approval request was not surfaced');
+      request = next.value.contents.find(isApprovalRequest);
+    }
+    const decision = approvalResponse(structuredClone(request), true);
+    request.functionCall.arguments = '{"scope":"everything"}';
+    await iterator.return?.();
+
+    await agent.run(decision, { session });
+    expect(executed).toEqual([{ scope: 'safe' }]);
+  });
+
+  it('executes the recorded arguments when a streamed request is deep-mutated before approval', async () => {
+    // Pins the snapshot invariant end-to-end: the object handed to the caller mid-stream is not
+    // the record the decision is bound against. Deep-mutating the caller's copy — while the
+    // stream is still open, so before the record is persisted — and approving from that mutated
+    // copy must still execute the arguments the model originally produced.
+    const mock = new MockChatClient([
+      {
+        contents: [
+          {
+            type: 'function_call',
+            callId: 'c1',
+            name: 'delete_all',
+            arguments: { scope: { target: 'safe' } },
+          },
+        ],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const executed: unknown[] = [];
+    const guarded = tool({
+      name: 'delete_all',
+      description: 'Delete records',
+      parameters: { type: 'object', properties: { scope: { type: 'object' } } },
+      approvalMode: 'always_require',
+      execute: async (input) => {
+        executed.push(input);
+        return 'deleted';
+      },
+    });
+    const agent = new Agent({ client: mock, tools: [guarded] });
+    const session = agent.createSession();
+    const stream = agent.run('delete', { session });
+    const iterator = stream[Symbol.asyncIterator]();
+    let request: FunctionApprovalRequestContent | undefined;
+
+    while (request === undefined) {
+      const next = await iterator.next();
+      if (next.done === true) throw new Error('approval request was not surfaced');
+      request = next.value.contents.find(isApprovalRequest);
+    }
+    (request.functionCall.arguments as { scope: { target: string } }).scope.target = 'everything';
+    await iterator.return?.();
+
+    await agent.run(approvalResponse(request, true), { session });
+    expect(executed).toEqual([{ scope: { target: 'safe' } }]);
+  });
+
   it('prefers the stored request over a replayed one carrying the same id', async () => {
     const mock = new MockChatClient([
       { contents: [call('c1', 'delete_all')], finishReason: 'tool_calls' },
@@ -397,6 +529,32 @@ describe('tool approval', () => {
     const response = await agent.run('read', { session: agent.createSession() });
     expect(response.userInputRequests).toEqual([]);
     expect(results(response.messages)).toEqual([['c1', 'read']]);
+  });
+
+  it('keeps declaration-only calls visible beside an approval request', async () => {
+    const guarded = tool({
+      name: 'guarded',
+      description: 'd',
+      parameters: { type: 'object', properties: {} },
+      approvalMode: 'always_require',
+      execute: async () => 'done',
+    });
+    const manual = tool({ name: 'manual', description: 'd', parameters: { type: 'object', properties: {} } });
+    const mock = new MockChatClient([
+      {
+        contents: [call('c1', 'guarded'), call('c2', 'manual')],
+        finishReason: 'tool_calls',
+      },
+    ]);
+    const agent = new Agent({ client: mock, tools: [guarded, manual] });
+
+    const response = await agent.run('go', { session: agent.createSession() });
+    expect(response.userInputRequests).toHaveLength(2);
+    expect(
+      response.userInputRequests.some(
+        (content) => content.type === 'function_approval_request' && content.functionCall.name === 'manual',
+      ),
+    ).toBe(true);
   });
 
   it('behaves the same when streamed', async () => {

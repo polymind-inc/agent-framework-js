@@ -18,6 +18,22 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 /** `agent_session_id` is answered on the `x-agent-session-id` header, so it must be a header-safe token. */
 const SESSION_ID_SHAPE = /^[ -~]+$/;
 
+/**
+ * Validates a configured capacity bound and hands it back.
+ *
+ * Every limit this server enforces — event retention, response retention, body size overrides —
+ * is a count that bounds memory, so a zero, negative, fractional or unsafe value is a
+ * misconfiguration to refuse at construction, not a setting to serve under.
+ *
+ * @throws {RangeError} When `value` is not a safe integer of at least 1.
+ */
+export function positiveLimit(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a safe integer of at least 1.`);
+  }
+  return value;
+}
+
 /** The conversation id a request refers to, in either of the two shapes the field allows. */
 export function conversationIdOf(request: CreateResponseRequest): string | undefined {
   const conversation = request.conversation;

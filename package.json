@@ -29,7 +29,7 @@
     "pack:check": "node scripts/pack-check.mjs",
     "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm run pack:check",
     "version:set": "node scripts/set-version.mjs",
-    "publish:packages": "pnpm -r --filter \"./packages/*\" publish --access public --provenance --no-git-checks"
+    "publish:packages": "node scripts/publish-packages.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",

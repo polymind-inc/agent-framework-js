@@ -4,6 +4,7 @@ import type { JsonSchema } from '../tools/json-schema.js';
 import { resolveJsonSchema } from '../tools/json-schema.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
 import { formatSchemaIssues, isStandardSchema } from '../tools/standard-schema.js';
+import { isUserInputRequest } from '../types/content.js';
 import type { ResponseBase } from '../types/response.js';
 import type {
   ChatClient,
@@ -85,8 +86,7 @@ function isSuspended(response: ResponseBase<unknown>): boolean {
   return response.messages.some((msg) =>
     msg.contents.some(
       (content) =>
-        content.type === 'function_approval_request' ||
-        content.type === 'oauth_consent_request' ||
+        isUserInputRequest(content) ||
         (content.type === 'function_call' &&
           content.informationalOnly !== true &&
           !resultCallIds.has(content.callId)),

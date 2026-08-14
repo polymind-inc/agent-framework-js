@@ -53,9 +53,10 @@ const KNOWN_CONTENT_TYPES: ReadonlySet<string> = new Set(Object.keys(WIRE_CONTEN
 /**
  * Content keys whose values are themselves content items or lists of content items.
  *
- * Both {@link serializeContent} and {@link deserializeContent} recurse through exactly these keys,
- * so the list is what makes `rawRepresentation` stripping and {@link UnknownContent} restoration
- * hold at every level. Python recurses structurally instead (`_serialize_value` tests
+ * {@link deserializeContent} recurses through exactly these keys; {@link serializeContent}
+ * recurses through them plus `result` ({@link SERIALIZED_NESTED_CONTENT_KEYS}, which explains the
+ * asymmetry). The lists are what make `rawRepresentation` stripping and {@link UnknownContent}
+ * restoration hold at every level. Python recurses structurally instead (`_serialize_value` tests
  * `isinstance(value, Content)`); TypeScript has no runtime equivalent, so the key list is a
  * deliberate stand-in.
  *
@@ -65,6 +66,22 @@ const KNOWN_CONTENT_TYPES: ReadonlySet<string> = new Set(Object.keys(WIRE_CONTEN
  * entries of Python's `Content.to_dict` `fields_to_capture`.
  */
 const NESTED_CONTENT_KEYS = ['functionCall', 'inputs', 'output', 'outputs', 'items'] as const;
+
+/**
+ * The keys {@link serializeContent} recurses through — the shared list plus `result`.
+ *
+ * The two directions are deliberately asymmetric about `result`, mirroring Python. `result` holds
+ * whatever a tool returned. When that is Content (a rich tool result), serialization must still
+ * strip `rawRepresentation` at every level — an SDK object stored there can be circular, and
+ * persisting the session would throw (Python's `_serialize_value` recurses into it via its
+ * `isinstance(Content)` test, so plain values pass through untouched). Deserialization must NOT
+ * recurse into `result`: a plain-JSON tool result such as `[{type: 'row', id: 1}]` merely happens
+ * to carry a `type` key, and rewriting it to `{type: 'unknown', unknownType: 'row', ...}` would
+ * corrupt data the model reads when the restored session is re-sent. Python's `Content.from_dict`
+ * draws the same line — it restores nested content only under `function_call`, `inputs`,
+ * `outputs` and `items`, never under `result`.
+ */
+const SERIALIZED_NESTED_CONTENT_KEYS = [...NESTED_CONTENT_KEYS, 'result'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -111,7 +128,7 @@ export function serializeContent(content: Content): SerializedContent {
   if (Array.isArray(out.annotations)) {
     out.annotations = (out.annotations as Annotation[]).map(stripAnnotation);
   }
-  for (const key of NESTED_CONTENT_KEYS) {
+  for (const key of SERIALIZED_NESTED_CONTENT_KEYS) {
     const value = out[key];
     if (Array.isArray(value)) {
       out[key] = value.map((item) => (isContentShaped(item) ? serializeContent(item as Content) : item));

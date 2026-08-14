@@ -14,6 +14,7 @@ The root entry is the core; everything else lives under a subpath:
 | Import | Re-exports |
 | ------ | ---------- |
 | `@polymind-inc/agent-framework` | [`@polymind-inc/agent-framework-core`](https://www.npmjs.com/package/@polymind-inc/agent-framework-core) — `Agent`, `AgentSession`, `tool()`, middleware, Agent Skills, the `ChatClient` seam |
+| `@polymind-inc/agent-framework/node` | `@polymind-inc/agent-framework-core/node` — Node-only skill directory and file-history adapters |
 | `@polymind-inc/agent-framework/testing` | `@polymind-inc/agent-framework-core/testing` — `MockChatClient` |
 | `@polymind-inc/agent-framework/openai` | [`@polymind-inc/agent-framework-openai`](https://www.npmjs.com/package/@polymind-inc/agent-framework-openai) |
 | `@polymind-inc/agent-framework/anthropic` | [`@polymind-inc/agent-framework-anthropic`](https://www.npmjs.com/package/@polymind-inc/agent-framework-anthropic) |

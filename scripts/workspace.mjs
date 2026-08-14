@@ -13,3 +13,23 @@ export function readPackageManifests() {
     return { path, manifest: JSON.parse(readFileSync(path, 'utf8')) };
   });
 }
+
+/** Returns the one release version shared by every package, or throws when lockstep is broken. */
+export function assertLockstepVersions(packages = readPackageManifests()) {
+  if (packages.length === 0) {
+    throw new Error('No publishable packages were found under packages/.');
+  }
+  const versions = new Map();
+  for (const { manifest } of packages) {
+    const names = versions.get(manifest.version) ?? [];
+    names.push(manifest.name);
+    versions.set(manifest.version, names);
+  }
+  if (versions.size !== 1) {
+    const details = [...versions.entries()]
+      .map(([version, names]) => `${version}: ${names.join(', ')}`)
+      .join('; ');
+    throw new Error(`Publishable package versions are not in lockstep (${details}).`);
+  }
+  return versions.keys().next().value;
+}

@@ -165,6 +165,20 @@ describe('stream event fallbacks', () => {
     expect(parseStreamEvent({ type: 'content_block_delta' }, state)).toBeUndefined();
   });
 
+  it('does not persist an unknown delta fragment as a replayable content block', () => {
+    const event = {
+      type: 'content_block_delta',
+      delta: { type: 'citations_delta', citation: { url: 'https://example.test/source' } },
+    };
+
+    expect(parseStreamEvent(event, createStreamParseState())).toBeUndefined();
+    // Whole unknown blocks remain forward-compatible and round-trip as before.
+    expect(parseContentBlocks([{ type: 'future_block', value: 1 }])[0]).toMatchObject({
+      type: 'unknown',
+      unknownType: 'future_block',
+    });
+  });
+
   it('parses a message_start without a message as an empty update', () => {
     const update = parseStreamEvent({ type: 'message_start' }, createStreamParseState());
     expect(update?.contents).toEqual([]);

@@ -4,6 +4,70 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
+## Unreleased
+
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — `ResponseBase<T>.value` is now
+  `T | undefined`. A suspended run (for example, one waiting for tool approval) and a response
+  created without a structured-output value have always carried `undefined` at runtime; callers
+  must now narrow `response.value` before reading it. The response factories and update-folding
+  helpers no longer claim a value exists when none was supplied.
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — a raw JSON Schema whose root is not an
+  object no longer types a tool or skill-script input as `Record<string, unknown>`; its input is
+  `unknown`. Object-root schemas retain the existing record inference. Raw schemas are now
+  validated locally before executable tools and skill scripts run, rather than relying on a model
+  provider to enforce them.
+- **[BREAKING] `@polymind-inc/agent-framework-anthropic`** — `thinking` is a discriminated union:
+  `{ type: 'enabled', budgetTokens }` requires a safe-integer budget of at least 1024, while
+  `{ type: 'disabled' }` cannot carry a budget. Invalid configurations now fail at construction
+  instead of reaching Anthropic as an invalid request.
+- **[BREAKING] `@polymind-inc/agent-framework-foundry`** — `FoundryTarget` now enforces exactly one
+  of `modelDeployment` and `serverAgent`. When an already-configured SDK `client` is supplied,
+  `projectEndpoint` is optional and `baseURL` reports the client's actual URL; configurations
+  without a client still require a project endpoint.
+- **Security:** approval requests are immutable snapshots before they reach callers, so mutating a
+  streamed or awaited request cannot change the arguments later executed after approval. Raw JSON
+  Schema arguments are checked locally, executable-only approval bypassing no longer consumes
+  declaration-only calls, and reused function call ids are correlated by logical occurrence.
+- `ResponseStream.finalResponse()` now shares concurrent source initialization and draining, so
+  repeated concurrent calls cannot duplicate model/tool work or leak an iterator. Middleware
+  cancellation before the first pull and update-hook failures now finalize the run consistently.
+- Serializing content now sanitizes `Content` values nested in function `result` fields, while
+  deserialization leaves plain tool-result JSON untouched so it round-trips exactly. Future content types that
+  carry the `userInputRequest` marker suspend structured-output parsing without requiring a core
+  release for each new discriminator.
+- OpenAI stream error events and incomplete terminal errors are surfaced as error content, unknown
+  message parts survive awaited and streamed session round trips, and the final transformed
+  `store` request option is the value retained for follow-up requests.
+- Anthropic streaming drops unknown delta fragments that cannot be replayed as content blocks,
+  preserves unknown complete blocks, maps citations to framework annotations, and treats MCP
+  authorization headers case-insensitively.
+- A2A task conversion now preserves terminal status messages, falls back to the agent history only
+  for a terminal task that produced no artifacts (never duplicating a message the status already
+  carries), and de-duplicates artifacts already emitted by the stream. Resuming with a
+  continuation token needs the token alone; a session passed alongside is updated from the
+  resumed task.
+- Agent Server and Foundry hosting now bound request bodies (one `AGENTSERVER_MAX_BODY_BYTES`
+  override governs the Responses and Invocations endpoints alike), stream-event retention and in-memory
+  sessions; serialize concurrent turns for one Invocations session; reject duplicate foreground
+  response ids, releasing the in-flight hold when the request aborts even if the response body was
+  never consumed; and keep response aliases outside the primary retention quota. The Foundry
+  container examples run as the unprivileged `node` user. SSE keep-alives obey backpressure,
+  abandoned telemetry spans no longer remain strongly retained, storage credential acquisition is
+  included in bounded retries, and structured custom-tool outputs retain their JSON shape.
+- MCP rejects headers or custom fetch options that a custom transport cannot consume, and skill
+  resource names reject encoded and repeatedly encoded traversal segments.
+- Release automation now runs only from version tags, verifies all package versions in lockstep,
+  validates packed versions, and publishes sequentially in dependency order after a complete
+  registry preflight. Retries skip immutable versions that were already published.
+- CI now enforces coverage (95% statements/lines, 90% functions/branches), audits High-severity
+  dependency advisories, separates opt-in live integration tests from deterministic unit tests,
+  and schedules protocol smoke tests. The vulnerable transitive `nanoid` version is overridden to
+  a patched release.
+- Agent Skills documentation and examples now use the hardened `directorySkillsSource` from the
+  documented `/node` entry point instead of a custom filesystem walker.
+- Core base64 conversion now writes pre-sized typed arrays, avoiding per-byte boxed allocations for
+  large attachments while retaining the runtime-neutral implementation.
+
 ## 0.3.0
 
 The first minor since 0.2, and the first release after the public-API surface freeze was lifted:

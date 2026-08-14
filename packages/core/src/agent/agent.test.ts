@@ -4,6 +4,7 @@ import { MockChatClient } from '../client/test-support.js';
 import type { ContextProvider, HistoryProvider } from '../context/context-provider.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError, StreamConsumedError, UserInputRequiredError } from '../errors.js';
+import { agentMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import { approvalResponse } from '../tools/approval.js';
 import { invocationCountOf, tool } from '../tools/tool.js';
@@ -636,6 +637,23 @@ describe('Agent construction', () => {
     expect(() => new Agent({ client: client('x') }).run('hi', { middleware: [(() => {}) as never] })).toThrow(
       ConfigurationError,
     );
+  });
+});
+
+describe('Agent middleware stream lifecycle', () => {
+  it('can be closed before the first pull and still produces a final response', async () => {
+    const agent = new Agent({
+      client: client('unused'),
+      middleware: [agentMiddleware(async (_ctx, next) => next())],
+    });
+    const stream = agent.run('hi');
+    const iterator = stream[Symbol.asyncIterator]();
+
+    await iterator.return?.();
+
+    const response = await stream.finalResponse();
+    expect(response.messages).toEqual([]);
+    expect(response.agentId).toBe(agent.id);
   });
 });
 

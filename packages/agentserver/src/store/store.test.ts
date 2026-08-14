@@ -34,6 +34,13 @@ function stored(id: string, userId?: string, generation: ResponseGeneration = GE
 }
 
 describe('InMemoryResponseProvider eviction', () => {
+  it('rejects a non-positive or non-integral response cap', () => {
+    expect(() => new InMemoryResponseProvider({ maxResponses: 0 })).toThrow(/maxResponses.*at least 1/i);
+    expect(() => new InMemoryResponseProvider({ maxResponses: Number.NaN })).toThrow(
+      /maxResponses.*integer/i,
+    );
+  });
+
   it('evicts the oldest response once the cap is reached', async () => {
     const provider = new InMemoryResponseProvider({ maxResponses: 2 });
 
@@ -68,6 +75,43 @@ describe('InMemoryResponseProvider eviction', () => {
     await provider.put(stored('caresp_b'));
 
     expect(await provider.getEvents('caresp_a', undefined, GENERATION)).toBeUndefined();
+  });
+
+  it('keeps an alias that moved to a new response when its old target goes away', async () => {
+    const provider = new InMemoryResponseProvider({ maxResponses: 2 });
+    const conversationId = 'caconv_moved';
+
+    // The alias points at turn one, then at turn two — what every follow-up turn of one
+    // conversation does to the conversation-id alias.
+    await provider.put(stored('caresp_one'));
+    await provider.put({ ...stored(conversationId), aliasOf: 'caresp_one' });
+    await provider.put(stored('caresp_two'));
+    await provider.put({ ...stored(conversationId), aliasOf: 'caresp_two' });
+
+    // A third response evicts turn one. The alias left it before the eviction, so dropping turn
+    // one's aliases must not take it along.
+    await provider.put(stored('caresp_three'));
+    expect(await provider.get('caresp_one', undefined)).toBeUndefined();
+    expect((await provider.get(conversationId, undefined))?.aliasOf).toBe('caresp_two');
+
+    // Its *current* target still owns it: deleting turn two takes the alias with it.
+    expect(await provider.delete('caresp_two', undefined)).toBe(true);
+    expect(await provider.get(conversationId, undefined)).toBeUndefined();
+  });
+
+  it('detaches a directly deleted alias from its target', async () => {
+    const provider = new InMemoryResponseProvider();
+
+    await provider.put(stored('caresp_kept'));
+    await provider.put({ ...stored('caconv_gone'), aliasOf: 'caresp_kept' });
+    expect(await provider.delete('caconv_gone', undefined)).toBe(true);
+
+    // Re-pointing the freed alias id elsewhere must survive the old target's departure: the
+    // deleted alias record no longer speaks for it.
+    await provider.put(stored('caresp_other'));
+    await provider.put({ ...stored('caconv_gone'), aliasOf: 'caresp_other' });
+    expect(await provider.delete('caresp_kept', undefined)).toBe(true);
+    expect((await provider.get('caconv_gone', undefined))?.aliasOf).toBe('caresp_other');
   });
 });
 

@@ -126,11 +126,12 @@ describe('agentAsTool invocation', () => {
     expect(spy.mock.calls[0]?.[0]).toBe('what is the answer?');
   });
 
-  it('sends an empty task when the model omitted the argument', async () => {
+  it('rejects a missing required task before invoking the sub-agent', async () => {
     const sub = subAgent({ name: 'helper' });
     const spy = vi.spyOn(sub as unknown as { run: Agent['run'] }, 'run');
-    await delegate([sub.asTool()], '{}');
-    expect(spy.mock.calls[0]?.[0]).toBe('');
+    const results = await delegate([sub.asTool()], '{}');
+    expect(spy).not.toHaveBeenCalled();
+    expect(results[0]?.exception).toContain('Invalid arguments');
   });
 
   it('does not pass a session by default', async () => {

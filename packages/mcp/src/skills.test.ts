@@ -192,14 +192,53 @@ describe('loading', () => {
     await connection.close();
   });
 
-  it.each([['/etc/passwd'], ['../../secrets.md'], ['file:///etc/passwd'], ['..\\..\\secrets.md']])(
-    'refuses the resource name %j without asking the server',
-    async (name) => {
-      const { server, connection } = serverWith([indexOf(unitConverterEntry)]);
-      const [skill] = await mcpSkillsSource(connection).getSkills(context());
+  it.each([
+    ['/etc/passwd'],
+    ['../../secrets.md'],
+    ['file:///etc/passwd'],
+    ['..\\..\\secrets.md'],
+    ['%2e%2e/secrets.md'],
+    ['nested/%252e%252e/secrets.md'],
+  ])('refuses the resource name %j without asking the server', async (name) => {
+    const { server, connection } = serverWith([indexOf(unitConverterEntry)]);
+    const [skill] = await mcpSkillsSource(connection).getSkills(context());
 
-      expect(await skill?.getResource?.(name)).toBeUndefined();
-      expect(server.reads).toEqual([INDEX_URI]);
+    expect(await skill?.getResource?.(name)).toBeUndefined();
+    expect(server.reads).toEqual([INDEX_URI]);
+    await connection.close();
+  });
+
+  it('fetches a resource whose listed name contains a literal percent-escape at that exact uri', async () => {
+    // The traversal check decodes the name to inspect it, but the name the server listed is the
+    // name it serves: the request must go out undecoded.
+    const { server, connection } = serverWith([
+      indexOf(unitConverterEntry),
+      { uri: 'skill://unit-converter/references/a%20b.md', text: '| miles | km |' },
+    ]);
+
+    const [skill] = await mcpSkillsSource(connection).getSkills(context());
+    const resource = await skill?.getResource?.('references/a%20b.md');
+
+    expect(server.reads).toContain('skill://unit-converter/references/a%20b.md');
+    expect(await resource?.read({ skill: skill as Skill, callId: 'c1' })).toBe('| miles | km |');
+    await connection.close();
+  });
+
+  it.each([['100%.md'], ['50%_off.md']])(
+    'accepts the name %j, whose bare percent is not a valid escape, and fetches it literally',
+    async (name) => {
+      // A segment that decodeURIComponent refuses cannot be decoded by anything downstream either,
+      // so it is not an encoding attack — the name goes through as-is.
+      const { server, connection } = serverWith([
+        indexOf(unitConverterEntry),
+        { uri: `skill://unit-converter/${name}`, text: 'plain' },
+      ]);
+
+      const [skill] = await mcpSkillsSource(connection).getSkills(context());
+      const resource = await skill?.getResource?.(name);
+
+      expect(server.reads).toContain(`skill://unit-converter/${name}`);
+      expect(await resource?.read({ skill: skill as Skill, callId: 'c1' })).toBe('plain');
       await connection.close();
     },
   );

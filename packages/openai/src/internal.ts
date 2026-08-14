@@ -14,4 +14,4 @@ export {
   mcpCallContents,
   searchCallContents,
 } from './from-openai.js';
-export { reasoningEncryptedContent, stringifyMcpOutput } from './to-openai.js';
+export { reasoningEncryptedContent, stringifyMcpOutput, stringifyResult } from './to-openai.js';
