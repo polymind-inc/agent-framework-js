@@ -19,8 +19,8 @@ catalogs:
       specifier: ^0.22.14
       version: 0.22.14
     tsx:
-      specifier: ^4.23.9
-      version: 4.23.11
+      specifier: ^4.23.12
+      version: 4.23.12
     typescript:
       specifier: ^7.0.2
       version: 7.0.2
@@ -46,13 +46,13 @@ importers:
         version: 4.1.10(vitest@4.1.10)
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   examples/01-get-started:
     dependencies:
@@ -68,7 +68,7 @@ importers:
         version: 24.13.3
       tsx:
         specifier: 'catalog:'
-        version: 4.23.11
+        version: 4.23.12
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -84,10 +84,10 @@ importers:
         version: 24.13.3
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       tsx:
         specifier: 'catalog:'
-        version: 4.23.11
+        version: 4.23.12
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -106,7 +106,7 @@ importers:
         version: 24.13.3
       tsx:
         specifier: 'catalog:'
-        version: 4.23.11
+        version: 4.23.12
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -131,7 +131,7 @@ importers:
         version: 5.2.1(supports-color@7.2.0)
       tsx:
         specifier: 'catalog:'
-        version: 4.23.11
+        version: 4.23.12
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -147,13 +147,13 @@ importers:
     devDependencies:
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/agentserver:
     dependencies:
@@ -199,32 +199,32 @@ importers:
         version: 24.13.3
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/anthropic:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.115.0
-        version: 0.115.0(zod@4.4.3)
+        specifier: ^0.117.1
+        version: 0.117.1(zod@4.4.3)
       '@polymind-inc/agent-framework-core':
         specifier: workspace:^
         version: link:../core
     devDependencies:
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/core:
     dependencies:
@@ -249,13 +249,13 @@ importers:
         version: 24.13.3
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/foundry:
     dependencies:
@@ -292,13 +292,13 @@ importers:
         version: 24.13.3
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/mcp:
     dependencies:
@@ -320,13 +320,13 @@ importers:
         version: 2.10.0(@opentelemetry/api@1.9.1)
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/meta:
     dependencies:
@@ -357,13 +357,13 @@ importers:
         version: 24.13.3
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   packages/openai:
     dependencies:
@@ -376,13 +376,13 @@ importers:
     devDependencies:
       tsdown:
         specifier: 'catalog:'
-        version: 0.22.14(tsx@4.23.11)(typescript@7.0.2)
+        version: 0.22.14(tsx@4.23.12)(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   scripts/type-resolution:
     dependencies:
@@ -432,8 +432,8 @@ packages:
       express:
         optional: true
 
-  '@anthropic-ai/sdk@0.115.0':
-    resolution: {integrity: sha512-BJrFIVyjNuU8lfDyIJTvlRYzgQg+zEl78BxE7fq8esULsGz9IRQvGtW5spq3tydmtjQb/GFdooKGdGsetpx+lQ==}
+  '@anthropic-ai/sdk@0.117.1':
+    resolution: {integrity: sha512-Yn2QlXfyCiKJ5YGCOOay7ZE78ISvII2XY621WMCiflmG8IYgwx59IBwPExxki3Xk9jKUtnD/Sj6UvplWr0rZxg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -2280,8 +2280,8 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
-  tsx@4.23.11:
-    resolution: {integrity: sha512-Ry2oTEUnhBdeEdWIztY8kf3/nBGnPnjMLVGL0YfdRXMORuPER5NlKmayqxtxRxwB1xBN+RivRaJfe7PM1rtiyw==}
+  tsx@4.23.12:
+    resolution: {integrity: sha512-FDf4L4sYzKtzWYhU/Xm0AQFdTjdIxNo9ElTf2mxXM6k8YMHXzYUe4yODVaXP4V9uMFbVg8c0qyBccK2OOxb45Q==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -2455,7 +2455,7 @@ snapshots:
       '@grpc/grpc-js': 1.14.4
       express: 5.2.1(supports-color@7.2.0)
 
-  '@anthropic-ai/sdk@0.115.0(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.117.1(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -3209,7 +3209,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+      vitest: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
 
   '@vitest/expect@4.1.10':
     dependencies:
@@ -3220,13 +3220,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))':
+  '@vitest/mocker@4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11)
+      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -4077,7 +4077,7 @@ snapshots:
 
   ts-algebra@2.0.0: {}
 
-  tsdown@0.22.14(tsx@4.23.11)(typescript@7.0.2):
+  tsdown@0.22.14(tsx@4.23.12)(typescript@7.0.2):
     dependencies:
       ansis: 4.3.1
       cac: 7.0.0
@@ -4095,7 +4095,7 @@ snapshots:
       unconfig-core: 7.5.0
       verkit: 0.3.1
     optionalDependencies:
-      tsx: 4.23.11
+      tsx: 4.23.12
       typescript: 7.0.2
     transitivePeerDependencies:
       - '@typescript/native-preview'
@@ -4105,7 +4105,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsx@4.23.11:
+  tsx@4.23.12:
     dependencies:
       esbuild: 0.28.1
     optionalDependencies:
@@ -4155,7 +4155,7 @@ snapshots:
 
   verkit@0.3.1: {}
 
-  vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11):
+  vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
@@ -4166,12 +4166,12 @@ snapshots:
       '@types/node': 24.13.3
       esbuild: 0.28.1
       fsevents: 2.3.3
-      tsx: 4.23.11
+      tsx: 4.23.12
 
-  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11)):
+  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11))
+      '@vitest/mocker': 4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -4188,7 +4188,7 @@ snapshots:
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.11)
+      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.23.12)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
