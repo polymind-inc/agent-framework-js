@@ -65,8 +65,10 @@ const RESOURCE_INSTRUCTIONS =
 
 const SCRIPT_INSTRUCTIONS =
   '- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.\n' +
-  '- Pass script arguments inside `args` as a JSON object' +
-  ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n';
+  '- Pass named script arguments inside `args` as a JSON object, including for inline scripts' +
+  ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n' +
+  '- For file-based scripts that document CLI-style positional arguments, pass `args` as an array of strings' +
+  ' (e.g. `args: ["input.docx", "--output", "result.idx"]`).\n';
 
 /**
  * Advertises skills to the model and gives it the tools to pull them in.
