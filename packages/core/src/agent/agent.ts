@@ -472,6 +472,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     let injectedMessages: readonly Message[] = [];
     let afterRunDone = false;
     let activeSession: AgentSession | undefined;
+    // Whether the caller consumed this run as a stream; a streaming run's continuation token
+    // replays the whole exchange, which decides who persists it (see #notifyProvidersAfterRun).
+    let streamedRun = false;
     // The `invoke_agent` span covers the whole run, including the tool loop and history
     // persistence, so it is started in `start` and closed by hand rather than around a call.
     let runSpan: Span | undefined;
@@ -495,10 +498,18 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         return;
       }
       afterRunDone = true;
-      await this.#notifyProvidersAfterRun(providerContexts, injectedMessages, activeSession, response, error);
+      await this.#notifyProvidersAfterRun(
+        providerContexts,
+        injectedMessages,
+        activeSession,
+        response,
+        error,
+        streamedRun,
+      );
     };
 
     const start = async (ctx: { stream: boolean }): Promise<AsyncIterable<AgentResponseUpdate>> => {
+      streamedRun = ctx.stream;
       const session = presetSession ?? options?.session ?? this.createSession();
       activeSession = session;
       this.#rejectHistoryConflict(session);
@@ -688,13 +699,20 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     session: AgentSession | undefined,
     response: AgentResponse<unknown> | undefined,
     error: unknown,
+    streamed: boolean,
   ): Promise<void> {
     const serviceOwnsHistory = session?.serviceSessionId !== undefined;
+    // A streaming run that ended suspended does not persist: its continuation token replays the
+    // caller's input and every update already produced, so the run that finally completes stores
+    // the whole exchange in one append — storing the suspended half here too would hand the next
+    // turn the question and the partial answer twice. An awaited run's token carries nothing, so
+    // an awaited suspension still stores its own half and the resumed run appends only its tail.
+    const suspendedStream = streamed && response?.continuationToken !== undefined;
     for (const { provider, ctx } of providerContexts) {
       if (provider.afterRun === undefined) {
         continue;
       }
-      if (serviceOwnsHistory && provider === this.historyProvider) {
+      if ((serviceOwnsHistory || suspendedStream) && provider === this.historyProvider) {
         continue;
       }
       const afterCtx: ProviderAfterRunContext = {
@@ -795,9 +813,11 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       });
       seen.push(mapped);
       if (mapped.continuationToken !== undefined) {
-        // Both halves ride on the same gate (Go `agent.go`): an awaited run folds its own
-        // updates *and* has already persisted its own input, so carrying either in the token
-        // makes the resumed run store the exchange a second time.
+        // Both halves ride on the same gate: an awaited run folds its own updates *and* has
+        // already persisted its own input, so carrying either in the token makes the resumed run
+        // store the exchange a second time. A streaming run is the mirror image — its token
+        // carries everything, so the suspended run persists nothing and the completing run
+        // stores the whole exchange (see #notifyProvidersAfterRun).
         mapped.continuationToken = wrapContinuationToken(
           mapped.continuationToken,
           wantsTokenReplay ? inputMessages : [],
