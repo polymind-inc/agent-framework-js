@@ -2,9 +2,11 @@ import type { Attributes, Span } from '@opentelemetry/api';
 import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
 import { recordChatMetrics } from '../observability/metrics.js';
 import {
+  addMessageEvents,
   finishChatSpan,
   inActiveSpan,
   recordSpanError,
+  responseFinishReason,
   setMessageContent,
   setSystemInstructions,
   spanName,
@@ -110,6 +112,11 @@ export function withChatTelemetry<TOptions extends ChatOptions>(
         startedAt = performance.now();
         setMessageContent(chatSpan, GEN_AI.inputMessages, messages);
         setSystemInstructions(chatSpan, options?.instructions);
+        addMessageEvents(chatSpan, {
+          providerName: client.metadata.providerName,
+          messages,
+          ...(options?.instructions === undefined ? {} : { instructions: options.instructions }),
+        });
         try {
           // Inside the `try`: a client that rejects the call synchronously — a bad model name, a
           // missing key — would otherwise leave this span open and unrecorded, because the failure
@@ -152,6 +159,13 @@ export function withChatTelemetry<TOptions extends ChatOptions>(
             }
             if (failure === undefined && span !== undefined) {
               finishChatSpan(span, response);
+              const finishReason = responseFinishReason(response);
+              addMessageEvents(span, {
+                providerName: client.metadata.providerName,
+                messages: response.messages,
+                output: true,
+                ...(finishReason === undefined ? {} : { finishReason }),
+              });
             }
             endSpan();
           },

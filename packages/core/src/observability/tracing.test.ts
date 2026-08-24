@@ -16,7 +16,7 @@ import { message } from '../types/message.js';
 import { agentResponse } from '../types/response.js';
 import { GEN_AI } from './attributes.js';
 import { configureObservability, getTracer } from './settings.js';
-import { startAgentRunSpan } from './tracing.js';
+import { responseFinishReason, startAgentRunSpan } from './tracing.js';
 
 const exporter = new InMemorySpanExporter();
 /** Names of spans that were *started*, whether or not they were ended. */
@@ -436,6 +436,147 @@ describe('startAgentRunSpan', () => {
     span.end();
 
     expect(parentOf(must(byName('http POST')))).toBe('invoke_agent a1');
+  });
+});
+
+describe('v1.36.0 message events', () => {
+  /** A tool round followed by a text answer, so every event kind appears somewhere. */
+  const toolTurns = [
+    {
+      contents: [
+        {
+          type: 'function_call' as const,
+          callId: 'c1',
+          name: 'get_weather',
+          arguments: '{"city":"Tokyo"}',
+        },
+      ],
+      finishReason: 'tool_calls',
+    },
+    { contents: [textContent('It is sunny.')], finishReason: 'stop' },
+  ];
+
+  /** The JSON-decoded `body` attribute of each event on `span`, keyed by event name. */
+  function eventBodies(span: ReadableSpan): Array<{ name: string; body: unknown }> {
+    return span.events.map((event) => ({
+      name: event.name,
+      body: JSON.parse(String(event.attributes?.body)),
+    }));
+  }
+
+  it('keeps message events off the invoke_agent span', async () => {
+    configureObservability({ captureMessageContent: true });
+    await new Agent({ client: new MockChatClient(toolTurns), name: 'bot', tools: [getWeather] }).run(
+      'weather?',
+    );
+
+    const invoke = must(byName('invoke_agent bot'));
+    // The reference implementations emit message events only for the model invocation; the agent
+    // span reports content as span attributes alone.
+    expect(invoke.events).toEqual([]);
+    expect(invoke.attributes[GEN_AI.inputMessages]).toBeDefined();
+    expect(invoke.attributes[GEN_AI.outputMessages]).toBeDefined();
+  });
+
+  it('emits v1.36.0-shaped events on each chat span', async () => {
+    configureObservability({ captureMessageContent: true });
+    await new Agent({
+      client: new MockChatClient(toolTurns),
+      name: 'bot',
+      tools: [getWeather],
+      instructions: 'Be terse.',
+    }).run('weather?');
+
+    const chats = spans().filter((span) => span.name === 'chat mock-model');
+    expect(chats).toHaveLength(2);
+
+    // First round: instructions, the user turn, then the model's tool-calling choice.
+    expect(eventBodies(must(chats[0]))).toEqual([
+      { name: 'gen_ai.system.message', body: { content: 'Be terse.' } },
+      { name: 'gen_ai.user.message', body: { content: 'weather?' } },
+      {
+        name: 'gen_ai.choice',
+        body: {
+          index: 0,
+          finish_reason: 'tool_calls',
+          message: {
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'get_weather', arguments: '{"city":"Tokyo"}' },
+              },
+            ],
+          },
+        },
+      },
+    ]);
+
+    // Second round replays the whole exchange: the assistant's call, the tool result, the answer.
+    expect(eventBodies(must(chats[1]))).toEqual([
+      { name: 'gen_ai.system.message', body: { content: 'Be terse.' } },
+      { name: 'gen_ai.user.message', body: { content: 'weather?' } },
+      {
+        name: 'gen_ai.assistant.message',
+        body: {
+          tool_calls: [
+            {
+              id: 'c1',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"city":"Tokyo"}' },
+            },
+          ],
+        },
+      },
+      { name: 'gen_ai.tool.message', body: { id: 'c1', content: 'sunny' } },
+      {
+        name: 'gen_ai.choice',
+        body: { index: 0, finish_reason: 'stop', message: { content: 'It is sunny.' } },
+      },
+    ]);
+  });
+
+  it('stamps the provider on every event and steps the timestamps', async () => {
+    configureObservability({ captureMessageContent: true });
+    await new Agent({ client: new MockChatClient(toolTurns), name: 'bot', tools: [getWeather] }).run(
+      'weather?',
+    );
+
+    const chat = must(spans().find((span) => span.name === 'chat mock-model'));
+    expect(chat.events.length).toBeGreaterThan(1);
+    for (const event of chat.events) {
+      expect(event.attributes?.['gen_ai.system']).toBe('mock');
+      expect(event.attributes?.['event.name']).toBe(event.name);
+    }
+    // Compared as [seconds, nanos] tuples: collapsing an epoch hrtime into one number exceeds
+    // float64 integer precision and would erase the 1μs steps this asserts.
+    for (let i = 1; i < chat.events.length; i++) {
+      const [prevSec, prevNs] = must(chat.events[i - 1]).time;
+      const [sec, ns] = must(chat.events[i]).time;
+      expect(sec > prevSec || (sec === prevSec && ns > prevNs)).toBe(true);
+    }
+  });
+
+  it('falls back to the raw representation for the finish reason', () => {
+    const base = agentResponse({ messages: [] });
+    expect(responseFinishReason(base)).toBeUndefined();
+    // A provider that only reports the reason on the wire object still gets choice events.
+    expect(responseFinishReason({ ...base, rawRepresentation: { finish_reason: 'stop' } })).toBe('stop');
+    // The normalized field wins over the raw one.
+    expect(
+      responseFinishReason({ ...base, finishReason: 'length', rawRepresentation: { finish_reason: 'stop' } }),
+    ).toBe('length');
+    // A non-string raw value is not a finish reason.
+    expect(responseFinishReason({ ...base, rawRepresentation: { finish_reason: 42 } })).toBeUndefined();
+  });
+
+  it('emits no choice event when the response reports no finish reason', async () => {
+    configureObservability({ captureMessageContent: true });
+    const mock = new MockChatClient([{ contents: [textContent('hi')] }]);
+    await new Agent({ client: mock, name: 'bot' }).run('hello');
+
+    const chat = must(spans().find((span) => span.name === 'chat mock-model'));
+    expect(chat.events.map((event) => event.name)).toEqual(['gen_ai.user.message']);
   });
 });
 

@@ -181,25 +181,25 @@ describe('nested usage aggregation', () => {
 });
 
 describe('message events', () => {
-  it('emits one role-named event per message when content capture is on', async () => {
+  it('emits role-named events on the chat span when content capture is on', async () => {
     configureObservability({ captureMessageContent: true });
 
     await new Agent({ client: usingClient(), name: 'bot' }).run('hello');
 
-    const invoke = spanExporter.getFinishedSpans().find((span) => span.name === 'invoke_agent bot');
-    const names = invoke?.events.map((event) => event.name);
+    const chat = spanExporter.getFinishedSpans().find((span) => span.name.startsWith('chat'));
+    const names = chat?.events.map((event) => event.name);
     expect(names).toEqual(['gen_ai.user.message', 'gen_ai.choice']);
-    const first = invoke?.events[0];
+    const first = chat?.events[0];
     expect(first?.attributes?.['event.name']).toBe('gen_ai.user.message');
-    expect(first?.attributes?.role).toBe('user');
-    expect(String(first?.attributes?.content)).toContain('hello');
+    expect(JSON.parse(String(first?.attributes?.body))).toEqual({ content: 'hello' });
   });
 
   it('emits nothing without the opt-in, since the events carry message text', async () => {
     await new Agent({ client: usingClient(), name: 'bot' }).run('hello');
 
-    const invoke = spanExporter.getFinishedSpans().find((span) => span.name === 'invoke_agent bot');
-    expect(invoke?.events).toEqual([]);
+    for (const span of spanExporter.getFinishedSpans()) {
+      expect(span.events).toEqual([]);
+    }
   });
 });
 
