@@ -85,6 +85,22 @@ describe('skillsProvider advertising', () => {
     expect(prompt).not.toContain('Read the table, then run convert.');
   });
 
+  it('distinguishes the two script argument shapes in the default prompt', async () => {
+    const contribution = await runProvider(skillsProvider([unitConverter]));
+
+    const prompt = contribution.instructions.join('\n');
+    const scriptGuidance = prompt.split('\n').filter((line) => line.includes('script'));
+    // Named arguments go as a JSON object — inline scripts included — while file-based scripts
+    // documenting CLI-style positional arguments take a string array.
+    expect(
+      scriptGuidance.some((line) => line.includes('JSON object') && line.includes('inline scripts')),
+    ).toBe(true);
+    expect(
+      scriptGuidance.some((line) => line.includes('array of strings') && line.includes('file-based scripts')),
+    ).toBe(true);
+    expect(prompt).toContain('not as top-level tool parameters');
+  });
+
   it('escapes skill metadata so a crafted description cannot close the element', async () => {
     const injected = inlineSkill({
       name: 'crafted',
