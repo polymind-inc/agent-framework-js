@@ -39,7 +39,7 @@ import { createResponseStream } from '../streaming/response-stream.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
 import type { FunctionTool, Tool } from '../tools/tool.js';
 import type { AgentRunInput, Message } from '../types/message.js';
-import { normalizeInput } from '../types/message.js';
+import { normalizeInput, notSourceTypes } from '../types/message.js';
 import type {
   AgentResponse,
   AgentResponseUpdate,
@@ -524,7 +524,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         }
       }
 
-      injectedMessages = [...prepared.accumulator.messages];
+      // A resumed run injected nothing itself; what the suspended run injected rides its token,
+      // so the completing run can still hand it to the providers that persist it.
+      injectedMessages = resuming ? continuation.contextMessages : [...prepared.accumulator.messages];
       const messages: Message[] = resuming ? [] : [...prepared.accumulator.messages, ...inputMessages];
       const chatOptions = this.#mergeOptions(options, prepared.accumulator, session, continuation.innerToken);
       const client = this.#approvalClient(session, functionMiddleware);
@@ -541,6 +543,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       const mapUpdate = this.#createUpdateMapper({
         session,
         inputMessages,
+        // Replayed history stays out of the token: the store already holds it, and a long
+        // transcript would dwarf everything else the token carries.
+        contextMessages: notSourceTypes('ChatHistory')(injectedMessages),
         seen,
         wantsTokenReplay: ctx.stream,
       });
@@ -763,12 +768,14 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
   #createUpdateMapper(run: {
     session: AgentSession;
     inputMessages: Message[];
+    /** What this run's providers injected, minus replayed history; a streaming token carries it. */
+    contextMessages: readonly Message[];
     /** Shared with the caller; every mapped update is appended so a token can carry them. */
     seen: AgentResponseUpdate[];
     /** `true` for a streaming run, whose token must replay input and updates on resume. */
     wantsTokenReplay: boolean;
   }): (update: ChatResponseUpdate) => AgentResponseUpdate {
-    const { session, inputMessages, seen, wantsTokenReplay } = run;
+    const { session, inputMessages, contextMessages, seen, wantsTokenReplay } = run;
     const agentName = this.name;
     const agentId = this.id;
 
@@ -822,6 +829,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
           mapped.continuationToken,
           wantsTokenReplay ? inputMessages : [],
           wantsTokenReplay ? seen : [],
+          wantsTokenReplay ? contextMessages : [],
         );
       }
       return mapped;

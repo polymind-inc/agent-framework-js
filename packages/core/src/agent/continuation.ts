@@ -24,6 +24,14 @@ export interface AgentContinuationToken extends ContinuationToken {
   inputMessages?: SerializedMessage[];
   /** Every update produced before the run was suspended. */
   responseUpdates?: SerializedUpdate[];
+  /**
+   * What the context providers injected into the original run, minus replayed history.
+   *
+   * A suspended streaming run defers persistence to the run that completes the exchange, so the
+   * injected context has to travel with the token for a store configured to keep it. Replayed
+   * history is excluded: it is already in the store, and it can dwarf the rest of the token.
+   */
+  contextMessages?: SerializedMessage[];
 }
 
 /** An {@link AgentResponseUpdate} reduced to its JSON-safe fields. */
@@ -89,6 +97,7 @@ export function wrapContinuationToken(
   innerToken: ContinuationToken,
   inputMessages: readonly Message[],
   updates: readonly AgentResponseUpdate[],
+  contextMessages: readonly Message[] = [],
 ): AgentContinuationToken {
   const token: AgentContinuationToken = { type: AGENT_TOKEN_TYPE, innerToken };
   if (inputMessages.length > 0) {
@@ -96,6 +105,9 @@ export function wrapContinuationToken(
   }
   if (updates.length > 0) {
     token.responseUpdates = updates.map(serializeUpdate);
+  }
+  if (contextMessages.length > 0) {
+    token.contextMessages = serializeMessages(contextMessages);
   }
   return token;
 }
@@ -105,6 +117,7 @@ export interface ContinuationState {
   innerToken?: ContinuationToken;
   inputMessages: Message[];
   updates: AgentResponseUpdate[];
+  contextMessages: Message[];
 }
 
 /**
@@ -114,7 +127,7 @@ export interface ContinuationState {
  */
 export function parseContinuationToken(token: ContinuationToken | undefined): ContinuationState {
   if (token === undefined) {
-    return { inputMessages: [], updates: [] };
+    return { inputMessages: [], updates: [], contextMessages: [] };
   }
   if (!isAgentContinuationToken(token)) {
     throw new ConfigurationError(
@@ -126,5 +139,6 @@ export function parseContinuationToken(token: ContinuationToken | undefined): Co
     innerToken: token.innerToken,
     inputMessages: deserializeMessages(token.inputMessages ?? []),
     updates: (token.responseUpdates ?? []).map(deserializeUpdate),
+    contextMessages: deserializeMessages(token.contextMessages ?? []),
   };
 }

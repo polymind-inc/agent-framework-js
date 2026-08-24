@@ -40,8 +40,10 @@ export interface ProviderAfterRunContext extends ProviderRunContext {
    *
    * Each message carries the source stamp of the provider that contributed it, so a history
    * provider can persist retrieved documents or replayed memories alongside the exchange — see
-   * {@link HistoryStoreOptions.storeContextMessages}. Empty during a resumed run, which re-enters
-   * after the context was already applied.
+   * {@link HistoryStoreOptions.storeContextMessages}. A resumed run re-enters after the context
+   * was already applied, so it injects nothing itself; when resuming a streamed suspension this
+   * carries what the suspended run injected (minus replayed history, which the store already
+   * holds), since that run deferred persistence to the one that completes the exchange.
    */
   readonly contextMessages: readonly Message[];
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatClient, ChatOptions, ChatResponseStream } from '../client/chat-client.js';
+import type { ContextProvider } from '../context/context-provider.js';
+import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError } from '../errors.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import { textContent } from '../types/content.js';
@@ -126,7 +128,11 @@ describe('token payload round trip', () => {
   });
 
   it('parses an absent token to empty state and rejects a foreign one', () => {
-    expect(parseContinuationToken(undefined)).toEqual({ inputMessages: [], updates: [] });
+    expect(parseContinuationToken(undefined)).toEqual({
+      inputMessages: [],
+      updates: [],
+      contextMessages: [],
+    });
     expect(() => parseContinuationToken({ responseId: 'raw' })).toThrow(ConfigurationError);
   });
 });
@@ -332,6 +338,47 @@ describe('continuation tokens', () => {
     expect(replayed.filter((text) => text.includes('one'))).toHaveLength(1);
     expect(replayed.filter((text) => text.includes('two'))).toHaveLength(1);
     expect(replayed.join('')).toContain('three');
+  });
+
+  it('stores the injected context of a suspended stream once it completes', async () => {
+    const client = new BackgroundClient([
+      { text: 'working ', token: { responseId: 'resp_1' } },
+      { text: 'done' },
+      { text: 'next turn' },
+    ]);
+    // Injects once, so the count below reads what the *store* holds rather than mixing in a
+    // fresh injection on the follow-up turn.
+    let injected = false;
+    const docs: ContextProvider = {
+      sourceId: 'docs',
+      beforeRun: (ctx) => {
+        if (!injected) {
+          injected = true;
+          ctx.extendMessages([{ role: 'user', contents: [textContent('retrieved doc')] }]);
+        }
+      },
+    };
+    const agent = new Agent({
+      client,
+      historyProvider: new InMemoryHistoryProvider({ storeContextMessages: true }),
+      contextProviders: [docs],
+    });
+    const session = agent.createSession();
+
+    let token: ContinuationToken | undefined;
+    for await (const update of agent.run('long job', { session, allowBackgroundResponses: true })) {
+      token = update.continuationToken ?? token;
+    }
+    await agent.run(undefined, { session, continuationToken: must(token) });
+
+    // The suspended run defers persistence to the completing run, so the injected context has to
+    // ride the continuation token alongside the input — otherwise it would never be stored.
+    await agent.run('and now?', { session });
+    const replayed = must(client.seen[2]).messages.flatMap((msg) =>
+      msg.contents.flatMap((c) => (c.type === 'text' ? [c.text] : [])),
+    );
+    expect(replayed.filter((text) => text === 'retrieved doc')).toHaveLength(1);
+    expect(replayed.filter((text) => text === 'long job')).toHaveLength(1);
   });
 
   it('skips history replay on resume but still persists the exchange', async () => {
