@@ -7,12 +7,12 @@ overrides:
   'nanoid@>=3.0.0 <3.3.18': 3.3.18
 catalog:
   '@types/node': ^24.0.0
-  '@vitest/coverage-v8': 4.1.10
-  openai: ^7.4.0
+  '@vitest/coverage-v8': 4.1.11
+  openai: ^7.5.0
   tsdown: ^0.22.14
   tsx: ^4.23.12
   typescript: ^7.0.2
-  vitest: ^4.1.10
+  vitest: ^4.1.11
 allowBuilds:
   esbuild: true
   # The optional OTLP/gRPC exporters pull protobufjs in; its postinstall only prints a banner
