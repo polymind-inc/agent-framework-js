@@ -57,6 +57,12 @@ export const GEN_AI = {
 
   /** Names the per-message event, alongside the role-specific event names below. */
   eventName: 'event.name',
+  /**
+   * The provider name as the v1.36.0 message events carry it. The events predate
+   * `gen_ai.provider.name` and kept the older key, so all four implementations stamp them with
+   * this one.
+   */
+  system: 'gen_ai.system',
 } as const;
 
 /**

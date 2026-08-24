@@ -1,7 +1,7 @@
 import type { Attributes, AttributeValue, Span } from '@opentelemetry/api';
 import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import type { Content } from '../types/content.js';
-import { textContent } from '../types/content.js';
+import { textContent, textOfContents } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { ChatResponse, ResponseBase } from '../types/response.js';
 import type { UsageDetails } from '../types/usage.js';
@@ -72,24 +72,18 @@ export function capturesContent(span: Span): boolean {
 }
 
 /**
- * Records prompts and completions, but only when the caller opted in.
+ * Records prompts and completions as span attributes, but only when the caller opted in.
  *
- * Two forms, as the conventions ask for: the whole list as one attribute, and one event per
- * message so a backend can render the exchange in order. Both are gated on the same opt-in,
- * because both carry message text.
+ * Attributes only: the per-message events are a separate concern ({@link addMessageEvents})
+ * emitted solely on the `chat` span, while this attribute form goes on both the `invoke_agent`
+ * and `chat` spans — the split the reference implementations settled on for their message
+ * telemetry.
  */
 export function setMessageContent(span: Span, key: string, messages: readonly Message[]): void {
   if (messages.length === 0 || !capturesContent(span)) {
     return;
   }
-  // Each message is serialized once; the aggregate attribute and the per-message events share the
-  // same strings, so a long transcript pays one serialization pass instead of two.
-  const serialized = messages.map(serializeMessageForSpan);
-  span.setAttribute(key, `[${serialized.join(',')}]`);
-  const output = key === GEN_AI.outputMessages;
-  messages.forEach((msg, index) => {
-    addMessageEvent(span, msg, output, serialized[index]);
-  });
+  span.setAttribute(key, serializeMessagesForSpan(messages));
 }
 
 /**
@@ -106,22 +100,203 @@ export function setSystemInstructions(span: Span, instructions: string | undefin
 }
 
 /**
- * Adds the per-message event for one message.
+ * How far apart consecutive message events are stamped, in milliseconds (1 microsecond).
  *
- * Python logs these through the logging module, which its OpenTelemetry handler turns into log
- * records; here they are span events, since the logs API is a separate package and the core
- * depends only on `@opentelemetry/api`. The event name and the serialized payload match, so the
- * two implementations produce the same shape.
+ * All events of one invocation share a single wall-clock read plus this fixed step, so their
+ * order survives backends that truncate or collapse timestamps for tightly-emitted events — the
+ * same spacing Python applies.
  */
-export function addMessageEvent(span: Span, message: Message, output: boolean, serialized?: string): void {
-  const name = output
-    ? GEN_AI_MESSAGE_EVENT.choice
-    : (GEN_AI_MESSAGE_EVENT[message.role as keyof typeof GEN_AI_MESSAGE_EVENT] ?? GEN_AI_MESSAGE_EVENT.user);
-  span.addEvent(name, {
-    [GEN_AI.eventName]: name,
-    ...(message.role === undefined ? {} : { role: message.role }),
-    content: `[${serialized ?? serializeMessageForSpan(message)}]`,
-  });
+const MESSAGE_EVENT_TIMESTAMP_STEP_MS = 0.001;
+
+/**
+ * The event body as the JSON string a span event can carry.
+ *
+ * A tool result or call arguments can hold values JSON cannot encode (circular references,
+ * bigints); one telemetry event is not worth failing the run for, and one bad value is not worth
+ * losing the rest of the body for, so only the offending values degrade — the granularity the
+ * Python emitter gets from its exporter stringifying unencodable values one at a time.
+ */
+function eventBodyJson(body: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(body);
+  } catch {
+    try {
+      const seen = new WeakSet<object>();
+      return JSON.stringify(body, (_key, value: unknown) => {
+        if (typeof value === 'bigint') {
+          return value.toString();
+        }
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            return '[circular]';
+          }
+          seen.add(value);
+        }
+        return value;
+      });
+    } catch {
+      return '"[unserializable]"';
+    }
+  }
+}
+
+/** The v1.36.0 `tool_calls` structures of a message's function calls. */
+function toolCallsOf(message: Message): Record<string, unknown>[] {
+  const calls: Record<string, unknown>[] = [];
+  for (const content of message.contents) {
+    if (content.type === 'function_call' && content.callId !== '' && content.name !== '') {
+      calls.push({
+        id: content.callId,
+        type: 'function',
+        function: { name: content.name, arguments: content.arguments },
+      });
+    }
+  }
+  return calls;
+}
+
+/**
+ * The v1.36.0 events for one input message.
+ *
+ * A tool message becomes one event per function result; other mapped roles become a single event
+ * whose body carries the text and, for the assistant, its tool calls. A role outside the map
+ * produces nothing, as in the reference implementations.
+ */
+function inputEventsOf(message: Message): Array<{ name: string; body: Record<string, unknown> }> {
+  if (message.role === 'tool') {
+    const events: Array<{ name: string; body: Record<string, unknown> }> = [];
+    for (const content of message.contents) {
+      if (content.type === 'function_result' && content.callId !== '') {
+        events.push({
+          name: GEN_AI_MESSAGE_EVENT.tool,
+          body: { id: content.callId, content: content.result ?? '' },
+        });
+      }
+    }
+    return events;
+  }
+  const name =
+    message.role === 'system'
+      ? GEN_AI_MESSAGE_EVENT.system
+      : message.role === 'user'
+        ? GEN_AI_MESSAGE_EVENT.user
+        : message.role === 'assistant'
+          ? GEN_AI_MESSAGE_EVENT.assistant
+          : undefined;
+  if (name === undefined) {
+    return [];
+  }
+  const body: Record<string, unknown> = {};
+  const text = textOfContents(message.contents);
+  if (text !== '') {
+    body.content = text;
+  }
+  if (message.role === 'assistant') {
+    const toolCalls = toolCallsOf(message);
+    if (toolCalls.length > 0) {
+      body.tool_calls = toolCalls;
+    }
+  }
+  return [{ name, body }];
+}
+
+/** The v1.36.0 `gen_ai.choice` body for one response message. */
+function choiceBody(message: Message, index: number, finishReason: string): Record<string, unknown> {
+  const choiceMessage: Record<string, unknown> = {};
+  const text = textOfContents(message.contents);
+  if (text !== '') {
+    choiceMessage.content = text;
+  }
+  if (message.role !== 'assistant') {
+    choiceMessage.role = message.role;
+  }
+  const toolCalls = toolCallsOf(message);
+  if (toolCalls.length > 0) {
+    choiceMessage.tool_calls = toolCalls;
+  }
+  return { index, finish_reason: finishReason, message: choiceMessage };
+}
+
+/** What {@link addMessageEvents} emits. */
+export interface MessageEventsInit {
+  /** Stamped on every event as `gen_ai.system`, the key the v1.36.0 events carry it under. */
+  providerName: string;
+  messages: readonly Message[];
+  /** Emitted ahead of the input messages as a `gen_ai.system.message` event. Input side only. */
+  instructions?: string;
+  /** Marks the response side: each message becomes a `gen_ai.choice` event. */
+  output?: boolean;
+  /** Why the response stopped. Without it the output side emits nothing — a choice event's body requires it. */
+  finishReason?: string;
+}
+
+/**
+ * Emits the per-message GenAI events (v1.36.0 shapes) for one model invocation.
+ *
+ * These belong on the `chat` span only: the reference implementations emit message events for the
+ * model invocation and leave the `invoke_agent` span with attribute-form content, so emitting here
+ * too would double-report every exchange.
+ *
+ * Python emits these through the OpenTelemetry logs API with a structured body; here they are
+ * span events, since the logs API is a separate package and the core depends only on
+ * `@opentelemetry/api`. A span event cannot carry a structured body, so the body rides the `body`
+ * attribute as JSON — same shape, one parse away — and `event.name` is kept for backends that
+ * lift span events into log records.
+ */
+export function addMessageEvents(span: Span, init: MessageEventsInit): void {
+  if (!capturesContent(span)) {
+    return;
+  }
+  // A sub-millisecond wall-clock read: `Date.now()` has millisecond resolution, so the input
+  // events and the choice events of one fast invocation would collide on the same base and the
+  // choice events would stamp *earlier* than the stepped input events.
+  let timestamp = performance.timeOrigin + performance.now();
+  const emit = (name: string, body: Record<string, unknown>): void => {
+    span.addEvent(
+      name,
+      { [GEN_AI.eventName]: name, [GEN_AI.system]: init.providerName, body: eventBodyJson(body) },
+      timestamp,
+    );
+    timestamp += MESSAGE_EVENT_TIMESTAMP_STEP_MS;
+  };
+  if (init.output === true) {
+    const finishReason = init.finishReason;
+    if (finishReason === undefined || finishReason === '') {
+      return;
+    }
+    init.messages.forEach((message, index) => {
+      emit(GEN_AI_MESSAGE_EVENT.choice, choiceBody(message, index, finishReason));
+    });
+    return;
+  }
+  if (init.instructions !== undefined && init.instructions !== '') {
+    emit(GEN_AI_MESSAGE_EVENT.system, { content: init.instructions });
+  }
+  for (const message of init.messages) {
+    for (const event of inputEventsOf(message)) {
+      emit(event.name, event.body);
+    }
+  }
+}
+
+/**
+ * The finish reason a response reports, falling back to its raw representation.
+ *
+ * Some providers only populate `finish_reason` on the wire object rather than the normalized
+ * response field; the fallback keeps their responses from silently losing choice events.
+ */
+export function responseFinishReason(response: ResponseBase<unknown>): string | undefined {
+  if (response.finishReason !== undefined) {
+    return response.finishReason;
+  }
+  const raw: unknown = response.rawRepresentation;
+  if (typeof raw === 'object' && raw !== null) {
+    const fallback = (raw as { finish_reason?: unknown }).finish_reason;
+    if (typeof fallback === 'string') {
+      return fallback;
+    }
+  }
+  return undefined;
 }
 
 /** Marks a span failed and records the error type, matching the GenAI conventions. */
