@@ -112,14 +112,31 @@ const MESSAGE_EVENT_TIMESTAMP_STEP_MS = 0.001;
  * The event body as the JSON string a span event can carry.
  *
  * A tool result or call arguments can hold values JSON cannot encode (circular references,
- * bigints); one telemetry event is not worth failing the run for, so the body degrades to a
- * marker instead.
+ * bigints); one telemetry event is not worth failing the run for, and one bad value is not worth
+ * losing the rest of the body for, so only the offending values degrade — the granularity the
+ * Python emitter gets from its exporter stringifying unencodable values one at a time.
  */
 function eventBodyJson(body: Record<string, unknown>): string {
   try {
     return JSON.stringify(body);
   } catch {
-    return '"[unserializable]"';
+    try {
+      const seen = new WeakSet<object>();
+      return JSON.stringify(body, (_key, value: unknown) => {
+        if (typeof value === 'bigint') {
+          return value.toString();
+        }
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            return '[circular]';
+          }
+          seen.add(value);
+        }
+        return value;
+      });
+    } catch {
+      return '"[unserializable]"';
+    }
   }
 }
 

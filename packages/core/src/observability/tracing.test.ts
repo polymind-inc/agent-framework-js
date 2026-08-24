@@ -16,7 +16,7 @@ import { message } from '../types/message.js';
 import { agentResponse } from '../types/response.js';
 import { GEN_AI } from './attributes.js';
 import { configureObservability, getTracer } from './settings.js';
-import { responseFinishReason, startAgentRunSpan } from './tracing.js';
+import { addMessageEvents, responseFinishReason, startAgentRunSpan } from './tracing.js';
 
 const exporter = new InMemorySpanExporter();
 /** Names of spans that were *started*, whether or not they were ended. */
@@ -555,6 +555,35 @@ describe('v1.36.0 message events', () => {
       const [sec, ns] = must(chat.events[i]).time;
       expect(sec > prevSec || (sec === prevSec && ns > prevNs)).toBe(true);
     }
+  });
+
+  it('degrades only the values JSON cannot encode, not the whole body', () => {
+    configureObservability({ captureMessageContent: true });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const span = getTracer().startSpan('chat test');
+    addMessageEvents(span, {
+      providerName: 'mock',
+      messages: [
+        {
+          role: 'assistant',
+          contents: [
+            textContent('calling'),
+            { type: 'function_call', callId: 'c1', name: 'f', arguments: { big: 1n, loop: cyclic } },
+          ],
+        },
+      ],
+    });
+    span.end();
+
+    // A bigint or a cycle inside caller-built arguments must not cost the event its text and
+    // call name; only the offending values degrade.
+    const body = JSON.parse(String(must(byName('chat test')).events[0]?.attributes?.body));
+    expect(body.content).toBe('calling');
+    expect(body.tool_calls[0].id).toBe('c1');
+    expect(body.tool_calls[0].function.name).toBe('f');
+    expect(body.tool_calls[0].function.arguments.big).toBe('1');
+    expect(body.tool_calls[0].function.arguments.loop).toEqual({ self: '[circular]' });
   });
 
   it('falls back to the raw representation for the finish reason', () => {
