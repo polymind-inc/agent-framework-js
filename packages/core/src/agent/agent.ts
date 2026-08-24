@@ -39,7 +39,7 @@ import { createResponseStream } from '../streaming/response-stream.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
 import type { FunctionTool, Tool } from '../tools/tool.js';
 import type { AgentRunInput, Message } from '../types/message.js';
-import { normalizeInput } from '../types/message.js';
+import { normalizeInput, notSourceTypes } from '../types/message.js';
 import type {
   AgentResponse,
   AgentResponseUpdate,
@@ -472,6 +472,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     let injectedMessages: readonly Message[] = [];
     let afterRunDone = false;
     let activeSession: AgentSession | undefined;
+    // Whether the caller consumed this run as a stream; a streaming run's continuation token
+    // replays the whole exchange, which decides who persists it (see #notifyProvidersAfterRun).
+    let streamedRun = false;
     // The `invoke_agent` span covers the whole run, including the tool loop and history
     // persistence, so it is started in `start` and closed by hand rather than around a call.
     let runSpan: Span | undefined;
@@ -495,10 +498,18 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         return;
       }
       afterRunDone = true;
-      await this.#notifyProvidersAfterRun(providerContexts, injectedMessages, activeSession, response, error);
+      await this.#notifyProvidersAfterRun(
+        providerContexts,
+        injectedMessages,
+        activeSession,
+        response,
+        error,
+        streamedRun,
+      );
     };
 
     const start = async (ctx: { stream: boolean }): Promise<AsyncIterable<AgentResponseUpdate>> => {
+      streamedRun = ctx.stream;
       const session = presetSession ?? options?.session ?? this.createSession();
       activeSession = session;
       this.#rejectHistoryConflict(session);
@@ -513,7 +524,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         }
       }
 
-      injectedMessages = [...prepared.accumulator.messages];
+      // A resumed run injected nothing itself; what the suspended run injected rides its token,
+      // so the completing run can still hand it to the providers that persist it.
+      injectedMessages = resuming ? continuation.contextMessages : [...prepared.accumulator.messages];
       const messages: Message[] = resuming ? [] : [...prepared.accumulator.messages, ...inputMessages];
       const chatOptions = this.#mergeOptions(options, prepared.accumulator, session, continuation.innerToken);
       const client = this.#approvalClient(session, functionMiddleware);
@@ -530,6 +543,9 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       const mapUpdate = this.#createUpdateMapper({
         session,
         inputMessages,
+        // Replayed history stays out of the token: the store already holds it, and a long
+        // transcript would dwarf everything else the token carries.
+        contextMessages: notSourceTypes('ChatHistory')(injectedMessages),
         seen,
         wantsTokenReplay: ctx.stream,
       });
@@ -688,13 +704,20 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     session: AgentSession | undefined,
     response: AgentResponse<unknown> | undefined,
     error: unknown,
+    streamed: boolean,
   ): Promise<void> {
     const serviceOwnsHistory = session?.serviceSessionId !== undefined;
+    // A streaming run that ended suspended does not persist: its continuation token replays the
+    // caller's input and every update already produced, so the run that finally completes stores
+    // the whole exchange in one append — storing the suspended half here too would hand the next
+    // turn the question and the partial answer twice. An awaited run's token carries nothing, so
+    // an awaited suspension still stores its own half and the resumed run appends only its tail.
+    const suspendedStream = streamed && response?.continuationToken !== undefined;
     for (const { provider, ctx } of providerContexts) {
       if (provider.afterRun === undefined) {
         continue;
       }
-      if (serviceOwnsHistory && provider === this.historyProvider) {
+      if ((serviceOwnsHistory || suspendedStream) && provider === this.historyProvider) {
         continue;
       }
       const afterCtx: ProviderAfterRunContext = {
@@ -745,12 +768,14 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
   #createUpdateMapper(run: {
     session: AgentSession;
     inputMessages: Message[];
+    /** What this run's providers injected, minus replayed history; a streaming token carries it. */
+    contextMessages: readonly Message[];
     /** Shared with the caller; every mapped update is appended so a token can carry them. */
     seen: AgentResponseUpdate[];
     /** `true` for a streaming run, whose token must replay input and updates on resume. */
     wantsTokenReplay: boolean;
   }): (update: ChatResponseUpdate) => AgentResponseUpdate {
-    const { session, inputMessages, seen, wantsTokenReplay } = run;
+    const { session, inputMessages, contextMessages, seen, wantsTokenReplay } = run;
     const agentName = this.name;
     const agentId = this.id;
 
@@ -795,13 +820,16 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       });
       seen.push(mapped);
       if (mapped.continuationToken !== undefined) {
-        // Both halves ride on the same gate (Go `agent.go`): an awaited run folds its own
-        // updates *and* has already persisted its own input, so carrying either in the token
-        // makes the resumed run store the exchange a second time.
+        // Both halves ride on the same gate: an awaited run folds its own updates *and* has
+        // already persisted its own input, so carrying either in the token makes the resumed run
+        // store the exchange a second time. A streaming run is the mirror image — its token
+        // carries everything, so the suspended run persists nothing and the completing run
+        // stores the whole exchange (see #notifyProvidersAfterRun).
         mapped.continuationToken = wrapContinuationToken(
           mapped.continuationToken,
           wantsTokenReplay ? inputMessages : [],
           wantsTokenReplay ? seen : [],
+          wantsTokenReplay ? contextMessages : [],
         );
       }
       return mapped;

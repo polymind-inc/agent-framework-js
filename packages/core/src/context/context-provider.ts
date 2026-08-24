@@ -40,8 +40,10 @@ export interface ProviderAfterRunContext extends ProviderRunContext {
    *
    * Each message carries the source stamp of the provider that contributed it, so a history
    * provider can persist retrieved documents or replayed memories alongside the exchange — see
-   * {@link HistoryStoreOptions.storeContextMessages}. Empty during a resumed run, which re-enters
-   * after the context was already applied.
+   * {@link HistoryStoreOptions.storeContextMessages}. A resumed run re-enters after the context
+   * was already applied, so it injects nothing itself; when resuming a streamed suspension this
+   * carries what the suspended run injected (minus replayed history, which the store already
+   * holds), since that run deferred persistence to the one that completes the exchange.
    */
   readonly contextMessages: readonly Message[];
 }
@@ -94,6 +96,10 @@ export function sourceTypeOf(provider: ContextProvider): MessageSourceType {
  *
  * - `saveMessages` is handed **only the messages new to that turn**. The transcript is never
  *   re-sent, so an implementation appends what it is given and never has to diff or de-duplicate.
+ *   A background turn split across a suspension and a resume still appends once: a streaming run
+ *   that ends suspended stores nothing (its continuation token replays the whole exchange, and
+ *   the run that completes stores it), while an awaited suspension stores its own half and the
+ *   resumed run appends only its tail.
  * - It is called once per run, not once per round of the tool loop, so one turn's function calls
  *   and their results arrive together with the answer they produced.
  * - `getMessages` returns the transcript oldest first, and whatever it returns is replayed ahead
