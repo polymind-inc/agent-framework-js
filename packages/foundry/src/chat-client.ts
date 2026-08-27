@@ -1,21 +1,13 @@
-import type { TokenCredential } from '@azure/identity';
-import { DefaultAzureCredential } from '@azure/identity';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
 import OpenAI from 'openai';
-import { tokenProvider } from './credential.js';
+import type { FoundryProject } from './project.js';
 import type { FoundryTarget } from './target.js';
-import { FOUNDRY_SCOPE, isModelDeployment, resolveEndpoint } from './target.js';
+import { isModelTarget, resolveEndpoint } from './target.js';
 
 /** Options shared by both construction paths for {@link FoundryChatClient}. */
 interface FoundryChatClientConfigBase {
   /** Which agent to talk to: a model deployment in the project, or an existing server agent. */
   target: FoundryTarget;
-  /** Defaults to {@link DefaultAzureCredential}. */
-  credential?: TokenCredential;
-  /** Entra scope for the token. Defaults to `https://ai.azure.com/.default`. */
-  scope?: string;
-  /** A preconfigured SDK client. Supplying it bypasses endpoint construction and `credential`. */
-  client?: OpenAI;
   /** Extra headers on every request, for example `x-client-*` correlation headers. */
   defaultHeaders?: Record<string, string>;
   /** Replaces the SDK's `fetch`, for proxies, custom agents, or tests. */
@@ -26,15 +18,14 @@ interface FoundryChatClientConfigBase {
 export type FoundryChatClientConfig = FoundryChatClientConfigBase &
   (
     | {
-        /** A preconfigured SDK client. Its endpoint is used directly. */
+        /** A preconfigured SDK client. Its endpoint and authentication are used directly. */
         client: OpenAI;
-        /** Ignored when `client` is supplied; retained for source compatibility. */
-        projectEndpoint?: string;
+        project?: undefined;
       }
     | {
         client?: undefined;
-        /** The Foundry project endpoint, for example `https://my-project.services.ai.azure.com/api/projects/p`. */
-        projectEndpoint: string;
+        /** The project to talk to: the endpoint requests go to and the identity they carry. */
+        project: FoundryProject;
       }
   );
 
@@ -47,25 +38,21 @@ export type FoundryChatClientConfig = FoundryChatClientConfigBase &
  * tools, streaming, structured output — is the OpenAI one.
  *
  * ```ts
+ * const project = new FoundryProject(process.env.FOUNDRY_PROJECT_ENDPOINT!, new DefaultAzureCredential());
+ *
  * // The framework's agent, running on a model deployed in the project.
- * const client = new FoundryChatClient({
- *   projectEndpoint: process.env.FOUNDRY_PROJECT_ENDPOINT!,
- *   target: { modelDeployment: 'gpt-4o' },
- * });
+ * const client = new FoundryChatClient({ project, target: { model: 'gpt-4o' } });
  *
  * // An agent that already exists in the project; the service owns its instructions and model.
- * const server = new FoundryChatClient({
- *   projectEndpoint: process.env.FOUNDRY_PROJECT_ENDPOINT!,
- *   target: { serverAgent: 'support-bot' },
- * });
+ * const server = new FoundryChatClient({ project, target: { serverAgent: 'support-bot' } });
  * ```
  *
  * ## Security considerations
  *
  * - **The token is scoped to the project, not to a conversation.** Anything that can call this
  *   client can reach every model and tool the project's identity can reach.
- * - **`projectEndpoint` decides where the bearer token goes.** Treat it as trusted configuration;
- *   never build it from user input.
+ * - **The project's endpoint decides where the bearer token goes.** Treat it as trusted
+ *   configuration; never build it from user input.
  * - The OpenAI notes apply unchanged: messages leave the process, and `store` is pass-through.
  */
 export class FoundryChatClient extends OpenAIChatClient {
@@ -75,22 +62,20 @@ export class FoundryChatClient extends OpenAIChatClient {
     // A server agent is addressed by its endpoint, and the agent definition picks the model, so
     // there is nothing to name here: .NET removes `$.model` from the request and Go leaves it
     // unset. Sending a placeholder would reach the wire, `metadata.modelId` and telemetry alike.
-    const model = isModelDeployment(config.target) ? config.target.modelDeployment : undefined;
-    const endpoint =
-      config.client === undefined ? resolveEndpoint(config.projectEndpoint, config.target) : undefined;
+    const model = isModelTarget(config.target) ? config.target.model : undefined;
+    const project = config.client === undefined ? config.project : undefined;
+    const endpoint = project === undefined ? undefined : resolveEndpoint(project.endpoint, config.target);
+    const fetch = config.fetch ?? project?.fetch;
 
     const client =
       config.client ??
       new OpenAI({
         baseURL: (endpoint as { baseURL: string }).baseURL,
         // The SDK calls this before every request, so rotation is handled for us.
-        apiKey: tokenProvider(
-          config.credential ?? new DefaultAzureCredential(),
-          config.scope ?? FOUNDRY_SCOPE,
-        ),
+        apiKey: () => (project as FoundryProject).getToken(),
         ...(endpoint?.defaultQuery === undefined ? {} : { defaultQuery: endpoint.defaultQuery }),
         ...(config.defaultHeaders === undefined ? {} : { defaultHeaders: config.defaultHeaders }),
-        ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+        ...(fetch === undefined ? {} : { fetch }),
       });
 
     super({

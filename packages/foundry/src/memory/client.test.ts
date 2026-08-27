@@ -1,5 +1,6 @@
 import type { AccessToken, TokenCredential } from '@azure/identity';
 import { describe, expect, it } from 'vitest';
+import { FoundryProject } from '../project.js';
 import { FoundryMemoryError, MemoryStoreClient } from './client.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
@@ -45,7 +46,7 @@ function client(replies: Array<{ status?: number; body?: unknown; text?: string 
   }) as typeof globalThis.fetch;
 
   return {
-    client: new MemoryStoreClient({ projectEndpoint: PROJECT, credential, fetch: fetchStub }),
+    client: new MemoryStoreClient({ project: new FoundryProject(PROJECT, credential), fetch: fetchStub }),
     calls,
   };
 }
@@ -204,8 +205,7 @@ describe('MemoryStoreClient', () => {
     const controller = new AbortController();
     controller.abort();
     const memory = new MemoryStoreClient({
-      projectEndpoint: PROJECT,
-      credential,
+      project: new FoundryProject(PROJECT, credential),
       fetch: (async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
         init?.signal?.throwIfAborted();
         return new Response('{}');

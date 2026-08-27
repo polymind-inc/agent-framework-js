@@ -11,6 +11,7 @@
  * See `integration.test.ts` for the environment variables.
  */
 
+import { DefaultAzureCredential } from '@azure/identity';
 import { metrics } from '@opentelemetry/api';
 import {
   AggregationTemporality,
@@ -32,6 +33,7 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
+import { FoundryProject } from './project.js';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
 const modelDeployment =
@@ -45,7 +47,10 @@ function must<T>(value: T | null | undefined): T {
 }
 
 const deploymentClient = (): FoundryChatClient =>
-  new FoundryChatClient({ projectEndpoint: must(projectEndpoint), target: { modelDeployment } });
+  new FoundryChatClient({
+    project: new FoundryProject(must(projectEndpoint), new DefaultAzureCredential()),
+    target: { model: modelDeployment },
+  });
 
 /** A weather tool, the smallest thing that makes a real model call a function. */
 const getWeather = tool({

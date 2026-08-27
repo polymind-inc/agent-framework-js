@@ -1,3 +1,4 @@
+import { DefaultAzureCredential } from '@azure/identity';
 import type { ResponseProvider, ResponsesServerConfig } from '@polymind-inc/agent-framework-agentserver';
 import {
   FileResponseProvider,
@@ -6,6 +7,7 @@ import {
   projectEndpoint,
   ResponsesServer,
 } from '@polymind-inc/agent-framework-agentserver';
+import { FoundryProject } from '../project.js';
 import type { FoundryHandlerConfig } from './handler.js';
 import { createFoundryHandler } from './handler.js';
 import { FoundryResponseStore } from './response-store.js';
@@ -46,7 +48,14 @@ export function defaultStore(hosted: boolean): ResponseProvider {
     // A local run is self-contained; nothing should outlive the process.
     return new InMemoryResponseProvider();
   }
-  return projectEndpoint() === undefined ? new FileResponseProvider() : new FoundryResponseStore();
+  const endpoint = projectEndpoint();
+  if (endpoint === undefined) {
+    return new FileResponseProvider();
+  }
+  // The platform injects the endpoint and the managed identity, so this is the one place a
+  // project is assembled from the environment rather than passed in — the same default the
+  // Python agent server's Foundry storage applies when no credential is supplied.
+  return new FoundryResponseStore({ project: new FoundryProject(endpoint, new DefaultAzureCredential()) });
 }
 
 /**
@@ -54,7 +63,10 @@ export function defaultStore(hosted: boolean): ResponseProvider {
  *
  * ```ts
  * const agent = new Agent({
- *   client: new FoundryChatClient({ projectEndpoint, target: { modelDeployment } }),
+ *   client: new FoundryChatClient({
+ *     project: new FoundryProject(process.env.FOUNDRY_PROJECT_ENDPOINT!, new DefaultAzureCredential()),
+ *     target: { model },
+ *   }),
  *   instructions: 'You are a helpful assistant.',
  *   // The hosting infrastructure owns the transcript, so the provider must not store it too.
  *   defaultOptions: { store: false },

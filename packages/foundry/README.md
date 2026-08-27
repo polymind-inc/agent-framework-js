@@ -7,8 +7,10 @@
 > works and resolves to the same modules, but examples and documentation import through the main
 > package.
 
-Microsoft Foundry provider for the Agent Framework: `FoundryChatClient` talks to a Foundry
-project (model deployments or server agents) with Microsoft Entra authentication,
+Microsoft Foundry provider for the Agent Framework: `FoundryProject` names the project — the
+endpoint requests go to and the Microsoft Entra identity they carry — and is shared by every
+component here, the way an `AIProjectClient` is shared in the Azure SDKs. `FoundryChatClient`
+talks to the project (model deployments or server agents),
 `FoundryMemoryProvider` gives an agent persistent memory backed by a Foundry Memory Store, and the
 `@polymind-inc/agent-framework-foundry/hosting` subpath publishes an `Agent` as a Foundry Hosted
 Agent — `ResponsesHostServer` over the Responses container protocol, `InvocationsHostServer` over

@@ -30,6 +30,7 @@ import {
 import type { MockTurn } from '@polymind-inc/agent-framework-core/testing';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it } from 'vitest';
+import { FoundryProject } from '../project.js';
 import { FileApprovalStorage, InMemoryApprovalStorage } from './approval-storage.js';
 import { consentRequestsFromMessage, ToolboxConsentRequiredError } from './consent.js';
 import { reportConsent as reportToolboxConsent } from './consent-channel.js';
@@ -1644,10 +1645,9 @@ describe('background execution with the Foundry store', () => {
     const service = storageServiceDouble(options);
     const client = new MockChatClient(turns);
     const store = new FoundryResponseStore({
-      projectEndpoint: 'https://my-resource.services.ai.azure.com/api/projects/my-project',
-      credential: {
+      project: new FoundryProject('https://my-resource.services.ai.azure.com/api/projects/my-project', {
         getToken: async () => ({ token: 'mi-token', expiresOnTimestamp: Date.now() + 3_600_000 }),
-      },
+      }),
       fetch: service.fetch,
       replayRoot: await mkdtemp(join(tmpdir(), 'afjs-fdry-')),
       retry: { baseDelayMs: 0 },

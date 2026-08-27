@@ -9,8 +9,9 @@ export const FOUNDRY_API_VERSION = 'v1';
 /**
  * Which Foundry agent to talk to.
  *
- * - `modelDeployment` runs the framework's own agent against a model deployed in the project, over
- *   the project's OpenAI-compatible endpoint. Instructions, tools and the loop stay on this side.
+ * - `model` names a model deployment in the project and runs the framework's own agent against
+ *   it, over the project's OpenAI-compatible endpoint. Instructions, tools and the loop stay on
+ *   this side.
  * - `serverAgent` calls an agent that already exists in the project. The service owns its
  *   instructions and model, so passing them from here has no effect.
  *
@@ -19,20 +20,16 @@ export const FOUNDRY_API_VERSION = 'v1';
  * version field could only ever be ignored — and a caller who set one would reasonably believe it
  * pinned something.
  */
-export type FoundryTarget =
-  | { modelDeployment: string; serverAgent?: never }
-  | { serverAgent: string; modelDeployment?: never };
+export type FoundryTarget = { model: string; serverAgent?: never } | { serverAgent: string; model?: never };
 
 /** Narrows a {@link FoundryTarget} to the model-deployment case. */
-export function isModelDeployment(target: FoundryTarget): target is { modelDeployment: string } {
-  const hasModelDeployment = typeof target.modelDeployment === 'string';
+export function isModelTarget(target: FoundryTarget): target is { model: string } {
+  const hasModel = typeof target.model === 'string';
   const hasServerAgent = typeof target.serverAgent === 'string';
-  if (hasModelDeployment === hasServerAgent) {
-    throw new ConfigurationError(
-      'Foundry target must specify exactly one of modelDeployment or serverAgent.',
-    );
+  if (hasModel === hasServerAgent) {
+    throw new ConfigurationError('Foundry target must specify exactly one of model or serverAgent.');
   }
-  return hasModelDeployment;
+  return hasModel;
 }
 
 /**
@@ -76,9 +73,9 @@ export interface FoundryEndpoint {
  */
 export function resolveEndpoint(projectEndpoint: string, target: FoundryTarget): FoundryEndpoint {
   const project = normalizeProjectEndpoint(projectEndpoint);
-  if (isModelDeployment(target)) {
-    if (target.modelDeployment.trim() === '') {
-      throw new ConfigurationError('modelDeployment must be a non-empty deployment name.');
+  if (isModelTarget(target)) {
+    if (target.model.trim() === '') {
+      throw new ConfigurationError('model must be a non-empty deployment name.');
     }
     return { baseURL: `${project}/openai/v1/` };
   }

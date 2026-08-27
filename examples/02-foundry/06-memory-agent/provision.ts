@@ -10,7 +10,8 @@
  * clean slate while trying the sample out.
  */
 
-import { FoundryMemoryProvider } from '@polymind-inc/agent-framework/foundry';
+import { DefaultAzureCredential } from '@azure/identity';
+import { FoundryMemoryProvider, FoundryProject } from '@polymind-inc/agent-framework/foundry';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
 if (projectEndpoint === undefined) {
@@ -26,7 +27,7 @@ if (memoryStoreName === undefined) {
 const resetIndex = process.argv.indexOf('--reset');
 const resetUser = resetIndex === -1 ? undefined : process.argv[resetIndex + 1];
 const memory = new FoundryMemoryProvider({
-  projectEndpoint,
+  project: new FoundryProject(projectEndpoint, new DefaultAzureCredential()),
   memoryStoreName,
   scope: resetUser ?? 'provisioning',
 });

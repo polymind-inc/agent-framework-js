@@ -3,7 +3,7 @@ import { ConfigurationError, textContent } from '@polymind-inc/agent-framework-c
 import type OpenAI from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
-import { tokenProvider } from './credential.js';
+import { FoundryProject } from './project.js';
 import { normalizeProjectEndpoint, resolveEndpoint } from './target.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
@@ -20,9 +20,13 @@ function fakeCredential(ttlMs = 60 * 60 * 1000): TokenCredential & { calls: numb
   return credential;
 }
 
+function fakeProject(): FoundryProject {
+  return new FoundryProject(PROJECT, fakeCredential());
+}
+
 describe('Foundry endpoint construction', () => {
   it('builds the project OpenAI endpoint for a model deployment', () => {
-    expect(resolveEndpoint(PROJECT, { modelDeployment: 'gpt-4o' })).toEqual({
+    expect(resolveEndpoint(PROJECT, { model: 'gpt-4o' })).toEqual({
       baseURL: `${PROJECT}/openai/v1/`,
     });
   });
@@ -47,68 +51,26 @@ describe('Foundry endpoint construction', () => {
   it('rejects an endpoint that is empty, relative, or an empty target', () => {
     expect(() => normalizeProjectEndpoint('  ')).toThrow(ConfigurationError);
     expect(() => normalizeProjectEndpoint('/api/projects/p')).toThrow(ConfigurationError);
-    expect(() => resolveEndpoint(PROJECT, { modelDeployment: ' ' })).toThrow(ConfigurationError);
+    expect(() => resolveEndpoint(PROJECT, { model: ' ' })).toThrow(ConfigurationError);
     expect(() => resolveEndpoint(PROJECT, { serverAgent: '' })).toThrow(ConfigurationError);
   });
 
   it('rejects a target with both selectors at runtime', () => {
-    expect(() =>
-      resolveEndpoint(PROJECT, { modelDeployment: 'gpt-4o', serverAgent: 'support-bot' } as never),
-    ).toThrow(ConfigurationError);
-  });
-});
-
-describe('Foundry token provider', () => {
-  it('reuses a live token instead of calling the credential per request', async () => {
-    const credential = fakeCredential();
-    const provider = tokenProvider(credential);
-
-    expect(await provider()).toBe('token-1');
-    expect(await provider()).toBe('token-1');
-    expect(credential.calls).toBe(1);
-  });
-
-  it('refreshes a token that is about to expire', async () => {
-    // Inside the refresh margin, so the cached token is never considered usable.
-    const credential = fakeCredential(60 * 1000);
-    const provider = tokenProvider(credential);
-
-    expect(await provider()).toBe('token-1');
-    expect(await provider()).toBe('token-2');
-  });
-
-  it('shares one refresh between concurrent requests', async () => {
-    const credential = fakeCredential();
-    const provider = tokenProvider(credential);
-
-    const tokens = await Promise.all([provider(), provider(), provider()]);
-
-    expect(tokens).toEqual(['token-1', 'token-1', 'token-1']);
-    expect(credential.calls).toBe(1);
-  });
-
-  it('requests the Foundry data-plane scope by default', async () => {
-    const getToken = vi.fn(async () => ({ token: 't', expiresOnTimestamp: Date.now() + 3_600_000 }));
-    await tokenProvider({ getToken } as unknown as TokenCredential)();
-
-    expect(getToken).toHaveBeenCalledWith('https://ai.azure.com/.default');
-  });
-
-  it('reports a credential that cannot produce a token', async () => {
-    const provider = tokenProvider({ getToken: async () => null } as unknown as TokenCredential);
-    await expect(provider()).rejects.toThrow(/Could not acquire a Microsoft Entra token/);
+    expect(() => resolveEndpoint(PROJECT, { model: 'gpt-4o', serverAgent: 'support-bot' } as never)).toThrow(
+      ConfigurationError,
+    );
   });
 });
 
 describe('FoundryChatClient', () => {
-  it('uses a preconfigured SDK endpoint without requiring or resolving projectEndpoint', () => {
+  it('uses a preconfigured SDK endpoint without requiring or resolving a project', () => {
     const sdk = {
       responses: { create: vi.fn() },
       baseURL: 'https://custom.example/v1',
     } as unknown as OpenAI;
 
     const client = new FoundryChatClient({
-      target: { modelDeployment: 'gpt-4o' },
+      target: { model: 'gpt-4o' },
       client: sdk,
     });
 
@@ -118,9 +80,8 @@ describe('FoundryChatClient', () => {
 
   it('points at the right endpoint and reports the Foundry provider', () => {
     const deployment = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
-      credential: fakeCredential(),
+      project: fakeProject(),
+      target: { model: 'gpt-4o' },
     });
 
     expect(deployment.baseURL).toBe(`${PROJECT}/openai/v1/`);
@@ -133,9 +94,8 @@ describe('FoundryChatClient', () => {
 
   it('declares conv_ conversation ids stable for the tool loop, like the inner client', () => {
     const stable = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
-      credential: fakeCredential(),
+      project: fakeProject(),
+      target: { model: 'gpt-4o' },
     }).metadata.stableConversationId;
     expect(stable).toBeDefined();
     expect(stable?.('conv_123')).toBe(true);
@@ -144,9 +104,8 @@ describe('FoundryChatClient', () => {
 
   it('exposes the SDK client and the hosted tool declarations of the inner client', () => {
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
-      credential: fakeCredential(),
+      project: fakeProject(),
+      target: { model: 'gpt-4o' },
     });
 
     // Thin delegations, but public API: each must reach the inner OpenAI client rather than
@@ -169,9 +128,8 @@ describe('FoundryChatClient', () => {
     // `$.model` from the request and Go leaves it unset; reporting a made-up name here would put
     // it on the wire, in `metadata.modelId`, and in every telemetry span.
     const server = new FoundryChatClient({
-      projectEndpoint: PROJECT,
+      project: fakeProject(),
       target: { serverAgent: 'support-bot' },
-      credential: fakeCredential(),
     });
 
     expect(server.baseURL).toBe(`${PROJECT}/agents/support-bot/endpoint/protocols/openai/`);
@@ -180,7 +138,6 @@ describe('FoundryChatClient', () => {
 
   it('omits model from a server agent request body', () => {
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
       target: { serverAgent: 'support-bot' },
       client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
     });
@@ -196,8 +153,7 @@ describe('FoundryChatClient', () => {
   it('reuses the OpenAI request mapping unchanged', () => {
     const create = vi.fn();
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
+      target: { model: 'gpt-4o' },
       client: { responses: { create }, baseURL: PROJECT } as unknown as OpenAI,
     });
 
@@ -213,8 +169,7 @@ describe('FoundryChatClient', () => {
   // request that asks for it. Asking implicitly would make those deployments unreachable.
   it('does not request encrypted reasoning by default', () => {
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
+      target: { model: 'gpt-4o' },
       client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
     });
 
@@ -225,8 +180,7 @@ describe('FoundryChatClient', () => {
 
   it('preserves an explicit encrypted reasoning opt-in', () => {
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
+      target: { model: 'gpt-4o' },
       client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
     });
 
@@ -241,8 +195,7 @@ describe('FoundryChatClient', () => {
   // typed list wholesale — would drop the opt-in and fail the stateless replay it was there for.
   it('preserves an explicit opt-in that additionalProperties replaced', () => {
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
+      target: { model: 'gpt-4o' },
       client: { responses: { create: vi.fn() }, baseURL: PROJECT } as unknown as OpenAI,
     });
 
@@ -258,8 +211,7 @@ describe('FoundryChatClient', () => {
     const completed = { id: 'resp_1', object: 'response', status: 'completed', output: [] };
     const create = vi.fn().mockResolvedValue(completed);
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
-      target: { modelDeployment: 'gpt-4o' },
+      target: { model: 'gpt-4o' },
       client: { responses: { create }, baseURL: PROJECT } as unknown as OpenAI,
     });
 
@@ -269,7 +221,7 @@ describe('FoundryChatClient', () => {
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty('include');
   });
 
-  it('sends the credential token as the bearer, to the target endpoint', async () => {
+  it("sends the project's token as the bearer, to the target endpoint", async () => {
     const credential = fakeCredential();
     const seen: Array<{ url: string; authorization: string | null }> = [];
     const fetchStub = (async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -293,9 +245,8 @@ describe('FoundryChatClient', () => {
     }) as unknown as OpenAI['fetch'];
 
     const client = new FoundryChatClient({
-      projectEndpoint: PROJECT,
+      project: new FoundryProject(PROJECT, credential),
       target: { serverAgent: 'support-bot' },
-      credential,
       fetch: fetchStub,
     });
 
@@ -307,5 +258,25 @@ describe('FoundryChatClient', () => {
     expect(seen[0]?.url).toBe(
       `${PROJECT}/agents/support-bot/endpoint/protocols/openai/responses?api-version=v1`,
     );
+  });
+
+  it("inherits the project's fetch when no override is given", async () => {
+    const seen: string[] = [];
+    const fetchStub = (async (url: string | URL | Request): Promise<Response> => {
+      seen.push(String(url));
+      return new Response(
+        JSON.stringify({ id: 'resp_1', object: 'response', status: 'completed', output: [] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const client = new FoundryChatClient({
+      project: new FoundryProject(PROJECT, fakeCredential(), { fetch: fetchStub }),
+      target: { model: 'gpt-4o' },
+    });
+
+    await client.getResponse([{ role: 'user', contents: [textContent('hi')] }]);
+
+    expect(seen).toHaveLength(1);
   });
 });

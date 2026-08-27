@@ -9,6 +9,7 @@ import {
 import type { ContextProvider, Tool } from '@polymind-inc/agent-framework-core';
 import { AgentSession, ConfigurationError, isFunctionTool } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it, vi } from 'vitest';
+import { FoundryProject } from '../project.js';
 import { ToolboxConsentRequiredError } from './consent.js';
 import { FoundryToolbox } from './toolbox.js';
 
@@ -161,8 +162,7 @@ function stubToolbox(
   return {
     toolbox: new FoundryToolbox({
       name: 'my-toolbox',
-      projectEndpoint: PROJECT,
-      credential,
+      project: new FoundryProject(PROJECT, credential),
       fetch: fetchStub,
       ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
       ...(options.loadTools === undefined ? {} : { loadTools: options.loadTools }),
@@ -185,32 +185,15 @@ describe('FoundryToolbox endpoint', () => {
   it('escapes the toolbox name so it cannot climb out of the path', () => {
     const toolbox = new FoundryToolbox({
       name: 'a/../../evil',
-      projectEndpoint: PROJECT,
-      credential,
+      project: new FoundryProject(PROJECT, credential),
     });
     expect(toolbox.url).toBe(`${PROJECT}/toolboxes/a%2F..%2F..%2Fevil/mcp?api-version=v1`);
-  });
-
-  it('refuses to be built without a project endpoint', () => {
-    // Cleared explicitly rather than assumed absent: a developer whose shell is configured for a
-    // real project (as the integration tests need) would otherwise see this unit test fail.
-    const previous = process.env.FOUNDRY_PROJECT_ENDPOINT;
-    delete process.env.FOUNDRY_PROJECT_ENDPOINT;
-    try {
-      expect(() => new FoundryToolbox({ name: 'x', credential })).toThrow(/needs a project endpoint/);
-    } finally {
-      if (previous !== undefined) {
-        process.env.FOUNDRY_PROJECT_ENDPOINT = previous;
-      }
-    }
   });
 
   it('refuses a relative endpoint at construction rather than failing on the first request', () => {
     // A misconfigured endpoint should surface where it was configured, not as a broken MCP URL on
     // the first tool call.
-    expect(() => new FoundryToolbox({ name: 'x', projectEndpoint: '/api/projects/p', credential })).toThrow(
-      ConfigurationError,
-    );
+    expect(() => new FoundryProject('/api/projects/p', credential)).toThrow(ConfigurationError);
   });
 
   it('retries the connection on the next request after a failed attempt', async () => {

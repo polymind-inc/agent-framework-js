@@ -12,10 +12,9 @@
  * and neither does this.
  */
 
-import type { TokenCredential } from '@azure/identity';
 import { AgentFrameworkError } from '@polymind-inc/agent-framework-core';
-import { tokenProvider } from '../credential.js';
-import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
+import type { FoundryProject } from '../project.js';
+import { FOUNDRY_API_VERSION } from '../target.js';
 
 /**
  * The preview opt-in every memory-store route requires.
@@ -106,11 +105,9 @@ export class FoundryMemoryError extends AgentFrameworkError {
 
 /** Construction options for {@link MemoryStoreClient}. */
 export interface MemoryStoreClientOptions {
-  /** The Foundry **project** endpoint. */
-  projectEndpoint: string;
-  /** The credential every call is authorized with. */
-  credential: TokenCredential;
-  /** Overridable for tests and proxies. */
+  /** The project every call goes to and is authorized against. */
+  project: FoundryProject;
+  /** Overridable for tests and proxies. Defaults to the project's transport. */
   fetch?: typeof globalThis.fetch;
 }
 
@@ -138,9 +135,9 @@ export class MemoryStoreClient {
   readonly #fetch: typeof globalThis.fetch;
 
   constructor(options: MemoryStoreClientOptions) {
-    this.#endpoint = normalizeProjectEndpoint(options.projectEndpoint);
-    this.#getToken = tokenProvider(options.credential);
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#endpoint = options.project.endpoint;
+    this.#getToken = () => options.project.getToken();
+    this.#fetch = options.fetch ?? options.project.fetch ?? globalThis.fetch;
   }
 
   /** Memories relevant to `items`, or the scope's profile memories when `items` is absent. */

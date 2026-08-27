@@ -10,6 +10,7 @@ import {
 } from '@polymind-inc/agent-framework-agentserver';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FoundryProject } from '../project.js';
 import { FoundryResponseStore } from './response-store.js';
 import { defaultStore } from './server.js';
 
@@ -70,8 +71,7 @@ function store(
 
   return {
     store: new FoundryResponseStore({
-      projectEndpoint: PROJECT,
-      credential: options.credential ?? credential,
+      project: new FoundryProject(PROJECT, options.credential ?? credential),
       fetch: fetchStub,
       replayRoot: options.replayRoot ?? join(replayScratch, `store-${replayDirCount++}`),
       retry: { baseDelayMs: 0 },
@@ -119,26 +119,10 @@ describe('FoundryResponseStore', () => {
     expect(subject.baseUrl).toBe(`${PROJECT}/storage/`);
   });
 
-  it('refuses to be built without a project endpoint', () => {
-    // Cleared explicitly rather than assumed absent: a developer whose shell is configured for a
-    // real project (as the integration tests need) would otherwise see this unit test fail.
-    const previous = process.env.FOUNDRY_PROJECT_ENDPOINT;
-    delete process.env.FOUNDRY_PROJECT_ENDPOINT;
-    try {
-      expect(() => new FoundryResponseStore({ credential })).toThrow(/needs a project endpoint/);
-    } finally {
-      if (previous !== undefined) {
-        process.env.FOUNDRY_PROJECT_ENDPOINT = previous;
-      }
-    }
-  });
-
   it('refuses a relative endpoint at construction rather than failing on the first request', () => {
     // A misconfigured endpoint should surface where it was configured, not as a broken URL on the
     // first storage call.
-    expect(() => new FoundryResponseStore({ projectEndpoint: '/api/projects/p', credential })).toThrow(
-      ConfigurationError,
-    );
+    expect(() => new FoundryProject('/api/projects/p', credential)).toThrow(ConfigurationError);
   });
 
   it('uses the routes and verbs the service defines', async () => {

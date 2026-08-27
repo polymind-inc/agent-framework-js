@@ -1,4 +1,3 @@
-import type { TokenCredential } from '@azure/identity';
 import type {
   OutputItem,
   ResponseEvent,
@@ -12,19 +11,19 @@ import {
   FileResponseProvider,
   historyOf,
   ID_PREFIX,
-  projectEndpoint,
   resolveAgentReference,
   stateRoot,
 } from '@polymind-inc/agent-framework-agentserver';
-import { ConfigurationError } from '@polymind-inc/agent-framework-core';
+import type { FoundryProject } from '../project.js';
 import { FoundryStorageClient } from './foundry-storage-client.js';
 
 /** Construction options for {@link FoundryResponseStore}. */
 export interface FoundryResponseStoreConfig {
   /**
-   * The Foundry **project** endpoint — not a storage URL. Defaults to `FOUNDRY_PROJECT_ENDPOINT`.
+   * The project whose storage service holds the responses.
    *
-   * `/storage/` is appended unconditionally, so a value that already ends in `/storage` produces
+   * The project's endpoint must be the **project** endpoint — not a storage URL. `/storage/` is
+   * appended unconditionally, so a value that already ends in `/storage` produces
    * `.../storage/storage/`. That is deliberate parity, not an oversight: both response-store
    * references append without looking (Python `store/_foundry_settings.py:55`
    * `endpoint.rstrip("/") + "/storage/"`, .NET `ResponsesServerServiceCollectionExtensions.cs:170`
@@ -35,10 +34,8 @@ export interface FoundryResponseStoreConfig {
    * wider contract, for the state store, which this package does not have. Narrowing the accepted
    * form keeps a misconfigured endpoint a visible 404 rather than something silently repaired.
    */
-  projectEndpoint?: string;
-  /** Defaults to {@link DefaultAzureCredential}. */
-  credential?: TokenCredential;
-  /** Overridable for tests and proxies. */
+  project: FoundryProject;
+  /** Overridable for tests and proxies. Defaults to the project's transport. */
   fetch?: typeof globalThis.fetch;
   /**
    * Whether to forward `x-agent-foundry-call-id` on storage requests. Defaults to `true`.
@@ -242,15 +239,8 @@ export class FoundryResponseStore implements ResponseProvider {
   /** The local half of the split: the replay log and the generation fence. */
   readonly #replay: FileResponseProvider;
 
-  constructor(options: FoundryResponseStoreConfig = {}) {
-    const endpoint = options.projectEndpoint ?? projectEndpoint();
-    if (endpoint === undefined) {
-      throw new ConfigurationError(
-        'FoundryResponseStore needs a project endpoint. Set FOUNDRY_PROJECT_ENDPOINT or pass ' +
-          '`projectEndpoint`.',
-      );
-    }
-    this.#client = new FoundryStorageClient(endpoint, options);
+  constructor(options: FoundryResponseStoreConfig) {
+    this.#client = new FoundryStorageClient(options.project, options);
     this.#replay = new FileResponseProvider({
       root: options.replayRoot ?? `${stateRoot()}/foundry-responses`,
     });

@@ -1,5 +1,3 @@
-import type { TokenCredential } from '@azure/identity';
-import { DefaultAzureCredential } from '@azure/identity';
 import type {
   ContextProvider,
   Message,
@@ -14,6 +12,7 @@ import {
   textContent,
   textOf,
 } from '@polymind-inc/agent-framework-core';
+import type { FoundryProject } from '../project.js';
 import type { MemoryInputItem, MemoryOperation, MemoryStoreDefinition, MemoryStoreObject } from './client.js';
 import { FoundryMemoryError, MemoryStoreClient } from './client.js';
 
@@ -58,10 +57,8 @@ export interface FoundryMemoryProviderConfig {
    * `@polymind-inc/agent-framework-foundry/hosting`.
    */
   scope: FoundryMemoryScope;
-  /** The Foundry **project** endpoint. Defaults to `FOUNDRY_PROJECT_ENDPOINT`. */
-  projectEndpoint?: string;
-  /** Defaults to {@link DefaultAzureCredential}. */
-  credential?: TokenCredential;
+  /** The project holding the memory store. */
+  project: FoundryProject;
   /** This provider's session-state partition and the source stamped on injected messages. */
   sourceId?: string;
   /** Prefixed to the retrieved memories. Defaults to a "## Memories" heading. */
@@ -125,7 +122,7 @@ interface MemoryState {
  *
  * ```ts
  * const memory = new FoundryMemoryProvider({
- *   projectEndpoint: process.env.FOUNDRY_PROJECT_ENDPOINT!,
+ *   project: new FoundryProject(process.env.FOUNDRY_PROJECT_ENDPOINT!, new DefaultAzureCredential()),
  *   memoryStoreName: 'assistant-memories',
  *   scope: userId,
  * });
@@ -169,18 +166,10 @@ export class FoundryMemoryProvider implements ContextProvider {
     if (typeof config.scope === 'string' && config.scope.trim() === '') {
       throw new ConfigurationError('FoundryMemoryProvider needs a non-empty scope.');
     }
-    const endpoint = config.projectEndpoint ?? process.env.FOUNDRY_PROJECT_ENDPOINT;
-    if (endpoint === undefined || endpoint.trim() === '') {
-      throw new ConfigurationError(
-        'FoundryMemoryProvider needs a project endpoint. Set FOUNDRY_PROJECT_ENDPOINT or pass ' +
-          '`projectEndpoint`.',
-      );
-    }
 
     this.sourceId = config.sourceId ?? DEFAULT_SOURCE_ID;
     this.#client = new MemoryStoreClient({
-      projectEndpoint: endpoint,
-      credential: config.credential ?? new DefaultAzureCredential(),
+      project: config.project,
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     });
     this.#storeName = config.memoryStoreName;
