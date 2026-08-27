@@ -6,6 +6,24 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **[BREAKING] `@polymind-inc/agent-framework-foundry`** — Foundry credentials and the project
+  endpoint are centralized in the new `FoundryProject` handle
+  (`new FoundryProject(endpoint, credential, { scope?, fetch? })`, mirroring
+  `new AIProjectClient(endpoint, credential)` from `@azure/ai-projects`: both arguments are
+  required, and neither is resolved from the environment or constructed implicitly).
+  `FoundryChatClient`, `FoundryMemoryProvider`, `FoundryToolbox` and `FoundryResponseStore` take a
+  required `project` instead of the removed per-component `credential`, `scope` and
+  `projectEndpoint` options — previously each component silently constructed its own
+  `DefaultAzureCredential` chain, and a stale `FOUNDRY_PROJECT_ENDPOINT` could silently decide
+  where bearer tokens were sent. Every component built from one project shares one per-scope
+  bearer-token cache. The `tokenProvider` export is removed; `project.getToken()` is its
+  successor. The one remaining implicit default is inside the hosting bootstrap: a hosted
+  container's default response store still assembles its project from the platform-injected
+  endpoint and `DefaultAzureCredential`, the same default the Python agent server's Foundry
+  storage applies. The reference implementations all demand this explicitness: .NET and Python
+  hang every Foundry feature off an explicitly constructed `AIProjectClient` (Python requires
+  `credential` whenever no `project_client` is given), and Go takes a credential as a required
+  constructor argument.
 - **[BREAKING] `@polymind-inc/agent-framework-core`** — `ResponseBase<T>.value` is now
   `T | undefined`. A suspended run (for example, one waiting for tool approval) and a response
   created without a structured-output value have always carried `undefined` at runtime; callers
@@ -21,9 +39,14 @@ contain breaking changes**; patch releases are fixes only.
   `{ type: 'disabled' }` cannot carry a budget. Invalid configurations now fail at construction
   instead of reaching Anthropic as an invalid request.
 - **[BREAKING] `@polymind-inc/agent-framework-foundry`** — `FoundryTarget` now enforces exactly one
-  of `modelDeployment` and `serverAgent`. When an already-configured SDK `client` is supplied,
-  `projectEndpoint` is optional and `baseURL` reports the client's actual URL; configurations
-  without a client still require a project endpoint.
+  of its two selectors. When an already-configured SDK `client` is supplied, `baseURL` reports the
+  client's actual URL.
+- **[BREAKING] `@polymind-inc/agent-framework-foundry`** — `FoundryTarget`'s `modelDeployment`
+  selector is renamed `model`, and the exported guard `isModelDeployment` is renamed
+  `isModelTarget`. The value still names a model *deployment* in the project; `model` is what both
+  .NET (the `model` parameter on `FoundryAgent` and `AsAIAgent`) and Python (the `model` keyword,
+  `FOUNDRY_MODEL`) call it, while Go's `ModelDeployment` is a per-mode *type* name in a design
+  TypeScript's discriminated union does not share.
 - **Security:** approval requests are immutable snapshots before they reach callers, so mutating a
   streamed or awaited request cannot change the arguments later executed after approval. Raw JSON
   Schema arguments are checked locally, executable-only approval bypassing no longer consumes

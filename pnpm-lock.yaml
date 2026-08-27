@@ -75,6 +75,9 @@ importers:
 
   examples/02-foundry:
     dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@7.2.0)
       '@polymind-inc/agent-framework':
         specifier: workspace:^
         version: link:../../packages/meta

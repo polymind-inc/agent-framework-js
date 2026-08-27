@@ -15,9 +15,14 @@
  * On Foundry: see README.md.
  */
 
+import { DefaultAzureCredential } from '@azure/identity';
 import { Agent } from '@polymind-inc/agent-framework';
 import { serve } from '@polymind-inc/agent-framework/agentserver/node';
-import { FoundryChatClient, FoundryMemoryProvider } from '@polymind-inc/agent-framework/foundry';
+import {
+  FoundryChatClient,
+  FoundryMemoryProvider,
+  FoundryProject,
+} from '@polymind-inc/agent-framework/foundry';
 import { hostedUserScope, ResponsesHostServer } from '@polymind-inc/agent-framework/foundry/hosting';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
@@ -29,8 +34,13 @@ if (memoryStoreName === undefined) {
   throw new Error('Set MEMORY_STORE_NAME to the memory store provisioned for this agent.');
 }
 
+// One project handle for the chat client and the memory provider: one identity, one token cache.
+// `DefaultAzureCredential` covers `az login` locally and the container's managed identity on
+// Foundry.
+const project = new FoundryProject(projectEndpoint, new DefaultAzureCredential());
+
 const memory = new FoundryMemoryProvider({
-  projectEndpoint,
+  project,
   memoryStoreName,
   // Every user of this container gets their own partition of the store. `hostedUserScope()` reads
   // the end-user id the platform injects per request, so one provider instance serves all of them
@@ -43,8 +53,8 @@ const memory = new FoundryMemoryProvider({
 
 const agent = new Agent({
   client: new FoundryChatClient({
-    projectEndpoint,
-    target: { modelDeployment: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? 'gpt-4o-mini' },
+    project,
+    target: { model: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? 'gpt-4o-mini' },
   }),
   name: 'memory-agent',
   instructions:

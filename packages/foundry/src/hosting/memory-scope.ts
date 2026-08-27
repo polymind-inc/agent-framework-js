@@ -13,7 +13,7 @@ import { getHostedAgentContext } from './hosted-context.js';
  * Scopes memories to the end user of the hosted turn.
  *
  * ```ts
- * new FoundryMemoryProvider({ memoryStoreName: 'assistant-memories', scope: hostedUserScope() });
+ * new FoundryMemoryProvider({ project, memoryStoreName: 'assistant-memories', scope: hostedUserScope() });
  * ```
  *
  * Throws outside a hosted turn, and when the platform supplied no user id, rather than falling

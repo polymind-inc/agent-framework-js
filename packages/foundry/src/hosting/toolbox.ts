@@ -1,7 +1,5 @@
-import type { TokenCredential } from '@azure/identity';
-import { DefaultAzureCredential } from '@azure/identity';
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import { platformHeaders, projectEndpoint } from '@polymind-inc/agent-framework-agentserver';
+import { platformHeaders } from '@polymind-inc/agent-framework-agentserver';
 import type {
   Content,
   ContextProvider,
@@ -11,7 +9,6 @@ import type {
   ToolContext,
 } from '@polymind-inc/agent-framework-core';
 import {
-  ConfigurationError,
   skillsProvider,
   ToolInvocationError,
   textOfContents,
@@ -19,8 +16,8 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
 import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
-import { tokenProvider } from '../credential.js';
-import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
+import type { FoundryProject } from '../project.js';
+import { FOUNDRY_API_VERSION } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
 import { reportConsent } from './consent-channel.js';
 
@@ -41,10 +38,8 @@ function withConsentTyped(error: unknown): unknown {
 export interface FoundryToolboxConfig {
   /** The toolbox registered in the project. */
   name: string;
-  /** Defaults to `FOUNDRY_PROJECT_ENDPOINT`. */
-  projectEndpoint?: string;
-  /** Defaults to {@link DefaultAzureCredential}. */
-  credential?: TokenCredential;
+  /** The project hosting the toolbox. */
+  project: FoundryProject;
   /** Restricts which of the toolbox's tools are exposed to the model. */
   allowedTools?: string[];
   /**
@@ -89,27 +84,22 @@ export class FoundryToolbox {
   readonly #connection: McpConnection;
 
   constructor(options: FoundryToolboxConfig) {
-    const endpoint = options.projectEndpoint ?? projectEndpoint();
-    if (endpoint === undefined) {
-      throw new ConfigurationError(
-        'FoundryToolbox needs a project endpoint. Set FOUNDRY_PROJECT_ENDPOINT or pass `projectEndpoint`.',
-      );
-    }
+    const project = options.project;
     this.#name = options.name;
-    this.#endpoint = normalizeProjectEndpoint(endpoint);
+    this.#endpoint = project.endpoint;
     this.#allowedTools = options.allowedTools === undefined ? undefined : new Set(options.allowedTools);
     this.#loadTools = options.loadTools ?? true;
 
-    const getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
+    const fetch = options.fetch ?? project.fetch;
     this.#connection = new McpConnection({
       url: this.url,
       // Per-request rather than per-connection: see the class note on why this cannot be a
       // static header set.
       headers: async () => ({
-        authorization: `Bearer ${await getToken()}`,
+        authorization: `Bearer ${await project.getToken()}`,
         ...platformHeaders(),
       }),
-      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      ...(fetch === undefined ? {} : { fetch }),
     });
   }
 
@@ -214,7 +204,7 @@ export class FoundryToolbox {
    * Serves the toolbox's Agent Skills to an agent.
    *
    * ```ts
-   * const toolbox = new FoundryToolbox({ name: 'support', loadTools: false });
+   * const toolbox = new FoundryToolbox({ name: 'support', project, loadTools: false });
    * const agent = new Agent({
    *   client,
    *   instructions: 'You are a support assistant.',

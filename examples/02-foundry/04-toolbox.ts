@@ -15,8 +15,9 @@
  *   FOUNDRY_TOOLBOX_NAME=<toolbox> \
  *   pnpm --filter example-02-foundry toolbox
  */
+import { DefaultAzureCredential } from '@azure/identity';
 import { Agent } from '@polymind-inc/agent-framework';
-import { FoundryChatClient } from '@polymind-inc/agent-framework/foundry';
+import { FoundryChatClient, FoundryProject } from '@polymind-inc/agent-framework/foundry';
 import { FoundryToolbox } from '@polymind-inc/agent-framework/foundry/hosting';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
@@ -25,9 +26,12 @@ if (projectEndpoint === undefined || toolboxName === undefined) {
   throw new Error('Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_TOOLBOX_NAME.');
 }
 
+// One project handle for both components, so they share one identity and one token cache.
+const project = new FoundryProject(projectEndpoint, new DefaultAzureCredential());
+
 const toolbox = new FoundryToolbox({
   name: toolboxName,
-  projectEndpoint,
+  project,
   // Narrow what the model may call with `allowedTools: ['...']`. The toolbox may expose more than
   // this agent should be able to reach.
 });
@@ -38,8 +42,8 @@ try {
 
   const agent = new Agent({
     client: new FoundryChatClient({
-      projectEndpoint,
-      target: { modelDeployment: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? 'gpt-4o-mini' },
+      project,
+      target: { model: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? 'gpt-4o-mini' },
     }),
     name: 'toolbox-agent',
     instructions:

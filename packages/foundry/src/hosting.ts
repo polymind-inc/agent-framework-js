@@ -6,15 +6,17 @@
  * the toolbox.
  *
  * ```ts
+ * import { DefaultAzureCredential } from '@azure/identity';
  * import { Agent } from '@polymind-inc/agent-framework-core';
- * import { FoundryChatClient } from '@polymind-inc/agent-framework-foundry';
+ * import { FoundryChatClient, FoundryProject } from '@polymind-inc/agent-framework-foundry';
  * import { ResponsesHostServer } from '@polymind-inc/agent-framework-foundry/hosting';
  * import { serve } from '@polymind-inc/agent-framework-agentserver/node';
  *
  * const agent = new Agent({
  *   client: new FoundryChatClient({
- *     projectEndpoint: process.env.FOUNDRY_PROJECT_ENDPOINT!,
- *     target: { modelDeployment: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME! },
+ *     // The platform injects the endpoint; the managed identity is the container's credential.
+ *     project: new FoundryProject(process.env.FOUNDRY_PROJECT_ENDPOINT!, new DefaultAzureCredential()),
+ *     target: { model: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME! },
  *   }),
  *   instructions: 'You are a helpful assistant.',
  *   // The hosting infrastructure owns the transcript, so the provider must not store it too.

@@ -13,6 +13,7 @@
  * - `FOUNDRY_STORAGE_WRITABLE=1` — optional; opts into the storage write tests, which only pass
  *   from inside a deployed container (see the block at the bottom)
  */
+import { DefaultAzureCredential } from '@azure/identity';
 import type { ResponseObject } from '@polymind-inc/agent-framework-agentserver';
 import { ID_PREFIX, newId, newResponseId } from '@polymind-inc/agent-framework-agentserver';
 import { Agent, tool } from '@polymind-inc/agent-framework-core';
@@ -20,6 +21,7 @@ import { describe, expect, it } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
 import { FoundryResponseStore } from './hosting/response-store.js';
 import { FoundryToolbox } from './hosting/toolbox.js';
+import { FoundryProject } from './project.js';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
 const modelDeployment =
@@ -35,8 +37,10 @@ function must<T>(value: T | null | undefined): T {
   return value;
 }
 
+const project = (): FoundryProject => new FoundryProject(must(projectEndpoint), new DefaultAzureCredential());
+
 const deploymentClient = (): FoundryChatClient =>
-  new FoundryChatClient({ projectEndpoint: must(projectEndpoint), target: { modelDeployment } });
+  new FoundryChatClient({ project: project(), target: { model: modelDeployment } });
 
 describe.runIf(runIntegration && projectEndpoint !== undefined && projectEndpoint !== '')(
   'Foundry (integration)',
@@ -79,7 +83,7 @@ describe.runIf(runIntegration && projectEndpoint !== undefined && projectEndpoin
       { timeout: TIMEOUT },
       async () => {
         const client = new FoundryChatClient({
-          projectEndpoint: must(projectEndpoint),
+          project: project(),
           target: { serverAgent: must(serverAgent) },
         });
 
@@ -103,8 +107,7 @@ describe.runIf(
     toolboxName !== undefined &&
     toolboxName !== '',
 )('Foundry Toolbox (integration)', () => {
-  const toolbox = (): FoundryToolbox =>
-    new FoundryToolbox({ name: must(toolboxName), projectEndpoint: must(projectEndpoint) });
+  const toolbox = (): FoundryToolbox => new FoundryToolbox({ name: must(toolboxName), project: project() });
 
   it('lists the toolbox tools over MCP', { timeout: TIMEOUT }, async () => {
     const box = toolbox();
@@ -158,8 +161,7 @@ describe.runIf(
 describe.runIf(runIntegration && projectEndpoint !== undefined && projectEndpoint !== '')(
   'Foundry storage (integration)',
   () => {
-    const store = (): FoundryResponseStore =>
-      new FoundryResponseStore({ projectEndpoint: must(projectEndpoint) });
+    const store = (): FoundryResponseStore => new FoundryResponseStore({ project: project() });
 
     it('reaches the service and reports an unknown response as absent', { timeout: TIMEOUT }, async () => {
       const subject = store();
@@ -190,8 +192,7 @@ describe.runIf(
     projectEndpoint !== '' &&
     process.env.FOUNDRY_STORAGE_WRITABLE === '1',
 )('Foundry storage writes (integration)', () => {
-  const store = (): FoundryResponseStore =>
-    new FoundryResponseStore({ projectEndpoint: must(projectEndpoint) });
+  const store = (): FoundryResponseStore => new FoundryResponseStore({ project: project() });
 
   function draft(id: string): ResponseObject {
     return {

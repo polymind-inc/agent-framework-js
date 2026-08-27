@@ -13,9 +13,10 @@
  * On Foundry: see README.md.
  */
 
+import { DefaultAzureCredential } from '@azure/identity';
 import { Agent } from '@polymind-inc/agent-framework';
 import { serve } from '@polymind-inc/agent-framework/agentserver/node';
-import { FoundryChatClient } from '@polymind-inc/agent-framework/foundry';
+import { FoundryChatClient, FoundryProject } from '@polymind-inc/agent-framework/foundry';
 import { InvocationsHostServer } from '@polymind-inc/agent-framework/foundry/hosting';
 
 const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
@@ -25,8 +26,10 @@ if (projectEndpoint === undefined) {
 
 const agent = new Agent({
   client: new FoundryChatClient({
-    projectEndpoint,
-    target: { modelDeployment: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? 'gpt-4o-mini' },
+    // `DefaultAzureCredential` covers `az login` locally and the container's managed identity on
+    // Foundry.
+    project: new FoundryProject(projectEndpoint, new DefaultAzureCredential()),
+    target: { model: process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? 'gpt-4o-mini' },
   }),
   name: 'invocations-agent',
   instructions: 'You are a friendly assistant. Keep your answers brief.',

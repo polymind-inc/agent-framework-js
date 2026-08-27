@@ -23,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.2",
     "@polymind-inc/agent-framework": "workspace:^"
   },
   "devDependencies": {

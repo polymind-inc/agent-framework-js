@@ -3,6 +3,7 @@ import type { AgentSession, Message } from '@polymind-inc/agent-framework-core';
 import { Agent, ConfigurationError, none, textContent } from '@polymind-inc/agent-framework-core';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it } from 'vitest';
+import { FoundryProject } from '../project.js';
 import { FoundryMemoryError } from './client.js';
 import type { FoundryMemoryFailure, FoundryMemoryProviderConfig, FoundryMemoryScope } from './provider.js';
 import { FoundryMemoryProvider } from './provider.js';
@@ -66,8 +67,7 @@ function provider(
 
   return {
     memory: new FoundryMemoryProvider({
-      projectEndpoint: PROJECT,
-      credential,
+      project: new FoundryProject(PROJECT, credential),
       memoryStoreName: 'my-store',
       scope: options.scope ?? 'user-1',
       fetch: fetchStub,
@@ -104,29 +104,24 @@ describe('FoundryMemoryProvider', () => {
   describe('configuration', () => {
     it('rejects an empty store name', () => {
       expect(
-        () => new FoundryMemoryProvider({ projectEndpoint: PROJECT, memoryStoreName: ' ', scope: 'user-1' }),
+        () =>
+          new FoundryMemoryProvider({
+            project: new FoundryProject(PROJECT, credential),
+            memoryStoreName: ' ',
+            scope: 'user-1',
+          }),
       ).toThrow(ConfigurationError);
     });
 
     it('rejects an empty scope', () => {
       expect(
         () =>
-          new FoundryMemoryProvider({ projectEndpoint: PROJECT, memoryStoreName: 'my-store', scope: ' ' }),
+          new FoundryMemoryProvider({
+            project: new FoundryProject(PROJECT, credential),
+            memoryStoreName: 'my-store',
+            scope: ' ',
+          }),
       ).toThrow(ConfigurationError);
-    });
-
-    it('rejects a missing project endpoint', () => {
-      const saved = process.env.FOUNDRY_PROJECT_ENDPOINT;
-      delete process.env.FOUNDRY_PROJECT_ENDPOINT;
-      try {
-        expect(() => new FoundryMemoryProvider({ memoryStoreName: 'my-store', scope: 'user-1' })).toThrow(
-          ConfigurationError,
-        );
-      } finally {
-        if (saved !== undefined) {
-          process.env.FOUNDRY_PROJECT_ENDPOINT = saved;
-        }
-      }
     });
 
     it('names its state partition foundry_memory unless told otherwise', () => {
@@ -518,8 +513,7 @@ describe('FoundryMemoryProvider', () => {
       }) as typeof globalThis.fetch;
       return {
         memory: new FoundryMemoryProvider({
-          projectEndpoint: PROJECT,
-          credential,
+          project: new FoundryProject(PROJECT, credential),
           memoryStoreName: 'my-store',
           scope: 'user-1',
           fetch: fetchStub,

@@ -1,8 +1,6 @@
-import type { TokenCredential } from '@azure/identity';
-import { DefaultAzureCredential } from '@azure/identity';
 import { platformHeaders } from '@polymind-inc/agent-framework-agentserver';
-import { tokenProvider } from '../credential.js';
-import { FOUNDRY_API_VERSION, normalizeProjectEndpoint } from '../target.js';
+import type { FoundryProject } from '../project.js';
+import { FOUNDRY_API_VERSION } from '../target.js';
 
 /** The statuses worth another attempt, matching the reference retry policy's set. */
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504]);
@@ -15,7 +13,6 @@ function delay(ms: number): Promise<void> {
 }
 
 interface FoundryStorageClientConfig {
-  credential?: TokenCredential;
   fetch?: typeof globalThis.fetch;
   forwardCallId?: boolean;
   retry?: { baseDelayMs?: number };
@@ -46,10 +43,10 @@ export class FoundryStorageClient {
   readonly #forwardCallId: boolean;
   readonly #retryBaseDelayMs: number;
 
-  constructor(projectEndpoint: string, options: FoundryStorageClientConfig = {}) {
-    this.#endpoint = normalizeProjectEndpoint(projectEndpoint);
-    this.#getToken = tokenProvider(options.credential ?? new DefaultAzureCredential());
-    this.#fetch = options.fetch ?? globalThis.fetch;
+  constructor(project: FoundryProject, options: FoundryStorageClientConfig = {}) {
+    this.#endpoint = project.endpoint;
+    this.#getToken = () => project.getToken();
+    this.#fetch = options.fetch ?? project.fetch ?? globalThis.fetch;
     this.#forwardCallId = options.forwardCallId ?? true;
     this.#retryBaseDelayMs = options.retry?.baseDelayMs ?? 500;
   }

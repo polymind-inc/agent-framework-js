@@ -258,7 +258,10 @@ function invocationHandler(
  *
  * ```ts
  * const agent = new Agent({
- *   client: new FoundryChatClient({ projectEndpoint, target: { modelDeployment } }),
+ *   client: new FoundryChatClient({
+ *     project: new FoundryProject(process.env.FOUNDRY_PROJECT_ENDPOINT!, new DefaultAzureCredential()),
+ *     target: { model },
+ *   }),
  *   instructions: 'You are a helpful assistant.',
  * });
  *
