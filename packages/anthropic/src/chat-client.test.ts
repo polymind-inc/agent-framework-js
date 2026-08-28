@@ -2,7 +2,6 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Content, Message } from '@polymind-inc/agent-framework-core';
 import {
   Agent,
-  arrayToStream,
   ChatClientError,
   ConfigurationError,
   deserializeMessage,
@@ -12,6 +11,7 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
+import { arrayToStream } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import { AnthropicChatClient, DEFAULT_BETA_FLAGS } from './chat-client.js';
 import {

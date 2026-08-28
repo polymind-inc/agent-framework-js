@@ -12,7 +12,8 @@
  * and neither does this.
  */
 
-import { AgentFrameworkError, setIfDefined } from '@polymind-inc/agent-framework-core';
+import { AgentFrameworkError } from '@polymind-inc/agent-framework-core';
+import { setIfDefined } from '@polymind-inc/agent-framework-core/internal';
 import { bodyText, drainBody, foundryFailureMessage, foundryRequestInit, foundryUrl } from '../http.js';
 import type { FoundryProject } from '../project.js';
 

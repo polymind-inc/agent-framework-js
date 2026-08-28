@@ -5,8 +5,8 @@ import type {
   McpToolOptions,
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
-import { ConfigurationError, hostedTool, withoutUndefined } from '@polymind-inc/agent-framework-core';
-import { normalizeServerLabel } from '@polymind-inc/agent-framework-core/internal';
+import { ConfigurationError, hostedTool } from '@polymind-inc/agent-framework-core';
+import { normalizeServerLabel, withoutUndefined } from '@polymind-inc/agent-framework-core/internal';
 
 /** Declares the provider-hosted web search tool. */
 export function webSearchTool(options: WebSearchToolOptions = {}): HostedTool {

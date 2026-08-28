@@ -6,6 +6,15 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — `setIfDefined`, `withoutUndefined`,
+  `topLevelMediaType` and `arrayToStream` are no longer exported from the root entry. They assemble
+  a request payload for a specific provider SDK — an implementation detail of writing a
+  `ChatClient`, not part of the programming model — and none of the reference implementations
+  publishes a counterpart in this shape. They now live on the `/internal` subpath the framework's
+  own packages share, which carries no compatibility promise. Each is under ten lines and inlines
+  directly: `setIfDefined`/`withoutUndefined` drop the entries whose value is `undefined`,
+  `topLevelMediaType` lowercases the part of a media type before the `/`, and `arrayToStream`
+  yields an array's items from an async generator.
 - **[BREAKING] `@polymind-inc/agent-framework-core`** — the `MiddlewareKind` type is removed. It
   was a free-standing alias nothing in the framework consumed; the discriminant lives on the
   middleware objects themselves, so `Middleware['kind']` expresses the same type where one is

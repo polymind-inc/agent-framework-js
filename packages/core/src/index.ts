@@ -33,7 +33,6 @@ export { createClientErrorNormalizer, guardClientStream } from './client/client-
 export { FunctionInvocationLimitError } from './client/function-execution.js';
 export type { FunctionInvocationConfig } from './client/function-invocation.js';
 export { withFunctionInvocation } from './client/function-invocation.js';
-export { arrayToStream, setIfDefined, topLevelMediaType, withoutUndefined } from './client/provider-utils.js';
 export type { ResolvedResponseFormat } from './client/structured-output.js';
 export {
   applyStructuredOutput,
