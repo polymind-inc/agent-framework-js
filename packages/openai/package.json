@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-openai",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "OpenAI (and Azure OpenAI) chat client for the Agent Framework, built on the official openai SDK.",
   "keywords": [
     "agent",

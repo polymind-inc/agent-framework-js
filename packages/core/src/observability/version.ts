@@ -5,4 +5,4 @@
  * Kept in sync with the `version` field in package.json; a unit test enforces
  * the match.
  */
-export const INSTRUMENTATION_VERSION = '0.3.0';
+export const INSTRUMENTATION_VERSION = '0.4.0';
