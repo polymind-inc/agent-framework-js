@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { bodyText, drainBody } from './http.js';
 
 describe('bodyText', () => {
@@ -31,13 +31,9 @@ describe('drainBody', () => {
   }
 
   it('cancels a normal body', async () => {
-    let cancelled = false;
-    await drainBody(
-      withBody(async () => {
-        cancelled = true;
-      }),
-    );
-    expect(cancelled).toBe(true);
+    const cancel = vi.fn(async () => {});
+    await drainBody(withBody(cancel));
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it('resolves when there is no body at all', async () => {

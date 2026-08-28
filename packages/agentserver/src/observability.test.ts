@@ -6,7 +6,7 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 import { otlpProtocol, UnsupportedOtlpProtocolError } from './config.js';
 import { platformHeaders } from './context.js';
 import { ProtocolError } from './errors.js';
@@ -21,7 +21,7 @@ import type { ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { InMemoryResponseProvider } from './store/memory.js';
 import type { ResponseProvider } from './store/provider.js';
-import { lifecycleHandler, must, post } from './test-helpers.js';
+import { lifecycleHandler, post } from './test-helpers.js';
 import type { ResponseObject } from './wire.js';
 
 /** Resets every piece of global OTel state a test may have registered. */
@@ -39,8 +39,6 @@ function minimalHandler(work?: (stage: 'start' | 'late') => void): ResponseHandl
 }
 
 describe('otlpProtocol', () => {
-  afterEach(() => vi.unstubAllEnvs());
-
   it('defaults to http/protobuf', () => {
     expect(otlpProtocol('OTEL_EXPORTER_OTLP_TRACES_PROTOCOL')).toBe('http/protobuf');
   });
@@ -230,7 +228,6 @@ describe('GenAIMainAgentSpanProcessor', () => {
 
 describe('setupHostObservability', () => {
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.resetModules();
     vi.restoreAllMocks();
     disableGlobalOtel();
@@ -619,7 +616,8 @@ describe('server trace context', () => {
     expect(response.status).toBe(200);
     expect(requestIdBaggage).toBe('req-42');
     const spans = exporter.getFinishedSpans();
-    const start = must(spans.find((span) => span.name === 'start-span'));
+    const start = spans.find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.spanContext().traceId).toBe('0123456789abcdef0123456789abcdef');
     expect(start.parentSpanContext?.spanId).toBe('0123456789abcdef');
   });
@@ -639,7 +637,8 @@ describe('server trace context', () => {
 
     // The `late-span` is created on a pull made by the SSE writer, outside the request scope —
     // the exact resumption `bindIterable` pins back to the extracted context.
-    const late = must(exporter.getFinishedSpans().find((span) => span.name === 'late-span'));
+    const late = exporter.getFinishedSpans().find((span) => span.name === 'late-span');
+    assert.exists(late);
     expect(late.spanContext().traceId).toBe('0123456789abcdef0123456789abcdef');
     expect(late.parentSpanContext?.spanId).toBe('0123456789abcdef');
   });
@@ -835,9 +834,7 @@ describe('per-turn flush', () => {
     expect(created.status).toBe(200);
 
     // The detached run owns the turn, and its own teardown is what flushes.
-    for (let attempt = 0; attempt < 200 && flusher.mock.calls.length === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await vi.waitUntil(() => flusher.mock.calls.length > 0, { timeout: 1_000, interval: 5 });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(flusher).toHaveBeenCalledTimes(1);
   });
@@ -893,7 +890,8 @@ describe('server-stamped baggage', () => {
 
     // The lift in the enrichment processor is what the portal actually reads, and it is dead code
     // until the entry exists.
-    const start = must(exporter.getFinishedSpans().find((span) => span.name === 'start-span'));
+    const start = exporter.getFinishedSpans().find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.attributes[FOUNDRY_ATTR.conversationId]).toBe('conv_7');
   });
 
@@ -936,7 +934,8 @@ describe('server-stamped baggage', () => {
     expect(captured.conversationId).toBe('');
     // …and its enrichment processor tests the value for truth, so an empty one stamps nothing.
     expect(captured.requestId).toBeUndefined();
-    const start = must(exporter.getFinishedSpans().find((span) => span.name === 'start-span'));
+    const start = exporter.getFinishedSpans().find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.attributes[FOUNDRY_ATTR.conversationId]).toBeUndefined();
   });
 
@@ -960,7 +959,8 @@ describe('server-stamped baggage', () => {
 
     expect(response.status).toBe(200);
     expect(captured.conversationId).toBe('conv_9');
-    const start = must(exporter.getFinishedSpans().find((span) => span.name === 'start-span'));
+    const start = exporter.getFinishedSpans().find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.attributes[FOUNDRY_ATTR.sessionId]).toBe('sess-1');
     expect(start.attributes[FOUNDRY_ATTR.conversationId]).toBe('conv_9');
   });

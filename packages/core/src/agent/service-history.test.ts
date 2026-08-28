@@ -1,11 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import type {
   ChatClient,
   ChatClientMetadata,
   ChatOptions,
   ChatResponseStream,
 } from '../client/chat-client.js';
-import { must } from '../client/test-support.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError } from '../errors.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -29,9 +28,8 @@ class StoringClient implements ChatClient<ChatOptions> {
 
   getResponse(messages: Message[], options?: ChatOptions): ChatResponseStream {
     this.calls.push({ messages, conversationId: options?.conversationId });
-    const conversationId = must(
-      this.#conversationIds[Math.min(this.#turn, this.#conversationIds.length - 1)],
-    );
+    const conversationId = this.#conversationIds[Math.min(this.#turn, this.#conversationIds.length - 1)];
+    assert.exists(conversationId);
     this.#turn++;
     const update = chatResponseUpdate({
       contents: [textContent(`answer ${this.calls.length}`)],

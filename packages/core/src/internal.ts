@@ -12,6 +12,4 @@
 export { answeredCallIds } from './client/function-invocation.js';
 export { normalizeServerLabel, safeStringify } from './client/provider-utils.js';
 export { errorMessageOf, validateSafeInteger } from './errors.js';
-// Test-only internal helper; not part of the supported `/testing` API.
-export { must } from './must.js';
 export { isRecord } from './types/content.js';

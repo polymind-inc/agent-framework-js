@@ -28,6 +28,6 @@ const workspaceAliases = {
 export function definePackageTests() {
   return defineConfig({
     resolve: { alias: workspaceAliases },
-    test: { include: ['src/**/*.test.ts'] },
+    test: { include: ['src/**/*.test.ts'], unstubEnvs: true },
   });
 }

@@ -27,10 +27,9 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
-import { must } from '@polymind-inc/agent-framework-core/internal';
 import type { MockTurn } from '@polymind-inc/agent-framework-core/testing';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { FileApprovalStorage, InMemoryApprovalStorage } from './approval-storage.js';
 import { consentRequestsFromMessage, ToolboxConsentRequiredError } from './consent.js';
@@ -68,17 +67,19 @@ function textOf(response: ResponseObject): string {
 
 /** Polls `GET /responses/{id}` until the response completes, failing the test after ~4s. */
 async function waitUntilCompleted(app: ResponsesServer, id: string): Promise<ResponseObject> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const response = await app.handle(new Request(`http://localhost:8088/responses/${id}`));
-    if (response.status === 200) {
-      const body = (await response.json()) as ResponseObject;
-      if (body.status === 'completed') {
-        return body;
+  return vi.waitUntil(
+    async () => {
+      const response = await app.handle(new Request(`http://localhost:8088/responses/${id}`));
+      if (response.status === 200) {
+        const body = (await response.json()) as ResponseObject;
+        if (body.status === 'completed') {
+          return body;
+        }
       }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`response ${id} never completed`);
+      return false;
+    },
+    { timeout: 4_000, interval: 10 },
+  );
 }
 
 describe('function_call_output encoding', () => {
@@ -188,7 +189,9 @@ describe('hosted agent over the protocol', () => {
 
     await app.handle(post({ input: 'hi', parallel_tool_calls: false }));
 
-    expect((must(client.calls[0]?.options) as { parallelToolCalls?: boolean }).parallelToolCalls).toBe(false);
+    const options = client.calls[0]?.options;
+    assert.exists(options);
+    expect((options as { parallelToolCalls?: boolean }).parallelToolCalls).toBe(false);
     // Anything left in `additionalProperties` is copied onto the wire request verbatim.
     expect(client.calls[0]?.options?.additionalProperties).toBeUndefined();
   });
@@ -223,7 +226,8 @@ describe('hosted agent over the protocol', () => {
       m.contents.flatMap((c) => (c.type === 'text' ? [c.text] : [])),
     );
     // 'one' appears once, from the platform history — not also from a local history provider.
-    expect(must(texts).filter((t) => t === 'one')).toHaveLength(1);
+    assert.exists(texts);
+    expect(texts.filter((t) => t === 'one')).toHaveLength(1);
   });
 
   it('never sends the container response id to the model provider', async () => {
@@ -277,12 +281,11 @@ describe('hosted agent over the protocol', () => {
     const events = body
       .split('\n\n')
       .filter((block) => block.trim() !== '' && !block.startsWith(':'))
-      .map(
-        (block) =>
-          JSON.parse(
-            must(block.split('\n').find((line) => line.startsWith('data: '))).slice('data: '.length),
-          ) as Record<string, unknown>,
-      );
+      .map((block) => {
+        const dataLine = block.split('\n').find((line) => line.startsWith('data: '));
+        assert.exists(dataLine);
+        return JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>;
+      });
 
     expect(events.map((event) => event.type)).toEqual([
       'response.created',
@@ -298,12 +301,15 @@ describe('hosted agent over the protocol', () => {
 
     // `logprobs` is required on the text events even with nothing to report; leaving it out is a
     // schema violation on the platform side.
-    const delta = must(events.find((event) => event.type === 'response.output_text.delta'));
+    const delta = events.find((event) => event.type === 'response.output_text.delta');
+    assert.exists(delta);
     expect(delta.logprobs).toEqual([]);
     expect(delta.content_index).toBe(0);
-    const partAdded = must(events.find((event) => event.type === 'response.content_part.added'));
+    const partAdded = events.find((event) => event.type === 'response.content_part.added');
+    assert.exists(partAdded);
     expect(partAdded.part).toEqual({ type: 'output_text', text: '', annotations: [], logprobs: [] });
-    const textDone = must(events.find((event) => event.type === 'response.output_text.done'));
+    const textDone = events.find((event) => event.type === 'response.output_text.done');
+    assert.exists(textDone);
     expect(textDone.text).toBe('Hello there');
   });
 
@@ -692,7 +698,8 @@ describe('tool approval over the protocol', () => {
     // The consumer walks away; the generator's cleanup runs as it would on a real disconnect.
     await events.return?.(undefined);
 
-    expect(await approvalStorage.load('alice', must(wireId))).toBeDefined();
+    assert.exists(wireId);
+    expect(await approvalStorage.load('alice', wireId)).toBeDefined();
   });
 });
 
@@ -874,7 +881,8 @@ describe('MCP call output items', () => {
     expect(added.item).toMatchObject({ type: 'mcp_call', status: 'in_progress', arguments: '' });
     const deltas = events.filter((event) => event.type === 'response.mcp_call_arguments.delta');
     expect(deltas.map((event) => event.delta)).toEqual(['{"q":', '"x"}']);
-    const argumentsDone = must(events.find((event) => event.type === 'response.mcp_call_arguments.done'));
+    const argumentsDone = events.find((event) => event.type === 'response.mcp_call_arguments.done');
+    assert.exists(argumentsDone);
     expect(argumentsDone.arguments).toBe('{"q":"x"}');
     const done = events.at(-1) as unknown as { item: OutputItem };
     expect(done.item).toMatchObject({
@@ -915,16 +923,15 @@ describe('MCP call output items', () => {
   it('replays a stored mcp_call item as the call and its result', () => {
     // Without this the model loses what a provider-run MCP tool was asked and what it returned,
     // and re-calls it or contradicts its own transcript (Python `_item_to_message`).
-    const message = must(
-      itemToMessage({
-        type: 'mcp_call',
-        id: 'mcp_1',
-        server_label: 'github',
-        name: 'search',
-        arguments: '{"q":1}',
-        output: 'ok',
-      } as OutputItem),
-    );
+    const message = itemToMessage({
+      type: 'mcp_call',
+      id: 'mcp_1',
+      server_label: 'github',
+      name: 'search',
+      arguments: '{"q":1}',
+      output: 'ok',
+    } as OutputItem);
+    assert.exists(message);
 
     expect(message.role).toBe('assistant');
     expect(message.contents[0]).toMatchObject({
@@ -962,12 +969,15 @@ describe('reasoning output items', () => {
     ]);
     const added = events[0] as unknown as { item: OutputItem };
     expect(added.item).toMatchObject({ type: 'reasoning', status: 'in_progress' });
-    const partAdded = must(events[1]);
+    const partAdded = events[1];
+    assert.exists(partAdded);
     expect(partAdded.summary_index).toBe(0);
     expect(partAdded.part).toEqual({ type: 'summary_text', text: '' });
-    const textDone = must(events.find((event) => event.type === 'response.reasoning_summary_text.done'));
+    const textDone = events.find((event) => event.type === 'response.reasoning_summary_text.done');
+    assert.exists(textDone);
     expect(textDone.text).toBe('first second');
-    const partDone = must(events.find((event) => event.type === 'response.reasoning_summary_part.done'));
+    const partDone = events.find((event) => event.type === 'response.reasoning_summary_part.done');
+    assert.exists(partDone);
     expect(partDone.part).toEqual({ type: 'summary_text', text: 'first second' });
     const done = events.at(-1) as unknown as { item: OutputItem };
     expect(done.item).toMatchObject({ type: 'reasoning', status: 'completed' });
@@ -1021,7 +1031,8 @@ describe('reasoning output items', () => {
     expect(done.item.summary).toEqual([{ type: 'summary_text', text: 'thinking…' }]);
 
     // The round trip that was previously broken: replayed history restores the payload verbatim.
-    const replayed = must(itemToMessage(done.item));
+    const replayed = itemToMessage(done.item);
+    assert.exists(replayed);
     expect(replayed.contents[0]).toMatchObject({
       type: 'text_reasoning',
       id: providerId,
@@ -1205,17 +1216,23 @@ describe('in-memory session store keying', () => {
 
     // Mutating either the caller's value or a loaded working copy must not rewrite `root`.
     (root.state.counter as { value: number }).value = 99;
-    const firstBranch = must(await store.load('alice', 'root'));
+    const firstBranch = await store.load('alice', 'root');
+    assert.exists(firstBranch);
     (firstBranch.state.counter as { value: number }).value = 2;
     await store.save('alice', 'branch-a', firstBranch);
 
-    const secondBranch = must(await store.load('alice', 'root'));
+    const secondBranch = await store.load('alice', 'root');
+    assert.exists(secondBranch);
     expect((secondBranch.state.counter as { value: number }).value).toBe(1);
 
     // A consumer cannot mutate a saved branch through a value returned by `load`, either.
     (secondBranch.state.counter as { value: number }).value = 3;
-    expect((must(await store.load('alice', 'root')).state.counter as { value: number }).value).toBe(1);
-    expect((must(await store.load('alice', 'branch-a')).state.counter as { value: number }).value).toBe(2);
+    const loadedRoot = await store.load('alice', 'root');
+    const loadedBranch = await store.load('alice', 'branch-a');
+    assert.exists(loadedRoot);
+    assert.exists(loadedBranch);
+    expect((loadedRoot.state.counter as { value: number }).value).toBe(1);
+    expect((loadedBranch.state.counter as { value: number }).value).toBe(2);
   });
 });
 
@@ -1273,7 +1290,8 @@ describe('hosted tool content mappings', () => {
 
     // Replay round trip: the stored item restores as the call, keyed by the item id (Python
     // `from_image_generation_tool_call(image_id=ig.id)`).
-    const replayed = must(itemToMessage(done.item));
+    const replayed = itemToMessage(done.item);
+    assert.exists(replayed);
     expect(replayed.role).toBe('assistant');
     expect(replayed.contents[0]).toMatchObject({
       type: 'image_generation_tool_call',
@@ -1324,7 +1342,8 @@ describe('hosted tool content mappings', () => {
     expect(String(result.id)).toMatch(/^lsho_/);
 
     // Replay round trip (Python `_item_to_message` for `shell_call` / `shell_call_output`).
-    const replayedCall = must(itemToMessage(call));
+    const replayedCall = itemToMessage(call);
+    assert.exists(replayedCall);
     expect(replayedCall.role).toBe('assistant');
     expect(replayedCall.contents[0]).toMatchObject({
       type: 'shell_tool_call',
@@ -1332,7 +1351,8 @@ describe('hosted tool content mappings', () => {
       commands: ['ls', 'pwd'],
       status: 'completed',
     });
-    const replayedResult = must(itemToMessage(result));
+    const replayedResult = itemToMessage(result);
+    assert.exists(replayedResult);
     expect(replayedResult.role).toBe('tool');
     expect(replayedResult.contents[0]).toMatchObject({
       type: 'shell_tool_result',
@@ -1389,7 +1409,8 @@ describe('hosted tool content mappings', () => {
     });
     expect(String(item.id)).toMatch(/^ctco_/);
 
-    const replayed = must(itemToMessage(item));
+    const replayed = itemToMessage(item);
+    assert.exists(replayed);
     expect(replayed.role).toBe('tool');
     expect(replayed.contents[0]).toMatchObject({ type: 'mcp_server_tool_result', callId: 'mcp_call1' });
     expect((replayed.contents[0] as { output: Array<{ text: string }> }).output[0]?.text).toBe(
@@ -1397,14 +1418,13 @@ describe('hosted tool content mappings', () => {
     );
 
     // A non-MCP call id replays as an ordinary function result.
-    const other = must(
-      itemToMessage({
-        type: 'custom_tool_call_output',
-        id: 'ctco_x',
-        call_id: 'ctc_1',
-        output: '42',
-      } as OutputItem),
-    );
+    const other = itemToMessage({
+      type: 'custom_tool_call_output',
+      id: 'ctco_x',
+      call_id: 'ctc_1',
+      output: '42',
+    } as OutputItem);
+    assert.exists(other);
     expect(other.contents[0]).toMatchObject({ type: 'function_result', callId: 'ctc_1', result: '42' });
   });
 
@@ -1468,7 +1488,9 @@ describe('stored-history replay', () => {
       void event;
     }
 
-    const contents = must(client.calls[0]).messages.flatMap((message) => message.contents);
+    const firstCall = client.calls[0];
+    assert.exists(firstCall);
+    const contents = firstCall.messages.flatMap((message) => message.contents);
     expect(contents).toContainEqual(
       expect.objectContaining({ type: 'search_tool_call', callId: 'ws_1', toolName: 'web_search' }),
     );
@@ -1686,8 +1708,8 @@ describe('background execution with the Foundry store', () => {
     // Drain the live stream so the run finishes and persists its replay log.
     const live = await created.text();
     const id = /"id":\s*"(caresp_[A-Za-z0-9]+)"/.exec(live)?.[1];
-    expect(id).toBeDefined();
-    await waitUntilCompleted(app, must(id));
+    assert.exists(id);
+    await waitUntilCompleted(app, id);
 
     // A second subscriber replays the same events from the persisted log — the run is gone.
     const replay = await app.handle(
@@ -1737,7 +1759,9 @@ describe('background execution with the Foundry store', () => {
     expect(second.error ?? null).toBeNull();
 
     // The model saw the first turn's transcript, replayed from the service store.
-    const replayedTexts = JSON.stringify(must(client.calls[1]).messages);
+    const secondCall = client.calls[1];
+    assert.exists(secondCall);
+    const replayedTexts = JSON.stringify(secondCall.messages);
     expect(replayedTexts).toContain('remember the word apple');
     expect(replayedTexts).toContain('first answer');
   });
@@ -1755,7 +1779,9 @@ describe('background execution with the Foundry store', () => {
     ).json()) as ResponseObject;
     expect(second.status).toBe('completed');
     expect(second.error ?? null).toBeNull();
-    expect(JSON.stringify(must(client.calls[1]).messages)).toContain('the color is teal');
+    const secondCall = client.calls[1];
+    assert.exists(secondCall);
+    expect(JSON.stringify(secondCall.messages)).toContain('the color is teal');
 
     // No alias record was written under the conversation id: every stored response keeps its own
     // id, and the linkage lives in the service (the alias create would have collided anyway).
@@ -1769,7 +1795,8 @@ describe('background execution with the Foundry store', () => {
 
     const created = await app.handle(post({ input: 'hi', background: true, stream: true }));
     const live = await created.text();
-    const id = must(/"id":\s*"(caresp_[A-Za-z0-9]+)"/.exec(live)?.[1]);
+    const id = /"id":\s*"(caresp_[A-Za-z0-9]+)"/.exec(live)?.[1];
+    assert.exists(id);
     await waitUntilCompleted(app, id);
 
     const tail = await app.handle(
@@ -2136,14 +2163,13 @@ describe('OAuth consent over the protocol', () => {
   });
 
   it('replays a stored oauth_consent_request as the core consent content', () => {
-    const message = must(
-      itemToMessage({
-        type: 'oauth_consent_request',
-        id: 'oacr_1',
-        consent_link: CONSENT_LINK,
-        server_label: 'github',
-      } as OutputItem),
-    );
+    const message = itemToMessage({
+      type: 'oauth_consent_request',
+      id: 'oacr_1',
+      consent_link: CONSENT_LINK,
+      server_label: 'github',
+    } as OutputItem);
+    assert.exists(message);
 
     expect(message.role).toBe('assistant');
     // `consentLink` + `userInputRequest` per the core type (Python parity), so
@@ -2193,14 +2219,11 @@ describe('streamed event sequences for provider tool items', () => {
     const types = body
       .split('\n\n')
       .filter((block) => block.trim() !== '' && !block.startsWith(':'))
-      .map(
-        (block) =>
-          (
-            JSON.parse(
-              must(block.split('\n').find((line) => line.startsWith('data: '))).slice('data: '.length),
-            ) as Record<string, unknown>
-          ).type,
-      );
+      .map((block) => {
+        const dataLine = block.split('\n').find((line) => line.startsWith('data: '));
+        assert.exists(dataLine);
+        return (JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>).type;
+      });
 
     expect(types).toEqual([
       'response.created',
@@ -2307,7 +2330,8 @@ describe('hosted agent context', () => {
     ).json()) as ResponseObject;
     expect(response.status).toBe('completed');
 
-    const context = must(seenByTool[0]);
+    const context = seenByTool[0];
+    assert.exists(context);
     expect(context.userId).toBe('alice');
     expect(context.callId).toBe('call-77');
     expect(context.responseId).toBe(response.id);

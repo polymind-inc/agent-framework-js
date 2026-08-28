@@ -4,17 +4,12 @@
  * artifact.
  */
 
+import { assert } from 'vitest';
 import type { HandlerContext, ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { InMemoryResponseProvider } from './store/memory.js';
 import type { ResponseProvider } from './store/provider.js';
 import type { CreateResponseRequest, ResponseObject } from './wire.js';
-
-/** Narrows away null/undefined; a missing value fails the test with a clear error. */
-export function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 /** A `POST /responses` request with a JSON body. */
 export function post(body: unknown, headers: Record<string, string> = {}): Request {
@@ -34,8 +29,10 @@ export async function readSse(
     .split('\n\n')
     .filter((block) => block.trim() !== '' && !block.startsWith(':'))
     .map((block) => {
-      const eventLine = must(block.split('\n').find((line) => line.startsWith('event: ')));
-      const dataLine = must(block.split('\n').find((line) => line.startsWith('data: ')));
+      const eventLine = block.split('\n').find((line) => line.startsWith('event: '));
+      const dataLine = block.split('\n').find((line) => line.startsWith('data: '));
+      assert.exists(eventLine);
+      assert.exists(dataLine);
       return {
         event: eventLine.slice('event: '.length),
         data: JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>,

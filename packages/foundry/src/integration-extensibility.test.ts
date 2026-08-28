@@ -31,8 +31,7 @@ import {
   tool,
   toolApprovalMiddleware,
 } from '@polymind-inc/agent-framework-core';
-import { must } from '@polymind-inc/agent-framework-core/internal';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
 import { FoundryProject } from './project.js';
 
@@ -41,11 +40,13 @@ const modelDeployment =
   process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? process.env.FOUNDRY_MODEL_DEPLOYMENT ?? 'gpt-4o-mini';
 const TIMEOUT = 120_000;
 
-const deploymentClient = (): FoundryChatClient =>
-  new FoundryChatClient({
-    project: new FoundryProject(must(projectEndpoint), new DefaultAzureCredential()),
+const deploymentClient = (): FoundryChatClient => {
+  assert.exists(projectEndpoint);
+  return new FoundryChatClient({
+    project: new FoundryProject(projectEndpoint, new DefaultAzureCredential()),
     target: { model: modelDeployment },
   });
+};
 
 /** A weather tool, the smallest thing that makes a real model call a function. */
 const getWeather = tool({

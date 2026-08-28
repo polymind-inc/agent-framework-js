@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { assert, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { ConfigurationError, SchemaResolutionError, UserInputRequiredError } from '../errors.js';
 import { functionMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -15,7 +15,7 @@ import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import type { ChatClient, ChatClientMetadata, ChatOptions } from './chat-client.js';
 import { FunctionInvocationLimitError } from './function-execution.js';
 import { withFunctionInvocation } from './function-invocation.js';
-import { MockChatClient, must } from './test-support.js';
+import { MockChatClient } from './test-support.js';
 
 function call(
   callId: string,
@@ -63,7 +63,8 @@ describe('withFunctionInvocation', () => {
     expect(resultsOf(allContents).map((r) => r.result)).toEqual(['Tokyo is sunny']);
 
     // The second model call sees user -> assistant(tool_call) -> tool(result).
-    const secondCall = must(inner.calls[1]);
+    const secondCall = inner.calls[1];
+    assert.exists(secondCall);
     expect(secondCall.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
   });
 
@@ -826,7 +827,8 @@ describe('generated function_result metadata (Python parity)', () => {
 
     const [result] = resultsOf(response.messages.flatMap((msg) => msg.contents));
     expect(result).toBeDefined();
-    expect('additionalProperties' in must(result)).toBe(false);
+    assert.exists(result);
+    expect('additionalProperties' in result).toBe(false);
   });
 
   it('carries them onto a rejected approval result too', async () => {
@@ -1428,7 +1430,9 @@ describe('conversation chaining between rounds', () => {
     } as ChatOptions);
 
     expect(requests).toHaveLength(2);
-    expect(must(requests[1]).conversationId).toBe('stable_1');
+    const secondRequest = requests[1];
+    assert.exists(secondRequest);
+    expect(secondRequest.conversationId).toBe('stable_1');
   });
 
   it('advances to the reported id when the provider declares no stable ids', async () => {
@@ -1441,7 +1445,9 @@ describe('conversation chaining between rounds', () => {
     } as ChatOptions);
 
     expect(requests).toHaveLength(2);
-    expect(must(requests[1]).conversationId).toBe('resp_r1');
+    const secondRequest = requests[1];
+    assert.exists(secondRequest);
+    expect(secondRequest.conversationId).toBe('resp_r1');
   });
 
   it('advances a non-stable id even when the provider declares a stable spelling', async () => {
@@ -1455,6 +1461,8 @@ describe('conversation chaining between rounds', () => {
     } as ChatOptions);
 
     expect(requests).toHaveLength(2);
-    expect(must(requests[1]).conversationId).toBe('resp_r1');
+    const secondRequest = requests[1];
+    assert.exists(secondRequest);
+    expect(secondRequest.conversationId).toBe('resp_r1');
   });
 });

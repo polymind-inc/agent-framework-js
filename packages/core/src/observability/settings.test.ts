@@ -15,7 +15,6 @@ describe('captureMessageContent', () => {
   });
 
   afterEach(() => {
-    vi.unstubAllEnvs();
     configureObservability({});
   });
 

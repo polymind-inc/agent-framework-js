@@ -8,17 +8,17 @@
 import type { AccessToken, TokenCredential } from '@azure/identity';
 import type { HandlerContext } from '@polymind-inc/agent-framework-agentserver';
 import { createRequestContext } from '@polymind-inc/agent-framework-agentserver';
+import { type Mocked, vi } from 'vitest';
 
 /** A credential whose tokens expire `ttlMs` from now. */
-export function fakeCredential(ttlMs: number = 60 * 60 * 1000): TokenCredential & { calls: number } {
-  const credential = {
-    calls: 0,
-    async getToken(): Promise<AccessToken> {
-      credential.calls++;
-      return { token: `token-${credential.calls}`, expiresOnTimestamp: Date.now() + ttlMs };
-    },
-  };
-  return credential;
+export function fakeCredential(ttlMs: number = 60 * 60 * 1000): Mocked<TokenCredential> {
+  let calls = 0;
+  return {
+    getToken: vi.fn<TokenCredential['getToken']>(async (): Promise<AccessToken> => {
+      calls += 1;
+      return { token: `token-${calls}`, expiresOnTimestamp: Date.now() + ttlMs };
+    }),
+  } satisfies TokenCredential;
 }
 
 /** A handler context for one hosted turn, built on the given request headers. */

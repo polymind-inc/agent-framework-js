@@ -9,12 +9,8 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import type { MockTurn } from '@polymind-inc/agent-framework-core/testing';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { InvocationsHostServer } from './invocations.js';
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 function say(text: string): MockTurn {
   return { contents: [textContent(text)], finishReason: 'stop' };

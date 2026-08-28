@@ -1,5 +1,4 @@
-import { describe, expect, it } from 'vitest';
-import { must } from '../client/test-support.js';
+import { assert, describe, expect, it } from 'vitest';
 import { unknownContent } from './content.js';
 import type { Message } from './message.js';
 import { deserializeMessage, serializeContent, serializeMessage } from './serialization.js';
@@ -23,7 +22,9 @@ describe('message serialization', () => {
     const wire = serializeMessage(msg);
     expect(wire).not.toHaveProperty('rawRepresentation');
     expect(wire.contents[0]).not.toHaveProperty('rawRepresentation');
-    expect((must(wire.contents[1]).annotations as unknown[])[0]).not.toHaveProperty('rawRepresentation');
+    const cited = wire.contents[1];
+    assert.exists(cited);
+    expect((cited.annotations as unknown[])[0]).not.toHaveProperty('rawRepresentation');
     expect(JSON.parse(JSON.stringify(wire))).toEqual(wire);
   });
 
@@ -321,5 +322,7 @@ describe('unknownContent', () => {
 function deserializeContentHelper(
   data: Record<string, unknown>,
 ): ReturnType<typeof deserializeMessage>['contents'][number] {
-  return must(deserializeMessage({ role: 'assistant', contents: [data] }).contents[0]);
+  const content = deserializeMessage({ role: 'assistant', contents: [data] }).contents[0];
+  assert.exists(content);
+  return content;
 }

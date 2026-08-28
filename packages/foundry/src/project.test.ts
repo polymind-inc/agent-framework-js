@@ -29,7 +29,7 @@ describe('FoundryProject', () => {
 
     expect(await project.getToken()).toBe('token-1');
     expect(await project.getToken()).toBe('token-1');
-    expect(credential.calls).toBe(1);
+    expect(credential.getToken).toHaveBeenCalledOnce();
   });
 
   it('refreshes a token that is about to expire', async () => {
@@ -48,7 +48,7 @@ describe('FoundryProject', () => {
     const tokens = await Promise.all([project.getToken(), project.getToken(), project.getToken()]);
 
     expect(tokens).toEqual(['token-1', 'token-1', 'token-1']);
-    expect(credential.calls).toBe(1);
+    expect(credential.getToken).toHaveBeenCalledOnce();
   });
 
   it('requests the Foundry data-plane scope by default', async () => {
@@ -78,7 +78,7 @@ describe('FoundryProject', () => {
     await project.getToken();
     await project.getToken('https://other.example/.default');
 
-    expect(credential.calls).toBe(2);
+    expect(credential.getToken).toHaveBeenCalledTimes(2);
   });
 
   it('reports a credential that cannot produce a token', async () => {

@@ -17,8 +17,7 @@ import { DefaultAzureCredential } from '@azure/identity';
 import type { ResponseObject } from '@polymind-inc/agent-framework-agentserver';
 import { ID_PREFIX, newId, newResponseId } from '@polymind-inc/agent-framework-agentserver';
 import { Agent, tool } from '@polymind-inc/agent-framework-core';
-import { must } from '@polymind-inc/agent-framework-core/internal';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
 import { FoundryResponseStore } from './hosting/response-store.js';
 import { FoundryToolbox } from './hosting/toolbox.js';
@@ -32,7 +31,10 @@ const toolboxName = process.env.FOUNDRY_TOOLBOX_NAME;
 const runIntegration = process.env.RUN_INTEGRATION_TESTS === '1';
 const TIMEOUT = 60_000;
 
-const project = (): FoundryProject => new FoundryProject(must(projectEndpoint), new DefaultAzureCredential());
+const project = (): FoundryProject => {
+  assert.exists(projectEndpoint);
+  return new FoundryProject(projectEndpoint, new DefaultAzureCredential());
+};
 
 const deploymentClient = (): FoundryChatClient =>
   new FoundryChatClient({ project: project(), target: { model: modelDeployment } });
@@ -77,9 +79,10 @@ describe.runIf(runIntegration && projectEndpoint !== undefined && projectEndpoin
       'talks to an existing server agent',
       { timeout: TIMEOUT },
       async () => {
+        assert.exists(serverAgent);
         const client = new FoundryChatClient({
           project: project(),
-          target: { serverAgent: must(serverAgent) },
+          target: { serverAgent },
         });
 
         const response = await new Agent({ client }).run('Hello');
@@ -102,7 +105,10 @@ describe.runIf(
     toolboxName !== undefined &&
     toolboxName !== '',
 )('Foundry Toolbox (integration)', () => {
-  const toolbox = (): FoundryToolbox => new FoundryToolbox({ name: must(toolboxName), project: project() });
+  const toolbox = (): FoundryToolbox => {
+    assert.exists(toolboxName);
+    return new FoundryToolbox({ name: toolboxName, project: project() });
+  };
 
   it('lists the toolbox tools over MCP', { timeout: TIMEOUT }, async () => {
     const box = toolbox();

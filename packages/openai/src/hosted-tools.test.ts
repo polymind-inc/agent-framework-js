@@ -13,9 +13,8 @@ import {
   supportsWebSearch,
   textContent,
 } from '@polymind-inc/agent-framework-core';
-import { must } from '@polymind-inc/agent-framework-core/internal';
 import type OpenAI from 'openai';
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { OpenAIChatClient } from './chat-client.js';
 import { parseResponse } from './from-openai.js';
 import { toResponsesInput, toResponsesTools } from './to-openai.js';
@@ -166,7 +165,9 @@ describe('hosted tool output mapping', () => {
     const [call, result] = contentsOf(response) as [HostedToolCallContent, HostedToolResultContent];
 
     expect(call.type).toBe('code_interpreter_tool_call');
-    expect((must(call.inputs?.[0]) as TextContent).text).toBe('print(1)');
+    const input = call.inputs?.[0];
+    assert.exists(input);
+    expect((input as TextContent).text).toBe('print(1)');
     expect(result.type).toBe('code_interpreter_tool_result');
     expect(result.outputs?.map((o) => o.type)).toEqual(['text', 'uri']);
   });

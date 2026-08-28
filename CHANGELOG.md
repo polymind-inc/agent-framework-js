@@ -15,7 +15,7 @@ contain breaking changes**; patch releases are fixes only.
   predicate remain: use the predicate to test an individual event type. Code that enumerated or
   iterated the exported tuple has no direct replacement.
 - **`@polymind-inc/agent-framework-core`** — a new `/internal` subpath holds the utilities the
-  framework's own packages and test suites share. Like the other `/internal` entries, it is a
+  framework's own packages share. Like the other `/internal` entries, it is a
   contract between the framework's packages and not part of the supported surface.
 - **`@polymind-inc/agent-framework-anthropic`** — a replayed `function_call` whose string
   arguments parse to a JSON array or scalar no longer reaches the API as `tool_use.input`; it

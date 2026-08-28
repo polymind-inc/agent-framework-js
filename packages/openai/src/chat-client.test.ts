@@ -11,9 +11,8 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
-import { must } from '@polymind-inc/agent-framework-core/internal';
 import OpenAI, { AzureOpenAI } from 'openai';
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { OpenAIChatClient } from './chat-client.js';
 
 interface FakeOpenAI {
@@ -922,7 +921,9 @@ describe('Agent over OpenAIChatClient', () => {
     const requests = first.userInputRequests.filter(isApprovalRequest);
     expect(requests.map((request) => request.id)).toEqual(['mcpr_1']);
 
-    const resumed = await agent.run(approvalResponse(must(requests[0]), true), { session });
+    const [request] = requests;
+    assert.exists(request);
+    const resumed = await agent.run(approvalResponse(request, true), { session });
 
     // The decision has to arrive as an `mcp_approval_response` item. Handling it locally would
     // answer the model with a "not found" tool result and leave the MCP server waiting forever.
@@ -954,7 +955,9 @@ describe('Agent over OpenAIChatClient', () => {
     // conversation state is a separate opt-in.
     expect(session.serviceSessionId).toBeUndefined();
     expect(create.mock.calls[1]?.[0].previous_response_id).toBeUndefined();
-    expect((must(create.mock.calls[1])[0].input as InputItem[]).map((item) => item.role)).toEqual([
+    const secondCall = create.mock.calls[1];
+    assert.exists(secondCall);
+    expect((secondCall[0].input as InputItem[]).map((item) => item.role)).toEqual([
       'user',
       'assistant',
       'user',

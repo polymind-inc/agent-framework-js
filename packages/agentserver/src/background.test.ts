@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { newResponseId } from './ids.js';
 import type { HandlerContext, ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
@@ -9,7 +9,7 @@ import type {
   ResponseProvider,
   StoredResponse,
 } from './store/provider.js';
-import { lifecycleHandler, makeServer, must, post, readSse } from './test-helpers.js';
+import { lifecycleHandler, makeServer, post, readSse } from './test-helpers.js';
 import type { CreateResponseRequest, OutputItem, ResponseEvent, ResponseObject } from './wire.js';
 
 /** The reader of a streaming response's body; a body-less response fails the test outright. */
@@ -165,13 +165,7 @@ function deleteRequest(id: string): Request {
 
 /** Waits for a condition a *detached* run makes true; the only clock these tests have. */
 async function waitFor(predicate: () => boolean, what: string): Promise<void> {
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error(`timed out waiting for ${what}`);
+  await vi.waitFor(() => expect(predicate(), what).toBe(true), { timeout: 3_000, interval: 5 });
 }
 
 /** Polls `GET /responses/{id}` until the predicate holds; the background turn's clock. */
@@ -180,17 +174,19 @@ async function pollUntil(
   id: string,
   predicate: (response: ResponseObject) => boolean,
 ): Promise<ResponseObject> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const response = await server.handle(get(`/responses/${id}`));
-    if (response.status === 200) {
-      const body = (await response.json()) as ResponseObject;
-      if (predicate(body)) {
-        return body;
+  return vi.waitUntil(
+    async () => {
+      const response = await server.handle(get(`/responses/${id}`));
+      if (response.status === 200) {
+        const body = (await response.json()) as ResponseObject;
+        if (predicate(body)) {
+          return body;
+        }
       }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error(`response ${id} never reached the expected state`);
+      return false;
+    },
+    { timeout: 2_000, interval: 5 },
+  );
 }
 
 async function errorOf(response: Response): Promise<{ code: string; message: string; param: string | null }> {
@@ -275,7 +271,9 @@ describe('background + stream', () => {
     expect(events.at(-1)?.event).toBe('response.completed');
     expect(events.map((e) => e.data.sequence_number)).toEqual(events.map((_, index) => index));
 
-    const id = (must(events[0]).data.response as ResponseObject).id;
+    const firstEvent = events[0];
+    assert.exists(firstEvent);
+    const id = (firstEvent.data.response as ResponseObject).id;
     const finished = await pollUntil(server, id, (r) => r.status === 'completed');
     expect(finished.background).toBe(true);
   });
@@ -303,7 +301,9 @@ describe('streamed replay', () => {
   async function completedStream(server: ResponsesServer): Promise<{ id: string; count: number }> {
     const created = await server.handle(post({ input: 'hi', background: true, stream: true }));
     const events = await readSse(created);
-    const id = (must(events[0]).data.response as ResponseObject).id;
+    const firstEvent = events[0];
+    assert.exists(firstEvent);
+    const id = (firstEvent.data.response as ResponseObject).id;
     await pollUntil(server, id, (r) => r.status === 'completed');
     return { id, count: events.length };
   }
@@ -410,7 +410,9 @@ describe('streamed replay', () => {
     expect(events[0]?.event).toBe('response.created');
     expect(events.at(-1)?.event).toBe('response.completed');
     expect(events.map((e) => e.data.sequence_number)).toEqual([0, 1, 2, 3]);
-    const id = (must(events[0]).data.response as ResponseObject).id;
+    const firstEvent = events[0];
+    assert.exists(firstEvent);
+    const id = (firstEvent.data.response as ResponseObject).id;
 
     // The run itself is unharmed: its terminal state is persisted as usual.
     await pollUntil(server, id, (r) => r.status === 'completed');
@@ -701,10 +703,6 @@ describe('delete', () => {
 });
 
 describe('cancellation always wins over the handler', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   /** Short enough that the past-grace branch is reachable in a unit test. */
   function shortGrace(): void {
     vi.stubEnv('AGENTSERVER_CANCEL_GRACE_MS', '20');
