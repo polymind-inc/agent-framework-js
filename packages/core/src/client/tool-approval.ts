@@ -10,10 +10,12 @@ import {
 import type { AnyFunctionTool, Tool } from '../tools/tool.js';
 import { isFunctionTool } from '../tools/tool.js';
 import type { Content, FunctionApprovalRequestContent, FunctionCallContent } from '../types/content.js';
+import { isRecord } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { ChatResponseUpdate } from '../types/response.js';
-import { chatResponseToUpdates, chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
+import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import type { ChatClient, ChatOptions, ChatResponseStream } from './chat-client.js';
+import { updatesOf } from './provider-utils.js';
 
 /** The {@link AgentSession.state} slot this layer owns. */
 export const APPROVAL_STATE_KEY = '_toolApproval';
@@ -79,9 +81,7 @@ function readSlot(state: Record<string, unknown>, key: string): FunctionApproval
 export function sessionApprovalStore(session: AgentSession): ApprovalStateStore {
   const peek = (): Record<string, unknown> => {
     const existing = session.state[APPROVAL_STATE_KEY];
-    return typeof existing === 'object' && existing !== null && !Array.isArray(existing)
-      ? (existing as Record<string, unknown>)
-      : {};
+    return isRecord(existing) ? existing : {};
   };
   const take = (slot: string): FunctionApprovalRequestContent[] => {
     const state = peek();
@@ -342,14 +342,8 @@ export function withToolApproval<TOptions extends ChatOptions>(
         };
 
         try {
-          if (stream) {
-            for await (const update of inner) {
-              yield* handle(update);
-            }
-          } else {
-            for (const update of chatResponseToUpdates(await inner)) {
-              yield* handle(update);
-            }
+          for await (const update of updatesOf(inner, stream)) {
+            yield* handle(update);
           }
         } finally {
           // `finally` so an abandoned stream still records what it surfaced; otherwise the caller

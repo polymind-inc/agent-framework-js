@@ -78,7 +78,7 @@ export function validateStoreId(id: string, param: string): void {
 /** Rejects a response id that is not both canonical and safe as a storage key. */
 export function validateResponseId(id: string, param = 'response_id'): void {
   if (!isValidId(id, [ID_PREFIX.response])) {
-    // The message stays generic on purpose: echoing the id back would reflect caller input.
+    // The same deliberately generic message as `validateStoreId`.
     throw badRequest('Malformed identifier.', { code: 'invalid_parameters', param });
   }
   validateStoreId(id, param);

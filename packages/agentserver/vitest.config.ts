@@ -1,3 +1,6 @@
 import { definePackageTests } from '../../scripts/vitest-config.ts';
 
-export default definePackageTests();
+const config = definePackageTests();
+// The suite must not inherit the machine's deployment environment; see src/test-setup.ts.
+config.test = { ...config.test, setupFiles: ['./src/test-setup.ts'] };
+export default config;

@@ -27,6 +27,7 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import type { MockTurn } from '@polymind-inc/agent-framework-core/testing';
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it } from 'vitest';
@@ -63,12 +64,6 @@ function post(body: CreateResponseRequest, headers: Record<string, string> = {})
 
 function textOf(response: ResponseObject): string {
   return JSON.stringify(response.output);
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 /** Polls `GET /responses/{id}` until the response completes, failing the test after ~4s. */
@@ -842,7 +837,7 @@ describe('MCP call output items', () => {
   });
 
   it('emits the mcp_call event family in the reference order', () => {
-    // Python `_responses.py:1006-1128`: added → arguments delta(s) → arguments.done →
+    // Python `_responses.py`: added → arguments delta(s) → arguments.done →
     // mcp_call.completed → output_item.done, with the folded result only on the finished item.
     const builder = new OutputBuilder('caresp_hint');
     const events = [
@@ -946,7 +941,7 @@ describe('MCP call output items', () => {
 
 describe('reasoning output items', () => {
   it('emits the reasoning summary part event family in the reference order', () => {
-    // Python `_responses.py:1052-1115`: added(status in_progress) → reasoning_summary_part.added
+    // Python `_responses.py`: added(status in_progress) → reasoning_summary_part.added
     // → text delta(s) → reasoning_summary_text.done → reasoning_summary_part.done →
     // output_item.done(status completed).
     const builder = new OutputBuilder('caresp_hint');

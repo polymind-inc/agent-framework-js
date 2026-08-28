@@ -1,5 +1,7 @@
 import type { Attributes, AttributeValue, Span } from '@opentelemetry/api';
 import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
+import { setIfDefined } from '../client/provider-utils.js';
+import { errorTypeOf } from '../errors.js';
 import type { Content } from '../types/content.js';
 import { textContent, textOfContents } from '../types/content.js';
 import type { Message } from '../types/message.js';
@@ -16,7 +18,7 @@ export function setAttr(span: Span, key: string, value: unknown): void {
 }
 
 /** Records token counts under the GenAI usage attribute names. */
-export function setUsageAttributes(span: Span, usage: UsageDetails | undefined): void {
+function setUsageAttributes(span: Span, usage: UsageDetails | undefined): void {
   if (usage === undefined) {
     return;
   }
@@ -40,12 +42,6 @@ export function setResponseAttributes(
   setUsageAttributes(span, response.usageDetails);
 }
 
-/**
- * Serializes messages for the sensitive-data attributes.
- *
- * Only the fields the convention asks for, so a span does not carry provider objects or base64
- * payloads: those belong in the transcript, not in a trace.
- */
 /** One part of the sensitive-data serialization: only the field the convention asks for. */
 function spanPart(content: Content): { type: string; content?: string } {
   return content.type === 'text' ? { type: 'text', content: content.text } : { type: content.type };
@@ -56,7 +52,13 @@ function serializeMessageForSpan(msg: Message): string {
   return JSON.stringify({ role: msg.role, parts: msg.contents.map(spanPart) });
 }
 
-export function serializeMessagesForSpan(messages: readonly Message[]): string {
+/**
+ * Serializes messages for the sensitive-data attributes.
+ *
+ * Only the fields the convention asks for, so a span does not carry provider objects or base64
+ * payloads: those belong in the transcript, not in a trace.
+ */
+function serializeMessagesForSpan(messages: readonly Message[]): string {
   return `[${messages.map(serializeMessageForSpan).join(',')}]`;
 }
 
@@ -301,8 +303,7 @@ export function responseFinishReason(response: ResponseBase<unknown>): string | 
 
 /** Marks a span failed and records the error type, matching the GenAI conventions. */
 export function recordSpanError(span: Span, error: unknown): void {
-  const type = error instanceof Error ? error.name : typeof error;
-  span.setAttribute(GEN_AI.errorType, type);
+  span.setAttribute(GEN_AI.errorType, errorTypeOf(error));
   span.setStatus(
     error instanceof Error
       ? { code: SpanStatusCode.ERROR, message: error.message }
@@ -438,23 +439,16 @@ export function inActiveSpan<T>(span: Span, value: () => PromiseLike<T>): Promis
 }
 
 /** Attributes for the `invoke_agent` span. */
-export function agentSpanAttributes(agent: {
-  id: string;
-  name?: string;
-  description?: string;
-  providerName?: string;
-  model?: string;
-  conversationId?: string;
-}): Attributes {
+export function agentSpanAttributes(agent: AgentRunSpanInfo): Attributes {
   const attributes: Attributes = {
     [GEN_AI.operation]: GEN_AI_OPERATION.invokeAgent,
     [GEN_AI.agentId]: agent.id,
   };
-  if (agent.name !== undefined) attributes[GEN_AI.agentName] = agent.name;
-  if (agent.description !== undefined) attributes[GEN_AI.agentDescription] = agent.description;
-  if (agent.providerName !== undefined) attributes[GEN_AI.providerName] = agent.providerName;
-  if (agent.model !== undefined) attributes[GEN_AI.requestModel] = agent.model;
-  if (agent.conversationId !== undefined) attributes[GEN_AI.conversationId] = agent.conversationId;
+  setIfDefined(attributes, GEN_AI.agentName, agent.name);
+  setIfDefined(attributes, GEN_AI.agentDescription, agent.description);
+  setIfDefined(attributes, GEN_AI.providerName, agent.providerName);
+  setIfDefined(attributes, GEN_AI.requestModel, agent.model);
+  setIfDefined(attributes, GEN_AI.conversationId, agent.conversationId);
   return attributes;
 }
 
@@ -484,9 +478,7 @@ export interface AgentRunSpanInfo {
 export interface AgentRunSpan {
   /**
    * Iterates `source` with this span active, so spans started while it runs become its children.
-   *
-   * Needed for lazily-started generators: their body only runs on the first `next()`, long after
-   * the factory returned, so the ambient context has to be re-entered around each pull.
+   * {@link withActiveSpan} explains why a lazily-started generator needs this.
    */
   active<T>(source: AsyncIterable<T>): AsyncIterable<T>;
   /** Awaits `value` with this span active, for a non-streaming call. */
@@ -524,10 +516,19 @@ export function startAgentRunSpan(
   info: AgentRunSpanInfo,
   inputMessages: readonly Message[] = [],
 ): AgentRunSpan {
-  const span = startSpan(spanName(GEN_AI_OPERATION.invokeAgent, info.name ?? info.id), {
-    ...agentSpanAttributes(info),
-  });
-  setMessageContent(span, GEN_AI.inputMessages, inputMessages);
+  const span = startSpan(
+    spanName(GEN_AI_OPERATION.invokeAgent, info.name ?? info.id),
+    agentSpanAttributes(info),
+  );
+  try {
+    // Serializing caller-supplied content can throw. The span has not been handed out yet, so no
+    // caller could end it — it has to be closed here, or an aborted start leaks an open span.
+    setMessageContent(span, GEN_AI.inputMessages, inputMessages);
+  } catch (error) {
+    recordSpanError(span, error);
+    span.end();
+    throw error;
+  }
   let ended = false;
   return {
     active: <T>(source: AsyncIterable<T>): AsyncIterable<T> => withActiveSpan(span, source),

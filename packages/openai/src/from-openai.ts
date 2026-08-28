@@ -150,11 +150,19 @@ function failureContent(
   if (response?.status !== 'failed' && message === '' && code === '') {
     return undefined;
   }
+  return failureErrorContent(message, code, rawEvent);
+}
+
+/**
+ * Builds the `error` content for a reported failure, substituting the generic defaults when the
+ * wire carries no usable message or code so the failure is never silent.
+ */
+function failureErrorContent(message: string, code: string, rawRepresentation: unknown): ErrorContent {
   return {
     type: 'error',
     message: message.trim() === '' ? DEFAULT_FAILURE_MESSAGE : message,
     errorCode: code === '' ? DEFAULT_FAILURE_CODE : code,
-    rawRepresentation: rawEvent,
+    rawRepresentation,
   };
 }
 
@@ -546,6 +554,33 @@ function codeInterpreterOutputs(item: Wire<ResponseCodeInterpreterToolCall>): Co
   return outputs;
 }
 
+/**
+ * Maps one message content part — `output_text`, `refusal`, or something newer — onto framework
+ * content.
+ *
+ * Shared by the awaited message-item path and the streamed `response.content_part.added` branch.
+ * For the two modelled part types, the caller chooses what `rawRepresentation` points at (the
+ * part itself when a complete response is parsed, the enclosing stream event otherwise) and
+ * whether annotations were parsed. A part this build does not model becomes unknown content
+ * derived from the part alone — `rawRepresentation` and `annotations` do not apply to it.
+ */
+function partContent(
+  part: unknown,
+  rawRepresentation: unknown,
+  annotations?: Content['annotations'],
+): Content {
+  const raw = part as { type?: unknown; text?: string; refusal?: string } | null | undefined;
+  if (raw?.type === 'output_text') {
+    const content: Content = { type: 'text', text: raw.text ?? '', rawRepresentation };
+    if (annotations !== undefined) content.annotations = annotations;
+    return content;
+  }
+  if (raw?.type === 'refusal') {
+    return { type: 'text', text: raw.refusal ?? '', rawRepresentation };
+  }
+  return unknownContent(part);
+}
+
 /** Converts one Responses API output item into framework contents. */
 function outputItemToContents(item: unknown): Content[] {
   const raw = item as Wire<ResponseOutputItem> | null | undefined;
@@ -553,16 +588,8 @@ function outputItemToContents(item: unknown): Content[] {
     case 'message': {
       const contents: Content[] = [];
       for (const part of raw.content ?? []) {
-        if (part?.type === 'output_text') {
-          const content: Content = { type: 'text', text: part.text ?? '', rawRepresentation: part };
-          const annotations = parseAnnotations(part.annotations);
-          if (annotations !== undefined) content.annotations = annotations;
-          contents.push(content);
-        } else if (part?.type === 'refusal') {
-          contents.push({ type: 'text', text: part.refusal ?? '', rawRepresentation: part });
-        } else {
-          contents.push(unknownContent(part));
-        }
+        const annotations = part?.type === 'output_text' ? parseAnnotations(part.annotations) : undefined;
+        contents.push(partContent(part, part, annotations));
       }
       return contents;
     }
@@ -757,26 +784,14 @@ export function parseStreamEvent(
     case 'error': {
       const message = typeof raw.message === 'string' ? raw.message : '';
       const code = typeof raw.code === 'string' ? raw.code : '';
-      contents.push({
-        type: 'error',
-        message: message.trim() === '' ? DEFAULT_FAILURE_MESSAGE : message,
-        errorCode: code === '' ? DEFAULT_FAILURE_CODE : code,
-        rawRepresentation: event,
-      });
+      contents.push(failureErrorContent(message, code, event));
       break;
     }
 
     case 'response.content_part.added': {
       // The part's initial text is usually empty, but Python emits whatever it carries so a
       // pre-filled part is not lost; deltas then stream the rest.
-      const part = raw.part;
-      if (part?.type === 'output_text') {
-        contents.push({ type: 'text', text: part.text ?? '', rawRepresentation: event });
-      } else if (part?.type === 'refusal') {
-        contents.push({ type: 'text', text: part.refusal ?? '', rawRepresentation: event });
-      } else {
-        contents.push(unknownContent(part));
-      }
+      contents.push(partContent(raw.part, event));
       break;
     }
 

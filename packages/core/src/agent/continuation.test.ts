@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatClient, ChatOptions, ChatResponseStream } from '../client/chat-client.js';
+import { must } from '../client/test-support.js';
 import type { ContextProvider } from '../context/context-provider.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError } from '../errors.js';
@@ -15,12 +16,6 @@ import {
 } from '../types/response.js';
 import { Agent } from './agent.js';
 import { isAgentContinuationToken, parseContinuationToken, wrapContinuationToken } from './continuation.js';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 /** One scripted turn: some text, and optionally a token meaning "not finished yet". */
 interface Turn {

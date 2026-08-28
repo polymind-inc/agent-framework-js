@@ -17,11 +17,12 @@ import { GenAIMainAgentSpanProcessor } from './observability/main-agent.js';
 // `vi.resetModules()`, so importing it here would pin the very instance those tests replace.
 import type * as HostObservabilitySetup from './observability/setup.js';
 import { RESPONSE_BAGGAGE } from './observability/trace-context.js';
-import type { HandlerContext, ResponseHandler } from './server.js';
+import type { ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { InMemoryResponseProvider } from './store/memory.js';
 import type { ResponseProvider } from './store/provider.js';
-import type { CreateResponseRequest, ResponseObject } from './wire.js';
+import { lifecycleHandler, must, post } from './test-helpers.js';
+import type { ResponseObject } from './wire.js';
 
 /** Resets every piece of global OTel state a test may have registered. */
 function disableGlobalOtel(): void {
@@ -32,33 +33,9 @@ function disableGlobalOtel(): void {
   setTelemetryFlusher(undefined);
 }
 
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
-function post(body: unknown, headers: Record<string, string> = {}): Request {
-  return new Request('http://localhost:8088/responses', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-  });
-}
-
 /** The smallest event sequence the lifecycle contract accepts, with room for span-making work. */
 function minimalHandler(work?: (stage: 'start' | 'late') => void): ResponseHandler {
-  return async function* (_request: CreateResponseRequest, context: HandlerContext) {
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-    work?.('start');
-    yield { type: 'response.created', response: response('queued') };
-    yield { type: 'response.in_progress', response: response('in_progress') };
-    work?.('late');
-    yield { type: 'response.completed', response: response('completed') };
-  };
+  return lifecycleHandler({ work });
 }
 
 describe('otlpProtocol', () => {

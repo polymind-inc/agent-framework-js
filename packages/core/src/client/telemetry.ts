@@ -1,4 +1,5 @@
 import type { Attributes, Span } from '@opentelemetry/api';
+import { errorTypeOf } from '../errors.js';
 import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
 import { recordChatMetrics } from '../observability/metrics.js';
 import {
@@ -100,9 +101,7 @@ export function withChatTelemetry<TOptions extends ChatOptions>(
           attributes: metricAttributes,
           usage: folded?.usageDetails,
           ...(startedAt === undefined ? {} : { durationSeconds: (performance.now() - startedAt) / 1000 }),
-          ...(failure === undefined
-            ? {}
-            : { errorType: failure instanceof Error ? failure.name : typeof failure }),
+          ...(failure === undefined ? {} : { errorType: errorTypeOf(failure) }),
         });
       };
 

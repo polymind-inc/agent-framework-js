@@ -5,9 +5,10 @@ import {
   writeJsonFile,
 } from '@polymind-inc/agent-framework-agentserver/internal';
 import type { SerializedAgentSession } from '@polymind-inc/agent-framework-core';
+import { compositeKey } from './composite-key.js';
 
 /** A session snapshot plus the user it belongs to. */
-export interface StoredSession {
+interface StoredSession {
   userId: string;
   session: SerializedAgentSession;
 }
@@ -101,21 +102,8 @@ export class FileSystemAgentSessionStore implements AgentSessionStore {
 export class InMemoryAgentSessionStore implements AgentSessionStore {
   readonly #sessions = new Map<string, StoredSession>();
 
-  /**
-   * A map key that cannot collide across `(userId, key)` pairs.
-   *
-   * Both halves are untrusted strings (a header, a request body), so joining them with *any*
-   * delimiter character lets a crafted conversation id impersonate another pair — the previous
-   * NUL-joined scheme let `key = "alice\u0000conv1"` overwrite the entry for `("alice", "conv1")`.
-   * `JSON.stringify` escapes every character, so the pair is recoverable and the composition is
-   * structurally injective.
-   */
-  static #compositeKey(userId: string, key: string): string {
-    return JSON.stringify([userId, key]);
-  }
-
   async load(userId: string, key: string): Promise<SerializedAgentSession | undefined> {
-    const stored = this.#sessions.get(InMemoryAgentSessionStore.#compositeKey(userId, key));
+    const stored = this.#sessions.get(compositeKey(userId, key));
     // A key another user owns is reported as absent, not as forbidden: a distinguishable refusal
     // tells the caller that *someone* holds that conversation id, and a conversation id is
     // guessable in a way an identity is not. The caller gets a
@@ -126,7 +114,7 @@ export class InMemoryAgentSessionStore implements AgentSessionStore {
   async save(userId: string, key: string, session: SerializedAgentSession): Promise<void> {
     // Keyed by the pair, so one user's write can never reach another user's entry — the same
     // isolation the filesystem store gets from its `[userId, key]` path.
-    this.#sessions.set(InMemoryAgentSessionStore.#compositeKey(userId, key), {
+    this.#sessions.set(compositeKey(userId, key), {
       userId,
       session: cloneSession(session),
     });

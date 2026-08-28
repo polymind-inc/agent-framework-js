@@ -29,7 +29,7 @@ export const OPERATION_DURATION_BUCKET_BOUNDARIES: readonly number[] = [
  * With no SDK registered this is the API's no-op meter, so instrumentation costs a few property
  * reads and nothing is exported — the same contract as {@link getTracer}.
  */
-export function getMeter(): Meter {
+function getMeter(): Meter {
   return metrics.getMeter(METER_NAME, METER_VERSION);
 }
 
@@ -69,7 +69,7 @@ export const GEN_AI_METRICS = {
 } as const;
 
 /** The `gen_ai.token.type` dimension of the token-usage histogram. */
-export const TOKEN_TYPE = { input: 'input', output: 'output' } as const;
+const TOKEN_TYPE = { input: 'input', output: 'output' } as const;
 
 /**
  * The span attributes that also become metric dimensions.

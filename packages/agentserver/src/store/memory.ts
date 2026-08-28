@@ -1,11 +1,18 @@
 import { notFound } from '../errors.js';
 import { positiveLimit } from '../validation.js';
 import type { OutputItem, ResponseEvent } from '../wire.js';
-import type { ResponseGeneration, ResponseOwner, ResponseProvider, StoredResponse } from './provider.js';
+import type {
+  ResponseGeneration,
+  ResponseOwner,
+  ResponseProvider,
+  StoredEventLog,
+  StoredResponse,
+} from './provider.js';
 import {
   assertOwnerCanWrite,
   assertWritable,
-  historyOf,
+  fencedEvents,
+  historyVia,
   isCurrentGeneration,
   ownedOrUndefined,
   sameOwner,
@@ -22,13 +29,6 @@ export interface InMemoryResponseProviderConfig {
    * that needs no timers. An evicted response reads as absent, exactly like an expired one.
    */
   maxResponses?: number;
-}
-
-/** An event stream held for replay, together with who it belongs to. */
-interface StoredEvents {
-  owner: ResponseOwner;
-  generation: ResponseGeneration;
-  events: ResponseEvent[];
 }
 
 /**
@@ -52,7 +52,7 @@ export class InMemoryResponseProvider implements ResponseProvider {
    */
   readonly #aliasIdsFor = new Map<string, Set<string>>();
   /** Replayable background streams, keyed by response id. Bounded by the same cap as responses. */
-  readonly #events = new Map<string, StoredEvents>();
+  readonly #events = new Map<string, StoredEventLog>();
   readonly #maxResponses: number;
 
   constructor(options: InMemoryResponseProviderConfig = {}) {
@@ -153,24 +153,24 @@ export class InMemoryResponseProvider implements ResponseProvider {
     events: readonly ResponseEvent[],
     generation: ResponseGeneration,
   ): Promise<void> {
-    // The same two refusals a `put` gives: neither someone else's response record nor someone
-    // else's event stream may be replaced under a reused id.
+    // The same two refusals a `put` gives — `FileResponseProvider.putEvents` spells out the
+    // rationale. Here the whole check-and-write is one synchronous step, so nothing can slip
+    // between them.
     const record = this.#responses.get(id);
     assertOwnerCanWrite(record, id, owner);
     if (!isCurrentGeneration(record, generation)) {
       // The id was deleted, or has moved on to another turn, since these events were produced.
       // Discarded rather than reported: nothing about the *current* occupant of the id is wrong.
-      // The whole check-and-write is one synchronous step here, so nothing can slip between them.
       return;
     }
     const existing = this.#events.get(id);
-    if (existing !== undefined && !sameOwner(existing.owner, owner)) {
+    if (existing !== undefined && !sameOwner(existing.userId, owner)) {
       throw notFound(id);
     }
     if (!this.#events.has(id)) {
       this.#evictOldest(this.#events);
     }
-    this.#events.set(id, { owner, generation, events: [...events] });
+    this.#events.set(id, { userId: owner, generation, events: [...events] });
   }
 
   async getEvents(
@@ -178,10 +178,9 @@ export class InMemoryResponseProvider implements ResponseProvider {
     owner: ResponseOwner,
     generation: ResponseGeneration,
   ): Promise<ResponseEvent[] | undefined> {
-    const entry = this.#events.get(id);
-    return entry !== undefined && entry.generation === generation && sameOwner(entry.owner, owner)
-      ? [...entry.events]
-      : undefined;
+    const events = fencedEvents(this.#events.get(id), owner, generation);
+    // Copied, so a caller cannot mutate the retained log.
+    return events === undefined ? undefined : [...events];
   }
 
   async delete(id: string, owner: ResponseOwner): Promise<boolean> {
@@ -204,8 +203,7 @@ export class InMemoryResponseProvider implements ResponseProvider {
   }
 
   async history(id: string, owner: ResponseOwner): Promise<OutputItem[] | undefined> {
-    const stored = await this.get(id, owner);
-    return stored === undefined ? undefined : historyOf(stored);
+    return historyVia(this, id, owner);
   }
 
   /** How many responses are held. Exposed for tests and diagnostics. */

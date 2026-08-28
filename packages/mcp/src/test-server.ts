@@ -1,4 +1,5 @@
 import type { Transport } from '@modelcontextprotocol/client';
+import { errorMessageOf } from '@polymind-inc/agent-framework-core/internal';
 
 /** A tool a {@link TestMcpServer} answers `tools/list` with. */
 export interface TestTool {
@@ -113,6 +114,11 @@ export class TestMcpServer implements Transport {
       id: request.id as string | number,
       result,
     });
+    const fail = (code: number, message: string, data?: unknown): JsonRpcMessage => ({
+      jsonrpc: '2.0',
+      id: request.id as string | number,
+      error: { code, message, ...(data === undefined ? {} : { data }) },
+    });
     switch (request.method) {
       case 'initialize':
         this.initializeParams = request.params ?? {};
@@ -138,20 +144,12 @@ export class TestMcpServer implements Transport {
         this.calls.push({ name, arguments: args });
         const target = this.#tools.find((entry) => entry.name === name);
         if (target === undefined) {
-          return {
-            jsonrpc: '2.0',
-            id: request.id as string | number,
-            error: { code: -32602, message: `Unknown tool: ${name}` },
-          };
+          return fail(-32602, `Unknown tool: ${name}`);
         }
         try {
           return respond(target.call(args));
         } catch (error) {
-          return {
-            jsonrpc: '2.0',
-            id: request.id as string | number,
-            error: { code: -32603, message: error instanceof Error ? error.message : String(error) },
-          };
+          return fail(-32603, errorMessageOf(error));
         }
       }
       case 'resources/read': {
@@ -161,11 +159,7 @@ export class TestMcpServer implements Transport {
         if (found === undefined) {
           // What a compliant server answers for a URI it does not serve: Invalid Params with the
           // requested URI echoed in `data`, which is how the SDK reconstructs its typed error.
-          return {
-            jsonrpc: '2.0',
-            id: request.id as string | number,
-            error: { code: -32602, message: `Resource not found: ${uri}`, data: { uri } },
-          };
+          return fail(-32602, `Resource not found: ${uri}`, { uri });
         }
         const { uri: _uri, ...contents } = found;
         return respond({ contents: [{ uri, ...contents }] });
@@ -173,11 +167,36 @@ export class TestMcpServer implements Transport {
       case 'ping':
         return respond({});
       default:
-        return {
-          jsonrpc: '2.0',
-          id: request.id as string | number,
-          error: { code: -32601, message: `Method not found: ${String(request.method)}` },
-        };
+        return fail(-32601, `Method not found: ${String(request.method)}`);
     }
+  }
+}
+
+/** A transport whose first `start()` blocks until the test releases it. */
+export class SlowStartServer extends TestMcpServer {
+  release!: () => void;
+  /** Resolves once the client's connect has reached the transport. */
+  readonly reached: Promise<void>;
+  readonly #gate: Promise<void>;
+  #reachedResolve!: () => void;
+  #first = true;
+
+  constructor(tools: TestTool[]) {
+    super(tools);
+    this.#gate = new Promise((resolve) => {
+      this.release = resolve;
+    });
+    this.reached = new Promise((resolve) => {
+      this.#reachedResolve = resolve;
+    });
+  }
+
+  override async start(): Promise<void> {
+    if (this.#first) {
+      this.#first = false;
+      this.#reachedResolve();
+      await this.#gate;
+    }
+    await super.start();
   }
 }

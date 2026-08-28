@@ -29,6 +29,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AgentReference, HandlerContext } from '@polymind-inc/agent-framework-agentserver';
+import { runInScope } from './run-in-scope.js';
 
 /** What one hosted turn knows about itself. One frozen instance per turn. */
 export interface HostedAgentContext {
@@ -92,30 +93,13 @@ export function getHostedAgentContext(): HostedAgentContext | undefined {
 }
 
 /**
- * Drives `stream` with `context` installed as the ambient hosted context.
- *
- * Each `next()` is invoked inside `AsyncLocalStorage.run`, which is where the agent runs the
- * round — the model call, the tools, the context providers — so a read from any of them lands on
- * this turn's context and nowhere else, including while another turn is interleaved on the same
- * container.
+ * Drives `stream` with `context` installed as the ambient hosted context, so a read from a tool,
+ * a context provider or middleware — including during teardown after an early stop — lands on
+ * this turn's context and nowhere else (see {@link runInScope} for the scoping mechanics).
  */
-export async function* withHostedAgentContext<T>(
+export function withHostedAgentContext<T>(
   context: HostedAgentContext,
   stream: AsyncIterable<T>,
 ): AsyncGenerator<T, void, undefined> {
-  const iterator = stream[Symbol.asyncIterator]();
-  try {
-    for (;;) {
-      const next = await storage.run(context, () => iterator.next());
-      if (next.done === true) {
-        return;
-      }
-      yield next.value;
-    }
-  } finally {
-    // `break` in the consumer has to reach the agent's own cleanup (session save, tool teardown,
-    // afterRun hooks) exactly as it would without this wrapper — and that cleanup runs *inside*
-    // the context, because an early end is still part of the turn it ends.
-    await storage.run(context, () => iterator.return?.());
-  }
+  return runInScope(storage, context, stream);
 }

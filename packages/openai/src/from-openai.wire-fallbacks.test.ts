@@ -60,7 +60,7 @@ describe('parseUsage fallbacks', () => {
 });
 
 describe('parseFinishReason', () => {
-  // Python `_get_finish_reason_from_openai_response` (`_chat_client.py:2513-2520`): the
+  // Python `_get_finish_reason_from_openai_response` (`_chat_client.py`): the
   // incomplete reason wins over the status, a completed response reports `tool_calls` only when
   // its output contains a function call, and anything still in flight reports nothing.
   it('maps an incomplete content_filter response', () => {
@@ -88,7 +88,7 @@ describe('parseFinishReason', () => {
 });
 
 describe('conversation id', () => {
-  // Python `_get_conversation_id` (`_chat_client.py:924-936`): `store=False` suppresses the id
+  // Python `_get_conversation_id` (`_chat_client.py`): `store=False` suppresses the id
   // entirely, a non-empty conversation id wins over the response id, and an empty one falls
   // through to the response id.
   it('suppresses the conversation id when the request opted out of storage', () => {
@@ -159,7 +159,7 @@ describe('media type detection of generated images', () => {
 
 describe('awaited message parts', () => {
   it('maps a refusal part to text, as Python does', () => {
-    // Python `_parse_response_from_openai` (`_chat_client.py:2636-2639`).
+    // Python `_parse_response_from_openai` (`_chat_client.py`).
     const contents = contentsOf(
       parseResponse({
         output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'cannot help' }] }],
@@ -430,7 +430,7 @@ describe('function and hosted tool call fallbacks', () => {
 
 describe('stream event fallbacks', () => {
   it('maps a refusal delta to text', () => {
-    // Python `_parse_chunk_from_openai` (`_chat_client.py:2913-2914`).
+    // Python `_parse_chunk_from_openai` (`_chat_client.py`).
     const update = parseOne({ type: 'response.refusal.delta', delta: 'cannot help' });
     expect(update?.contents).toEqual([expect.objectContaining({ type: 'text', text: 'cannot help' })]);
   });

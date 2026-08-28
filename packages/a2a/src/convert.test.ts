@@ -7,6 +7,7 @@ import type {
   UriContent,
 } from '@polymind-inc/agent-framework-core';
 import { dataContent, textContent, uriContent } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import {
   fromA2AParts,
@@ -17,14 +18,6 @@ import {
 } from './convert.js';
 import { A2AAgentError } from './errors.js';
 import { message, streamEvent, task } from './test-support.js';
-
-/** Fails the test rather than returning `undefined`, so a missing item is reported where it happens. */
-function must<T>(value: T | undefined): T {
-  if (value === undefined) {
-    throw new Error('expected a value');
-  }
-  return value;
-}
 
 describe('framework content to A2A parts', () => {
   it('sends text as a text part and carries its metadata', () => {

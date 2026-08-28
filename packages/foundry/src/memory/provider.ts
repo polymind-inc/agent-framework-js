@@ -13,6 +13,7 @@ import {
   textOf,
 } from '@polymind-inc/agent-framework-core';
 import type { FoundryProject } from '../project.js';
+import { sleep } from '../sleep.js';
 import type { MemoryInputItem, MemoryOperation, MemoryStoreDefinition, MemoryStoreObject } from './client.js';
 import { FoundryMemoryError, MemoryStoreClient } from './client.js';
 
@@ -420,25 +421,6 @@ export class FoundryMemoryProvider implements ContextProvider {
       throw error;
     }
   }
-}
-
-/** Resolves after `ms`, or rejects the moment `signal` aborts instead of at the timer. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted === true) {
-      reject(signal.reason);
-      return;
-    }
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 /** The memory texts a search answered with, in order, dropping the blank ones. */

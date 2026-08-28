@@ -12,9 +12,9 @@
  * and neither does this.
  */
 
-import { AgentFrameworkError } from '@polymind-inc/agent-framework-core';
+import { AgentFrameworkError, setIfDefined } from '@polymind-inc/agent-framework-core';
+import { bodyText, drainBody, foundryFailureMessage, foundryRequestInit, foundryUrl } from '../http.js';
 import type { FoundryProject } from '../project.js';
-import { FOUNDRY_API_VERSION } from '../target.js';
 
 /**
  * The preview opt-in every memory-store route requires.
@@ -130,13 +130,11 @@ export interface MemoryStoreClientOptions {
  * and you hand it both.
  */
 export class MemoryStoreClient {
-  readonly #endpoint: string;
-  readonly #getToken: () => Promise<string>;
+  readonly #project: FoundryProject;
   readonly #fetch: typeof globalThis.fetch;
 
   constructor(options: MemoryStoreClientOptions) {
-    this.#endpoint = options.project.endpoint;
-    this.#getToken = () => options.project.getToken();
+    this.#project = options.project;
     this.#fetch = options.fetch ?? options.project.fetch ?? globalThis.fetch;
   }
 
@@ -152,12 +150,8 @@ export class MemoryStoreClient {
     signal?: AbortSignal,
   ): Promise<MemorySearchResponse> {
     const body: Record<string, unknown> = { scope: request.scope };
-    if (request.items !== undefined) {
-      body.items = request.items;
-    }
-    if (request.previousSearchId !== undefined) {
-      body.previous_search_id = request.previousSearchId;
-    }
+    setIfDefined(body, 'items', request.items);
+    setIfDefined(body, 'previous_search_id', request.previousSearchId);
     if (request.maxMemories !== undefined) {
       body.options = { max_memories: request.maxMemories };
     }
@@ -186,12 +180,8 @@ export class MemoryStoreClient {
     signal?: AbortSignal,
   ): Promise<MemoryUpdateResponse> {
     const body: Record<string, unknown> = { scope: request.scope, items: request.items };
-    if (request.previousUpdateId !== undefined) {
-      body.previous_update_id = request.previousUpdateId;
-    }
-    if (request.updateDelay !== undefined) {
-      body.update_delay = request.updateDelay;
-    }
+    setIfDefined(body, 'previous_update_id', request.previousUpdateId);
+    setIfDefined(body, 'update_delay', request.updateDelay);
     const response = await this.#send('POST', `${this.#store(request.name)}:update_memories`, {
       operation: 'update',
       body,
@@ -220,9 +210,8 @@ export class MemoryStoreClient {
       signal,
       allowNotFound: true,
     });
-    // Nothing here reads the body; draining it keeps the connection from being held open until
-    // the discarded response is collected.
-    await response.body?.cancel().catch(() => {});
+    // Nothing here reads the body.
+    await drainBody(response);
     return response.status !== 404;
   }
 
@@ -234,9 +223,8 @@ export class MemoryStoreClient {
       allowNotFound: true,
     });
     if (response.status === 404) {
-      // The body is an error envelope, not a store; draining it keeps the connection from being
-      // held open until the response is collected.
-      await response.body?.cancel().catch(() => {});
+      // The body is an error envelope, not a store.
+      await drainBody(response);
       return undefined;
     }
     return await MemoryStoreClient.#json<MemoryStoreObject>(response, 'getStore');
@@ -248,9 +236,7 @@ export class MemoryStoreClient {
     signal?: AbortSignal,
   ): Promise<MemoryStoreObject> {
     const body: Record<string, unknown> = { name: request.name, definition: request.definition };
-    if (request.description !== undefined) {
-      body.description = request.description;
-    }
+    setIfDefined(body, 'description', request.description);
     const response = await this.#send('POST', 'memory_stores', {
       operation: 'createStore',
       body,
@@ -274,21 +260,14 @@ export class MemoryStoreClient {
       allowNotFound?: boolean;
     },
   ): Promise<Response> {
-    const url = `${this.#endpoint}/${path}?${new URLSearchParams({ 'api-version': FOUNDRY_API_VERSION })}`;
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${await this.#getToken()}`,
-      accept: 'application/json',
-      'Foundry-Features': MEMORY_PREVIEW_FEATURE,
-    };
-    if (options.body !== undefined) {
-      headers['content-type'] = 'application/json';
-    }
-    const response = await this.#fetch(url, {
-      method,
-      headers,
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const response = await this.#fetch(
+      foundryUrl(`${this.#project.endpoint}/`, path),
+      foundryRequestInit(method, await this.#project.getToken(), {
+        headers: { 'Foundry-Features': MEMORY_PREVIEW_FEATURE },
+        body: options.body,
+        signal: options.signal,
+      }),
+    );
     if (!response.ok && !(options.allowNotFound === true && response.status === 404)) {
       throw await MemoryStoreClient.#failure(response, options.operation, `${method} ${path}`);
     }
@@ -303,7 +282,7 @@ export class MemoryStoreClient {
    * default, and an empty object reads downstream as "nothing to carry forward".
    */
   static async #json<T>(response: Response, operation: MemoryOperation): Promise<T> {
-    const text = await response.text().catch(() => '');
+    const text = await bodyText(response);
     if (text.trim() === '') {
       return {} as T;
     }
@@ -318,21 +297,15 @@ export class MemoryStoreClient {
     }
   }
 
-  /**
-   * The failure to raise for a refused call.
-   *
-   * The service's own message is included: this runs inside a container where the error text is
-   * the entire diagnostic.
-   */
+  /** The failure to raise for a refused call (see `foundryFailureMessage`). */
   static async #failure(
     response: Response,
     operation: MemoryOperation,
     what: string,
   ): Promise<FoundryMemoryError> {
-    const detail = (await response.text().catch(() => '')).slice(0, 500);
     return new FoundryMemoryError(
       operation,
-      `Foundry memory returned ${response.status} for ${what}.${detail === '' ? '' : ` ${detail}`}`,
+      foundryFailureMessage('memory', response.status, await bodyText(response), what),
       { status: response.status },
     );
   }

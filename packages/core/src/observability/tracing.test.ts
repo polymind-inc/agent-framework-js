@@ -9,7 +9,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Agent } from '../agent/agent.js';
 import { withChatTelemetry } from '../client/telemetry.js';
-import { MockChatClient } from '../client/test-support.js';
+import { MockChatClient, must } from '../client/test-support.js';
 import { tool } from '../tools/tool.js';
 import { textContent } from '../types/content.js';
 import { message } from '../types/message.js';
@@ -60,12 +60,6 @@ function spans(): ReadableSpan[] {
 
 function byName(name: string): ReadableSpan | undefined {
   return spans().find((span) => span.name === name);
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 /** The name of `span`'s parent, or undefined at the root. */
@@ -425,6 +419,21 @@ describe('startAgentRunSpan', () => {
     quiet.end();
 
     expect(must(byName('invoke_agent a2')).attributes[GEN_AI.inputMessages]).toBeUndefined();
+  });
+
+  it('ends the span itself when recording the input messages throws', () => {
+    configureObservability({ captureMessageContent: true });
+    // `JSON.stringify` throws on a BigInt, standing in for any caller-supplied content the
+    // serializer cannot encode.
+    const poisoned = [{ role: 'user', contents: [{ type: 'text', text: 1n as unknown as string }] }];
+
+    expect(() => startAgentRunSpan({ id: 'a1' }, poisoned as never)).toThrow(TypeError);
+
+    // The factory never handed the span out, so nobody else could have closed it: an unclosed
+    // span here is a leak that outlives the failed run.
+    const run = must(byName('invoke_agent a1'));
+    expect(run.status.code).toBe(2);
+    expect(startedSpanNames).toContain('invoke_agent a1');
   });
 
   it('awaits a non-streaming call inside the span', async () => {

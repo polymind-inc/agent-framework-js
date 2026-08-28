@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { must } from '../client/test-support.js';
 import { decodeBase64 } from './base64.js';
 import { coalesceContents } from './coalesce.js';
 import { dataContent, textContent, unknownContent } from './content.js';
@@ -16,12 +17,6 @@ import { addUsage } from './usage.js';
 
 function update(init: Partial<Parameters<typeof agentResponseUpdate>[0]> = {}): AgentResponseUpdate {
   return agentResponseUpdate({ contents: [], ...init });
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 describe('mergeUpdates', () => {

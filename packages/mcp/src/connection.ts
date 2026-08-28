@@ -322,9 +322,8 @@ export class McpConnection {
       name,
       { ...this.#spanAttributes(), [GEN_AI.toolName]: name, [GEN_AI.toolType]: 'mcp' },
       async (span) => {
-        const requestOptions = options?.signal === undefined ? undefined : { signal: options.signal };
         const result = await this.#withReconnect((client) =>
-          client.callTool({ name, arguments: args }, requestOptions),
+          client.callTool({ name, arguments: args }, options),
         );
         if (result.isError === true) {
           const text = textOfBlocks(result.content);
@@ -346,10 +345,7 @@ export class McpConnection {
       'resources/read',
       undefined,
       { ...this.#spanAttributes(), [MCP.resourceUri]: uri },
-      async () => {
-        const requestOptions = options?.signal === undefined ? undefined : { signal: options.signal };
-        return this.#withReconnect((client) => client.readResource({ uri }, requestOptions));
-      },
+      async () => this.#withReconnect((client) => client.readResource({ uri }, options)),
     );
   }
 

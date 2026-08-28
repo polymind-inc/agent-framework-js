@@ -13,6 +13,7 @@ import {
   supportsWebSearch,
   textContent,
 } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import type OpenAI from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 import { OpenAIChatClient } from './chat-client.js';
@@ -27,12 +28,6 @@ function client(): OpenAIChatClient {
 /** All contents of a parsed response, flattened. */
 function contentsOf(response: { messages: Message[] }): Content[] {
   return response.messages.flatMap((msg) => msg.contents);
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 describe('hosted tool capability protocol', () => {

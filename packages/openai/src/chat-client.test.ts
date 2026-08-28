@@ -2,6 +2,7 @@ import type { Message } from '@polymind-inc/agent-framework-core';
 import {
   Agent,
   approvalResponse,
+  arrayToStream,
   ChatClientError,
   ConfigurationError,
   ContentFilterError,
@@ -10,6 +11,7 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import OpenAI, { AzureOpenAI } from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 import { OpenAIChatClient } from './chat-client.js';
@@ -28,12 +30,6 @@ interface InputItem {
   call_id?: string;
   output?: string;
   content?: Array<Record<string, unknown>>;
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 function completedResponse(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -63,12 +59,6 @@ function completedResponse(overrides: Record<string, unknown> = {}): Record<stri
 function fakeClient(create: ReturnType<typeof vi.fn>, baseURL = 'https://api.openai.com/v1'): OpenAI {
   const fake: FakeOpenAI = { responses: { create }, baseURL };
   return fake as unknown as OpenAI;
-}
-
-async function* streamEvents(events: unknown[]): AsyncGenerator<unknown> {
-  for (const event of events) {
-    yield event;
-  }
 }
 
 /** A minimal non-empty transcript, for tests that only exercise other options. */
@@ -408,7 +398,7 @@ describe('OpenAIChatClient request mapping', () => {
 
   // `include` is *computed*, so a raw pass-through that replaced it wholesale would silently disable
   // encrypted-reasoning replay. Python appends to whatever the caller supplied
-  // (`_chat_client.py:1414-1417`), so the entry can never be lost.
+  // (`_chat_client.py`), so the entry can never be lost.
   it('keeps encrypted reasoning in include even when additionalProperties supplies its own', () => {
     const request = client.buildRequest(HI, {
       additionalProperties: { include: ['message.output_text.logprobs'] },
@@ -567,7 +557,7 @@ describe('OpenAIChatClient response mapping', () => {
 
   it('streams text deltas and folds usage from the completed event', async () => {
     const create = vi.fn(async (_request?: Record<string, unknown>) =>
-      streamEvents([
+      arrayToStream([
         { type: 'response.created', response: { id: 'resp_1' } },
         { type: 'response.output_text.delta', delta: 'Hel' },
         { type: 'response.output_text.delta', delta: 'lo!' },
@@ -592,7 +582,7 @@ describe('OpenAIChatClient response mapping', () => {
 
   it('assembles streamed function call arguments', async () => {
     const create = vi.fn(async (_request?: Record<string, unknown>) =>
-      streamEvents([
+      arrayToStream([
         {
           type: 'response.output_item.added',
           output_index: 0,
@@ -623,7 +613,7 @@ describe('OpenAIChatClient response mapping', () => {
 
   it('emits reasoning payloads from output_item.done but not duplicate done text', async () => {
     const create = vi.fn(async (_request?: Record<string, unknown>) =>
-      streamEvents([
+      arrayToStream([
         { type: 'response.reasoning_text.delta', item_id: 'rs_1', delta: 'think' },
         { type: 'response.reasoning_text.done', item_id: 'rs_1', text: 'think' },
         {
@@ -1105,7 +1095,7 @@ describe('provider error mapping', () => {
 
   it('keeps an unmodelled streamed output item as unknown content', async () => {
     const create = vi.fn().mockResolvedValue(
-      streamEvents([
+      arrayToStream([
         { type: 'response.created', response: { id: 'resp_1', status: 'in_progress' } },
         {
           type: 'response.output_item.done',
@@ -1130,7 +1120,7 @@ describe('provider error mapping', () => {
 
   it('does not duplicate items the stream already reconstructed from deltas', async () => {
     const create = vi.fn().mockResolvedValue(
-      streamEvents([
+      arrayToStream([
         { type: 'response.output_text.delta', delta: 'hi', item_id: 'msg_1', output_index: 0 },
         {
           type: 'response.output_item.done',

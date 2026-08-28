@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ProtocolError } from '../errors.js';
+import { must } from '../test-helpers.js';
 import type { ResponseEvent, ResponseObject } from '../wire.js';
 import { FileResponseProvider } from './file.js';
 import { InMemoryResponseProvider } from './memory.js';
@@ -15,12 +16,6 @@ const EVENTS: ResponseEvent[] = [
 
 /** The generation every fixture below is written under, unless a test is about the fence itself. */
 const GENERATION = 'generation-default';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 function stored(id: string, userId?: string, generation: ResponseGeneration = GENERATION): StoredResponse {
   const response: ResponseObject = {

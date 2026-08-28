@@ -165,6 +165,41 @@ export function historyOf(stored: StoredResponse): OutputItem[] {
   return [...(stored.inputItems ?? []), ...stored.response.output];
 }
 
+/**
+ * The {@link ResponseProvider.history} implementation every local store shares: resolve the
+ * record for `owner`, then flatten it. `undefined` when the id is unknown to that owner.
+ */
+export async function historyVia(
+  store: Pick<ResponseProvider, 'get'>,
+  id: string,
+  owner: ResponseOwner,
+): Promise<OutputItem[] | undefined> {
+  const stored = await store.get(id, owner);
+  return stored === undefined ? undefined : historyOf(stored);
+}
+
+/** A stored replay log: the events plus the fence fields {@link fencedEvents} checks. */
+export interface StoredEventLog {
+  userId?: string | undefined;
+  generation?: ResponseGeneration | undefined;
+  events: ResponseEvent[];
+}
+
+/**
+ * The read fence every {@link ResponseProvider.getEvents} implementation applies: a stored log is
+ * visible only when it carries this exact turn's `generation` and belongs to `owner` — anything
+ * else (a missing log, another generation's, someone else's) reads as absent.
+ */
+export function fencedEvents(
+  record: StoredEventLog | undefined,
+  owner: ResponseOwner,
+  generation: ResponseGeneration,
+): ResponseEvent[] | undefined {
+  return record !== undefined && record.generation === generation && sameOwner(record.userId, owner)
+    ? record.events
+    : undefined;
+}
+
 /** Whether two owners are the same partition. Both halves normalize `''` to "no user". */
 export function sameOwner(a: ResponseOwner, b: ResponseOwner): boolean {
   return (a === '' ? undefined : a) === (b === '' ? undefined : b);

@@ -21,14 +21,16 @@ import {
   createClientErrorNormalizer,
   createResponseStream,
   type FunctionTool,
+  type Message,
   mergeUpdates,
   normalizeInput,
   startAgentRunSpan,
 } from '@polymind-inc/agent-framework-core';
+import { errorMessageOf } from '@polymind-inc/agent-framework-core/internal';
 import { parseA2AContinuationToken } from './continuation.js';
 import { type A2APayload, type ObservedTaskState, toA2AMessage, updatesFromPayload } from './convert.js';
 import { A2AAgentError } from './errors.js';
-import { A2A_STATE_KEY, contextMismatch, readA2ASessionState, writeA2ASessionState } from './session.js';
+import { contextMismatch, readA2ASessionState, writeA2ASessionState } from './session.js';
 
 /** Goes to `gen_ai.provider.name`, lower-case as the conventions spell provider names. */
 const PROVIDER_NAME = 'a2a';
@@ -189,7 +191,7 @@ export class A2AAgent implements AgentLike {
             // A card that names no transport this client speaks is a mismatched configuration, not
             // a failed request, and it reports as one wherever it is first noticed.
             throw new ConfigurationError(
-              `No usable transport for this agent card: ${error instanceof Error ? error.message : String(error)}`,
+              `No usable transport for this agent card: ${errorMessageOf(error)}`,
               { cause: error },
             );
           })
@@ -215,9 +217,7 @@ export class A2AAgent implements AgentLike {
       ...(options?.serviceSessionId === undefined ? {} : { serviceSessionId: options.serviceSessionId }),
     });
     if (options?.taskId !== undefined && options.serviceSessionId !== undefined) {
-      const partition = session.partition(A2A_STATE_KEY);
-      partition.contextId = options.serviceSessionId;
-      partition.taskId = options.taskId;
+      writeA2ASessionState(session, { contextId: options.serviceSessionId, taskId: options.taskId });
     }
     return session;
   }
@@ -342,7 +342,7 @@ export class A2AAgent implements AgentLike {
   /** Sends this turn's message, blocking or streaming according to how the caller consumes it. */
   async *#send(
     client: Client,
-    inputMessages: readonly import('@polymind-inc/agent-framework-core').Message[],
+    inputMessages: readonly Message[],
     ctx: {
       stream: boolean;
       background: boolean;

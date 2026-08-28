@@ -637,6 +637,34 @@ describe('FoundryMemoryProvider', () => {
       expect(Date.now() - started).toBeLessThan(2_000);
     });
 
+    it('stops an immediate-interval poll the moment the caller aborts', { timeout: 2_000 }, async () => {
+      const { memory } = provider({
+        update: [{ status: 202, body: { update_id: 'upd_a' } }],
+        store: [{ body: { update_id: 'upd_a', status: 'in_progress' } }],
+      });
+      await agentWith(memory).agent.run('hello');
+
+      const controller = new AbortController();
+      const waiting = memory.whenUpdatesCompleted({ pollIntervalMs: 0, signal: controller.signal });
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(waiting).rejects.toThrow();
+    });
+
+    it('yields to the event loop between immediate-interval polls', { timeout: 2_000 }, async () => {
+      // The completion arrives via a real timer; a zero-interval loop that never left the
+      // microtask queue would starve that timer and hang here.
+      const storeReplies = [{ body: { update_id: 'upd_a', status: 'in_progress' } }];
+      const { memory } = provider({
+        update: [{ status: 202, body: { update_id: 'upd_a' } }],
+        store: storeReplies,
+      });
+      await agentWith(memory).agent.run('hello');
+
+      setTimeout(() => storeReplies.push({ body: { update_id: 'upd_a', status: 'completed' } }), 10);
+      await memory.whenUpdatesCompleted({ pollIntervalMs: 0 });
+    });
+
     it('raises when the extraction failed', async () => {
       const { memory } = provider({
         update: [{ status: 202, body: { update_id: 'upd_a' } }],

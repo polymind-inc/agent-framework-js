@@ -69,15 +69,11 @@ function collectClientHeaders(headers: Headers): Record<string, string> {
   return collected;
 }
 
-function newRequestId(): string {
-  return crypto.randomUUID();
-}
-
 /** Builds the context for one inbound request. */
 export function createRequestContext(headers: Headers): RequestContext {
   const userId = headers.get(HEADERS.userId) ?? undefined;
   const foundryCallId = headers.get(HEADERS.foundryCallId) ?? undefined;
-  const requestId = headers.get(HEADERS.requestId) ?? newRequestId();
+  const requestId = headers.get(HEADERS.requestId) ?? crypto.randomUUID();
   const clientHeaders = collectClientHeaders(headers);
   const traceparent = headers.get('traceparent') ?? undefined;
   const tracestate = headers.get('tracestate') ?? undefined;

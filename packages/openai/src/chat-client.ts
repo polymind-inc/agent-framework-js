@@ -112,7 +112,7 @@ export interface EndpointNamedModel {
 const AZURE_HOST_PATTERN = /\.(openai|cognitiveservices|services\.ai)\.azure\.com|\.azure-api\.net/i;
 
 function detectProviderName(client: OpenAI): string {
-  const baseURL = String((client as { baseURL?: unknown }).baseURL ?? '');
+  const baseURL = String(client.baseURL ?? '');
   if (AZURE_HOST_PATTERN.test(baseURL)) {
     return 'azure.ai.openai';
   }
@@ -225,14 +225,13 @@ export class OpenAIChatClient
   readonly #model: string | undefined;
   readonly #includeReasoningEncryptedContent: boolean;
   /**
-   * Normalizes anything thrown around an SDK call into the value this client throws.
+   * Normalizes anything thrown around an SDK call into the value this client throws, following
+   * the `createClientErrorNormalizer` contract: a cancellation passes through as the
+   * standards-shaped abort value rather than being laundered into a provider failure.
    *
-   * A cancellation is not a provider failure and must not be laundered into one: hosting maps
-   * `AbortError` to `response.incomplete`/`interrupted` and everything else to `response.failed`.
-   * The SDK's own abort error is *not* named `AbortError` — `APIUserAbortError` never sets
-   * `this.name`, so it arrives as a plain `"Error"` (openai@7 `core/error.mjs`); the normalizer
-   * recognizes it by type and converts it to the standards-shaped abort value the rest of the
-   * stack matches on, preferring the caller's own abort reason.
+   * This SDK's specifics: `APIUserAbortError` never sets `this.name`, so it arrives as a plain
+   * `"Error"` (openai@7 `core/error.mjs`) and is recognized by type; and the `wrap` branch maps a
+   * content-filter rejection to {@link ContentFilterError} instead of the general error type.
    */
   readonly #toClientError: ClientErrorNormalizer = createClientErrorNormalizer({
     abortErrorClass: OpenAI.APIUserAbortError,
@@ -386,7 +385,7 @@ export class OpenAIChatClient
       request.text = text;
     }
 
-    Object.assign(request, options?.additionalProperties ?? {});
+    Object.assign(request, extra);
 
     // `include` is *computed*, so it is merged after the raw pass-through rather than before it.
     // Without service-side storage the transcript is replayed from our side, and a reasoning model

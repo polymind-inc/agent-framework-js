@@ -19,6 +19,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import { McpClient } from './client.js';
 
@@ -27,12 +28,6 @@ const authToken = process.env.MCP_AUTH_TOKEN;
 const toolName = process.env.MCP_TOOL_NAME ?? 'microsoft_docs_search';
 const toolArgs = process.env.MCP_TOOL_ARGS ?? '{"query":"Azure AI Foundry agent"}';
 const TIMEOUT = 60_000;
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 function connect(): McpClient {
   return new McpClient({

@@ -1,21 +1,10 @@
-import type { AccessToken, TokenCredential } from '@azure/identity';
+import type { TokenCredential } from '@azure/identity';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from './project.js';
+import { fakeCredential } from './test-helpers.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
-
-/** A credential whose tokens expire `ttlMs` from now. */
-function fakeCredential(ttlMs = 60 * 60 * 1000): TokenCredential & { calls: number } {
-  const credential = {
-    calls: 0,
-    async getToken(): Promise<AccessToken> {
-      credential.calls++;
-      return { token: `token-${credential.calls}`, expiresOnTimestamp: Date.now() + ttlMs };
-    },
-  };
-  return credential;
-}
 
 describe('FoundryProject', () => {
   it('normalizes the endpoint and exposes it', () => {

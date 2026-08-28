@@ -1,5 +1,6 @@
 import type { ChatResponseUpdate, Content, Message, TextContent } from '@polymind-inc/agent-framework-core';
 import { deserializeMessage, mergeChatUpdates, serializeMessage } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import type { ParseContext } from './from-openai.js';
 import { createStreamParseState, parseResponse, parseStreamEvent } from './from-openai.js';
@@ -8,12 +9,6 @@ import { toResponsesInput } from './to-openai.js';
 /** All contents of a parsed response, flattened. */
 function contentsOf(response: { messages: Message[] }): Content[] {
   return response.messages.flatMap((msg) => msg.contents);
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 /** The wire shape of a replayed assistant message, as far as these assertions read it. */
@@ -124,7 +119,7 @@ describe('reasoning text vs reasoning summary', () => {
   ];
 
   // Python pairs each private reasoning fragment with the summary that sits at the
-  // same index, on *both* paths (`_chat_client.py:2648-2651` awaited, `:3138-3144` streamed).
+  // same index, on *both* the awaited and streamed paths (`_chat_client.py`).
   // Both paths here must carry that pairing, or a streamed transcript would carry metadata an
   // awaited one does not.
   it('pairs each private reasoning fragment with its summary in an awaited response', () => {
@@ -195,9 +190,8 @@ describe('reasoning text vs reasoning summary', () => {
 });
 
 // Python surfaces log probabilities as response metadata rather than as transcript
-// content (`_get_metadata_from_response`, `_chat_client.py:3414-3420`), merged into
-// `additional_properties` on both the awaited response (`:2813`) and every streamed update
-// (`:3388`).
+// content (`_get_metadata_from_response` in `_chat_client.py`), merged into
+// `additional_properties` on both the awaited response and every streamed update.
 describe('logprobs', () => {
   const LOGPROBS = [{ token: 'hi', logprob: -0.25, top_logprobs: [] }];
 
@@ -333,7 +327,7 @@ describe('failed responses surface their error', () => {
 
 // Python maps `response.image_generation_call.partial_image` to the same
 // call/result pair the finished item produces, with the preview marked so a consumer can tell the
-// two apart (`_chat_client.py:3196-3222`). The event only exists when the caller asked for it via
+// two apart (`_chat_client.py`). The event only exists when the caller asked for it via
 // `partial_images` on the image generation tool.
 describe('streamed partial images', () => {
   // A PNG header, so the media type is detected rather than defaulted.
@@ -381,7 +375,7 @@ describe('streamed partial images', () => {
 });
 
 // Python seeds every streamed update with the configured model and lets the
-// terminal event overwrite it with the one the response reports (`_chat_client.py:3331`, `:3032`).
+// terminal event overwrite it with the one the response reports (`_chat_client.py`).
 describe('model on streamed updates', () => {
   it('carries the configured model on non-terminal updates', () => {
     const updates = fold(

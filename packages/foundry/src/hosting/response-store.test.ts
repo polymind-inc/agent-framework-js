@@ -9,7 +9,7 @@ import {
   runWithRequestContext,
 } from '@polymind-inc/agent-framework-agentserver';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { FoundryResponseStore } from './response-store.js';
 import { defaultStore } from './server.js';
@@ -170,7 +170,7 @@ describe('FoundryResponseStore', () => {
 
   it('falls back to an update when the conflict arrives as a 400 with a conflict code', async () => {
     // The service expresses duplicate-create as either status; the reference's `_is_conflict`
-    // (`store/_foundry_provider.py:41-61`) reads the body, not the status line.
+    // (`store/_foundry_provider.py`) reads the body, not the status line.
     const { store: subject, calls } = store([
       { status: 400, body: { error: { code: 'already_exists', message: 'nope' } } },
       { status: 200 },
@@ -706,6 +706,21 @@ describe('bounded retry', () => {
     await subject.put({ response: response() });
 
     expect(calls).toHaveLength(2);
+  });
+
+  it('retries with no timer at all when baseDelayMs is 0', async () => {
+    // "Zero base delay" means no waiting — not even a zero-millisecond timer task, which is why
+    // this runs under fake timers that are never advanced.
+    vi.useFakeTimers();
+    try {
+      const { store: subject, calls } = store([{ status: 503 }, { status: 201 }]);
+
+      await subject.put({ response: response() });
+
+      expect(calls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives up after the attempt budget and surfaces the last failure', async () => {

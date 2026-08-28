@@ -7,79 +7,8 @@ import type { HandlerContext, ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { encodeEvent } from './sse.js';
 import { InMemoryResponseProvider } from './store/memory.js';
+import { lifecycleHandler, makeServer, must, post, readSse } from './test-helpers.js';
 import type { CreateResponseRequest, ResponseObject } from './wire.js';
-
-/** The echo handler from the reference samples: one message item, streamed as one delta. */
-function echoHandler(): ResponseHandler {
-  return async function* (request: CreateResponseRequest, context: HandlerContext) {
-    const text = `Echo: ${typeof request.input === 'string' ? request.input : JSON.stringify(request.input)}`;
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-
-    yield { type: 'response.created', response: response('queued') };
-    yield { type: 'response.in_progress', response: response('in_progress') };
-    yield {
-      type: 'response.output_item.added',
-      output_index: 0,
-      item: { type: 'message', id: 'msg_1', role: 'assistant', status: 'in_progress', content: [] },
-    };
-    yield {
-      type: 'response.output_text.delta',
-      item_id: 'msg_1',
-      output_index: 0,
-      content_index: 0,
-      delta: text,
-    };
-    yield {
-      type: 'response.output_item.done',
-      output_index: 0,
-      item: {
-        type: 'message',
-        id: 'msg_1',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text, annotations: [] }],
-      },
-    };
-    yield { type: 'response.completed', response: response('completed') };
-  };
-}
-
-function makeServer(handler: ResponseHandler = echoHandler(), hosted = false): ResponsesServer {
-  return new ResponsesServer({ handler, store: new InMemoryResponseProvider(), hosted });
-}
-
-function post(body: unknown, headers: Record<string, string> = {}): Request {
-  return new Request('http://localhost:8088/responses', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-  });
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
-/** Parses an SSE body into `{ event, data }` pairs. */
-async function readSse(response: Response): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
-  const text = await response.text();
-  return text
-    .split('\n\n')
-    .filter((block) => block.trim() !== '' && !block.startsWith(':'))
-    .map((block) => {
-      const eventLine = must(block.split('\n').find((line) => line.startsWith('event: ')));
-      const dataLine = must(block.split('\n').find((line) => line.startsWith('data: ')));
-      return {
-        event: eventLine.slice('event: '.length),
-        data: JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>,
-      };
-    });
-}
 
 describe('routes', () => {
   it('answers the readiness probe', async () => {
@@ -87,6 +16,23 @@ describe('routes', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'healthy' });
+  });
+
+  it('stays non-hosted even when FOUNDRY_HOSTING_ENVIRONMENT is set in the test environment', async () => {
+    // The helper always passes an explicit `hosted`; without it, a stray platform variable in the
+    // runner's environment would flip every test into hosted mode and its strict header checks.
+    const previous = process.env.FOUNDRY_HOSTING_ENVIRONMENT;
+    process.env.FOUNDRY_HOSTING_ENVIRONMENT = '1';
+    try {
+      const response = await makeServer().handle(post({ input: 'Hi' }));
+      expect(response.status).toBe(200);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.FOUNDRY_HOSTING_ENVIRONMENT;
+      } else {
+        process.env.FOUNDRY_HOSTING_ENVIRONMENT = previous;
+      }
+    }
   });
 
   it('creates a response and returns the finished resource', async () => {
@@ -103,7 +49,7 @@ describe('routes', () => {
 
   it('keeps the response addressable when a conversation alias is stored at capacity one', async () => {
     const store = new InMemoryResponseProvider({ maxResponses: 1 });
-    const server = new ResponsesServer({ handler: echoHandler(), store, hosted: false });
+    const server = new ResponsesServer({ handler: lifecycleHandler({ echo: true }), store, hosted: false });
     const conversationId = `caresp_${'c'.repeat(18)}${'d'.repeat(32)}`;
 
     const created = (await (
@@ -555,7 +501,7 @@ describe('route-level errors', () => {
   });
 
   it('does not claim a path that merely starts with the prefix', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), prefix: '/api' });
+    const server = new ResponsesServer({ handler: lifecycleHandler({ echo: true }), prefix: '/api' });
 
     expect((await server.handle(post({ input: 'x' }))).status).toBe(404);
     expect(
@@ -747,7 +693,7 @@ describe('request limits', () => {
     expect(
       () =>
         new ResponsesServer({
-          handler: echoHandler(),
+          handler: lifecycleHandler({ echo: true }),
           limits: { [name]: value },
         }),
     ).toThrow(`${name} must be a safe integer of at least 1`);
@@ -771,7 +717,10 @@ describe('request limits', () => {
   });
 
   it('bounds the number of input items', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), limits: { maxInputItems: 2 } });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      limits: { maxInputItems: 2 },
+    });
     const items = Array.from({ length: 3 }, (_, i) => ({ type: 'message', id: `in_${i}` }));
 
     const response = await server.handle(post({ input: items }));
@@ -1103,7 +1052,7 @@ describe('header contract', () => {
 
 describe('protocol version fail-close', () => {
   it('refuses a hosted request with no call id', async () => {
-    const response = await makeServer(echoHandler(), true).handle(
+    const response = await makeServer(lifecycleHandler({ echo: true }), { hosted: true }).handle(
       post({ input: 'x' }, { [HEADERS.userId]: 'user-1' }),
     );
     const body = (await response.json()) as { error: { code: string } };
@@ -1114,14 +1063,16 @@ describe('protocol version fail-close', () => {
   });
 
   it('serves a hosted request that carries a call id', async () => {
-    const response = await makeServer(echoHandler(), true).handle(
+    const response = await makeServer(lifecycleHandler({ echo: true }), { hosted: true }).handle(
       post({ input: 'x' }, { [HEADERS.foundryCallId]: 'call-1' }),
     );
     expect(response.status).toBe(200);
   });
 
   it('does not require a call id outside a hosted environment', async () => {
-    const response = await makeServer(echoHandler(), false).handle(post({ input: 'x' }));
+    const response = await makeServer(lifecycleHandler({ echo: true }), { hosted: false }).handle(
+      post({ input: 'x' }),
+    );
     expect(response.status).toBe(200);
   });
 });
@@ -1191,7 +1142,10 @@ describe('persistence failure', () => {
   }
 
   it('answers a non-streaming turn as failed with storage_error, not an opaque 500', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), store: new FailingPutProvider() });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new FailingPutProvider(),
+    });
 
     const response = await server.handle(post({ input: 'x' }));
     const body = (await response.json()) as ResponseObject;
@@ -1206,7 +1160,10 @@ describe('persistence failure', () => {
   });
 
   it('replaces the streamed terminal event instead of delivering a completed that was never stored', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), store: new FailingPutProvider() });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new FailingPutProvider(),
+    });
 
     const events = await readSse(await server.handle(post({ input: 'x', stream: true })));
     const terminal = must(events.at(-1));
@@ -1221,7 +1178,10 @@ describe('persistence failure', () => {
   });
 
   it('does not report storage_error when the caller opted out of storage', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), store: new FailingPutProvider() });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new FailingPutProvider(),
+    });
 
     const response = await server.handle(post({ input: 'x', store: false }));
     const body = (await response.json()) as ResponseObject;

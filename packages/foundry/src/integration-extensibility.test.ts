@@ -31,6 +31,7 @@ import {
   tool,
   toolApprovalMiddleware,
 } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
 import { FoundryProject } from './project.js';
@@ -39,12 +40,6 @@ const projectEndpoint = process.env.FOUNDRY_PROJECT_ENDPOINT;
 const modelDeployment =
   process.env.AZURE_AI_MODEL_DEPLOYMENT_NAME ?? process.env.FOUNDRY_MODEL_DEPLOYMENT ?? 'gpt-4o-mini';
 const TIMEOUT = 120_000;
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 const deploymentClient = (): FoundryChatClient =>
   new FoundryChatClient({

@@ -1,5 +1,5 @@
 import { context as otelContext } from '@opentelemetry/api';
-import { agentSessionId, serverIdentity, sseKeepAliveSeconds } from './config.js';
+import { agentSessionId, serverIdentity, sseKeepAliveMs } from './config.js';
 import type { RequestContext } from './context.js';
 import { createRequestContext, HEADERS, runWithRequestContext } from './context.js';
 import {
@@ -15,6 +15,7 @@ import {
   decodeSegment,
   errorResponse,
   jsonResponse,
+  linkedAbort,
   stripPrefix,
   trimTrailingSlashes,
   withStandardHeaders,
@@ -316,20 +317,9 @@ export class InvocationsServer {
     invocationId: string,
     sessionId: string,
   ): Promise<Response> {
-    const abort = new AbortController();
-    const onShutdown = (): void => abort.abort();
-    this.#shutdown.signal.addEventListener('abort', onShutdown, { once: true });
-    request.signal.addEventListener('abort', onShutdown, { once: true });
-    const releaseSignals = (): void => {
-      this.#shutdown.signal.removeEventListener('abort', onShutdown);
-      request.signal.removeEventListener('abort', onShutdown);
-    };
-    // `addEventListener` is not a subscription to *state*: a signal that aborted before the
-    // listener existed never fires it. Re-read after registration so neither the edge nor the
-    // state can be missed.
-    if (this.#shutdown.signal.aborted || request.signal.aborted) {
-      onShutdown();
-    }
+    // `linkedAbort` re-reads the sources after registering, so an abort that landed before this
+    // request was routed is not missed.
+    const { controller: abort, release: releaseSignals } = linkedAbort(this.#shutdown.signal, request.signal);
 
     const invocationContext: InvocationContext = {
       invocationId,
@@ -389,9 +379,7 @@ export class InvocationsServer {
     releaseSignals: () => void,
   ): ReadableStream<Uint8Array> {
     const contentType = response.headers.get('content-type') ?? '';
-    const keepAliveMs = contentType.toLowerCase().startsWith('text/event-stream')
-      ? sseKeepAliveSeconds() * 1000
-      : 0;
+    const keepAliveMs = contentType.toLowerCase().startsWith('text/event-stream') ? sseKeepAliveMs() : 0;
     // biome-ignore lint/style/noNonNullAssertion: callers checked `body !== null`.
     const reader = response.body!.getReader();
     const keepAliveBytes = new TextEncoder().encode(SSE_KEEPALIVE);

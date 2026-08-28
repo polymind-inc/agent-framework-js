@@ -119,6 +119,35 @@ function defineDerived<T extends object>(target: T, key: string, get: () => unkn
   return target;
 }
 
+/**
+ * Copies the entries of `source` named by `keys` onto `target`, skipping the absent ones.
+ *
+ * `exactOptionalPropertyTypes` makes an explicitly `undefined` property a different thing from an
+ * absent one, so every optional field has to be tested before it is assigned. Written once, with
+ * the fields named in a list, rather than as a chain of `if`s per call site: several places have
+ * to copy *the same* set of fields, and a list is something a reader can compare at a glance —
+ * and, where the set is fixed, something the compiler can check for completeness.
+ *
+ * `keys` is applied in order, so a caller that cares about property order (anything whose output
+ * is serialized) gets to decide it.
+ */
+export function copyDefined<TTarget extends object, TKey extends keyof TTarget>(
+  target: TTarget,
+  // Explicit `| undefined` rather than `Partial<Pick<…>>`: under `exactOptionalPropertyTypes` an
+  // optional property refuses an explicitly-`undefined` value, and a source is just as often a
+  // record of `T | undefined` fields as it is one with the fields absent. Both are "no value here".
+  source: { readonly [K in TKey]?: TTarget[K] | undefined },
+  keys: readonly TKey[],
+): TTarget {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined) {
+      target[key] = value as TTarget[TKey];
+    }
+  }
+  return target;
+}
+
 /** Creates a {@link ChatResponseUpdate} with a live `text` getter. */
 export function chatResponseUpdate(init: ChatResponseUpdateInit): ChatResponseUpdate {
   const update = { ...init } as ChatResponseUpdate;
@@ -156,16 +185,20 @@ export function chatToAgentUpdate(
   options?: { agentName?: string; agentId?: string },
 ): AgentResponseUpdate {
   const init: AgentResponseUpdateInit = { contents: update.contents, rawRepresentation: update };
+  copyDefined(init, update, [
+    'role',
+    'responseId',
+    'messageId',
+    'createdAt',
+    'finishReason',
+    'continuationToken',
+    'additionalProperties',
+  ]);
+  // The two fields that are not a plain copy: the agent's own identity fills in for whatever the
+  // update did not carry itself.
   const authorName = update.authorName ?? options?.agentName;
-  if (update.role !== undefined) init.role = update.role;
   if (authorName !== undefined) init.authorName = authorName;
   if (options?.agentId !== undefined) init.agentId = options.agentId;
-  if (update.responseId !== undefined) init.responseId = update.responseId;
-  if (update.messageId !== undefined) init.messageId = update.messageId;
-  if (update.createdAt !== undefined) init.createdAt = update.createdAt;
-  if (update.finishReason !== undefined) init.finishReason = update.finishReason;
-  if (update.continuationToken !== undefined) init.continuationToken = update.continuationToken;
-  if (update.additionalProperties !== undefined) init.additionalProperties = update.additionalProperties;
   return agentResponseUpdate(init);
 }
 
@@ -337,8 +370,7 @@ function fold(updates: readonly (ChatResponseUpdate | AgentResponseUpdate)[]): F
 export function mergeUpdates<T = undefined>(updates: readonly AgentResponseUpdate[]): AgentResponse<T> {
   const state = fold(updates);
   const init: AgentResponseInit<T> = { messages: state.messages };
-  if (state.agentId !== undefined) init.agentId = state.agentId;
-  if (state.responseId !== undefined) init.responseId = state.responseId;
+  copyDefined(init, state, ['agentId', 'responseId']);
   setFoldMetadata(init, state);
   return agentResponse<T>(init);
 }
@@ -347,9 +379,7 @@ export function mergeUpdates<T = undefined>(updates: readonly AgentResponseUpdat
 export function mergeChatUpdates<T = undefined>(updates: readonly ChatResponseUpdate[]): ChatResponse<T> {
   const state = fold(updates);
   const init: ChatResponseInit<T> = { messages: state.messages };
-  if (state.responseId !== undefined) init.responseId = state.responseId;
-  if (state.conversationId !== undefined) init.conversationId = state.conversationId;
-  if (state.model !== undefined) init.model = state.model;
+  copyDefined(init, state, ['responseId', 'conversationId', 'model']);
   setFoldMetadata(init, state);
   return chatResponse<T>(init);
 }
@@ -359,12 +389,14 @@ function setFoldMetadata(
   init: ChatResponseInit<unknown> | AgentResponseInit<unknown>,
   state: FoldState,
 ): void {
-  if (state.createdAt !== undefined) init.createdAt = state.createdAt;
-  if (state.finishReason !== undefined) init.finishReason = state.finishReason;
-  if (state.usageDetails !== undefined) init.usageDetails = state.usageDetails;
-  if (state.continuationToken !== undefined) init.continuationToken = state.continuationToken;
-  if (state.additionalProperties !== undefined) init.additionalProperties = state.additionalProperties;
-  if (state.rawRepresentation !== undefined) init.rawRepresentation = state.rawRepresentation;
+  copyDefined(init, state, [
+    'createdAt',
+    'finishReason',
+    'usageDetails',
+    'continuationToken',
+    'additionalProperties',
+    'rawRepresentation',
+  ]);
 }
 
 /** Constructor input common to both update flavors: {@link ResponseUpdateBase} without `text`. */
@@ -383,14 +415,12 @@ function responseToUpdates(
   const inits: ResponseUpdateInitBase[] = [];
   for (const msg of response.messages) {
     const init: ResponseUpdateInitBase = { contents: msg.contents, role: msg.role };
-    if (msg.rawRepresentation !== undefined) init.rawRepresentation = msg.rawRepresentation;
-    if (msg.additionalProperties !== undefined) init.additionalProperties = msg.additionalProperties;
-    if (msg.messageId !== undefined) init.messageId = msg.messageId;
-    if (msg.authorName !== undefined) init.authorName = msg.authorName;
+    copyDefined(init, msg, ['rawRepresentation', 'additionalProperties', 'messageId', 'authorName']);
+    // The message's own timestamp, falling back to the response's, so an update is never undated
+    // when the response is.
     const createdAt = msg.createdAt ?? response.createdAt;
     if (createdAt !== undefined) init.createdAt = createdAt;
-    if (response.responseId !== undefined) init.responseId = response.responseId;
-    if (response.finishReason !== undefined) init.finishReason = response.finishReason;
+    copyDefined(init, response, ['responseId', 'finishReason']);
     addExtras(init);
     inits.push(init);
   }
@@ -401,13 +431,9 @@ function responseToUpdates(
     const init: ResponseUpdateInitBase = {
       contents: hasUsage ? [{ type: 'usage', usageDetails: response.usageDetails as UsageDetails }] : [],
     };
-    if (response.responseId !== undefined) init.responseId = response.responseId;
-    if (response.createdAt !== undefined) init.createdAt = response.createdAt;
-    if (response.continuationToken !== undefined) init.continuationToken = response.continuationToken;
+    copyDefined(init, response, ['responseId', 'createdAt', 'continuationToken']);
     addExtras(init);
-    if (response.finishReason !== undefined) init.finishReason = response.finishReason;
-    if (response.additionalProperties !== undefined)
-      init.additionalProperties = response.additionalProperties;
+    copyDefined(init, response, ['finishReason', 'additionalProperties']);
     inits.push(init);
   }
   return inits;
@@ -423,8 +449,7 @@ function responseToUpdates(
  */
 export function chatResponseToUpdates(response: ChatResponse<unknown>): ChatResponseUpdate[] {
   return responseToUpdates(response, (init: ChatResponseUpdateInit) => {
-    if (response.conversationId !== undefined) init.conversationId = response.conversationId;
-    if (response.model !== undefined) init.model = response.model;
+    copyDefined(init, response, ['conversationId', 'model']);
   }).map((init) => chatResponseUpdate(init));
 }
 
@@ -437,7 +462,7 @@ export function chatResponseToUpdates(response: ChatResponse<unknown>): ChatResp
  */
 export function agentResponseToUpdates(response: AgentResponse<unknown>): AgentResponseUpdate[] {
   return responseToUpdates(response, (init: AgentResponseUpdateInit) => {
-    if (response.agentId !== undefined) init.agentId = response.agentId;
+    copyDefined(init, response, ['agentId']);
   }).map((init) => agentResponseUpdate(init));
 }
 

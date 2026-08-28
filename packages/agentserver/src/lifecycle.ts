@@ -179,6 +179,25 @@ export function applyCancelledTerminal(base: ResponseObject): ResponseObject {
   return cancelled;
 }
 
+/**
+ * The message a thrown value contributes to a failed terminal: an `Error`'s own message, its name
+ * when that message is empty (Python's fallback: `str(ex) or type(ex).__name__`), or the value
+ * stringified.
+ */
+export function messageOf(error: unknown): string {
+  return error instanceof Error ? (error.message === '' ? error.name : error.message) : String(error);
+}
+
+/**
+ * Builds the `response.failed` terminal for an unhandled failure from the tracked resource —
+ * always `server_error`, with `message` the only variable part.
+ */
+export function failedTerminal(tracker: ResponseTracker, message: string): ResponseEvent {
+  return tracker.lifecycleEvent('response.failed', 'failed', {
+    error: { code: 'server_error', message, type: 'server_error' },
+  });
+}
+
 /** Configuration for {@link enforceLifecycle}. */
 export interface EnforceLifecycleOptions {
   /** Called for every correction, so violations are visible rather than silently patched. */
@@ -291,11 +310,7 @@ export async function* enforceLifecycle(
       // The real message, not a fixed one: both hosting references put `ex.Message` /
       // `str(ex) or type name` on the terminal event, because by now the caller holds a 200 and
       // this event is the only place it can learn why the turn failed.
-      const message =
-        error instanceof Error ? (error.message === '' ? error.name : error.message) : String(error);
-      yield tracker.lifecycleEvent('response.failed', 'failed', {
-        error: { code: 'server_error', message, type: 'server_error' },
-      });
+      yield failedTerminal(tracker, messageOf(error));
     }
     return;
   }
@@ -303,12 +318,6 @@ export async function* enforceLifecycle(
   if (!terminated) {
     violation('missing_terminal');
     yield* prefixFor('response.failed');
-    yield tracker.lifecycleEvent('response.failed', 'failed', {
-      error: {
-        code: 'server_error',
-        message: SERVER_ERROR_MESSAGE,
-        type: 'server_error',
-      },
-    });
+    yield failedTerminal(tracker, SERVER_ERROR_MESSAGE);
   }
 }

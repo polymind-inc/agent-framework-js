@@ -8,18 +8,13 @@ import {
 } from '@polymind-inc/agent-framework-agentserver';
 import type { ContextProvider, Tool } from '@polymind-inc/agent-framework-core';
 import { AgentSession, ConfigurationError, isFunctionTool } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { ToolboxConsentRequiredError } from './consent.js';
 import { FoundryToolbox } from './toolbox.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 let tokenCounter = 0;
 const credential: TokenCredential = {

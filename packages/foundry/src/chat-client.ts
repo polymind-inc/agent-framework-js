@@ -63,20 +63,23 @@ export class FoundryChatClient extends OpenAIChatClient {
     // there is nothing to name here: .NET removes `$.model` from the request and Go leaves it
     // unset. Sending a placeholder would reach the wire, `metadata.modelId` and telemetry alike.
     const model = isModelTarget(config.target) ? config.target.model : undefined;
-    const project = config.client === undefined ? config.project : undefined;
-    const endpoint = project === undefined ? undefined : resolveEndpoint(project.endpoint, config.target);
-    const fetch = config.fetch ?? project?.fetch;
 
-    const client =
-      config.client ??
-      new OpenAI({
-        baseURL: (endpoint as { baseURL: string }).baseURL,
+    let client: OpenAI;
+    if (config.client !== undefined) {
+      client = config.client;
+    } else {
+      const project = config.project;
+      const endpoint = resolveEndpoint(project.endpoint, config.target);
+      const fetch = config.fetch ?? project.fetch;
+      client = new OpenAI({
+        baseURL: endpoint.baseURL,
         // The SDK calls this before every request, so rotation is handled for us.
-        apiKey: () => (project as FoundryProject).getToken(),
-        ...(endpoint?.defaultQuery === undefined ? {} : { defaultQuery: endpoint.defaultQuery }),
+        apiKey: () => project.getToken(),
+        ...(endpoint.defaultQuery === undefined ? {} : { defaultQuery: endpoint.defaultQuery }),
         ...(config.defaultHeaders === undefined ? {} : { defaultHeaders: config.defaultHeaders }),
         ...(fetch === undefined ? {} : { fetch }),
       });
+    }
 
     super({
       client,

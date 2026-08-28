@@ -80,7 +80,7 @@ export interface ContextProvider {
 }
 
 /** The provenance stamped on messages a provider injects. */
-export function sourceTypeOf(provider: ContextProvider): MessageSourceType {
+function sourceTypeOf(provider: ContextProvider): MessageSourceType {
   return isHistoryProvider(provider) ? 'ChatHistory' : 'AIContextProvider';
 }
 

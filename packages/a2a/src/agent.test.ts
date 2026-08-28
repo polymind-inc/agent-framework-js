@@ -1,18 +1,12 @@
 import { UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import type { AgentResponseUpdate, ContinuationToken } from '@polymind-inc/agent-framework-core';
 import { AgentSession, ConfigurationError, isAbortError } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import { A2AAgent } from './agent.js';
 import { A2AAgentError } from './errors.js';
 import { readA2ASessionState } from './session.js';
 import { agentCard, fakeClient, message, streamEvent, task } from './test-support.js';
-
-function must<T>(value: T | undefined): T {
-  if (value === undefined) {
-    throw new Error('expected a value');
-  }
-  return value;
-}
 
 const answer = message({
   messageId: 'm1',

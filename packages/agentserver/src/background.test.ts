@@ -9,16 +9,8 @@ import type {
   ResponseProvider,
   StoredResponse,
 } from './store/provider.js';
+import { lifecycleHandler, makeServer, must, post, readSse } from './test-helpers.js';
 import type { CreateResponseRequest, OutputItem, ResponseEvent, ResponseObject } from './wire.js';
-
-/** A promise with its resolver in hand — the gate the tests hold a handler on. */
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
 
 /** The reader of a streaming response's body; a body-less response fails the test outright. */
 function bodyReader(res: Response): ReadableStreamDefaultReader<Uint8Array> {
@@ -37,85 +29,13 @@ function firstDataLine(text: string): string {
   return line.slice(6);
 }
 
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
-function onAbort(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    signal.addEventListener('abort', () => resolve(), { once: true });
-  });
-}
-
 /**
  * The reference echo shape, optionally held open on `gate` between `in_progress` and the output.
  * When the abort signal fires while waiting, it winds down as a cancellation (`AbortError`), the
  * way a well-behaved handler is documented to.
  */
 function gatedHandler(gate?: Promise<void>): ResponseHandler {
-  return async function* (_request: CreateResponseRequest, context: HandlerContext) {
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-    yield { type: 'response.created', response: response('queued') };
-    yield { type: 'response.in_progress', response: response('in_progress') };
-    if (gate !== undefined) {
-      await Promise.race([gate, onAbort(context.signal)]);
-      // The real shape, not a hand-named `Error`: this is the `DOMException` the platform puts on
-      // `signal.reason`, and the same value the framework's providers propagate for an
-      // interrupted model call (`@polymind-inc/agent-framework-core`'s `abortErrorFrom`).
-      context.signal.throwIfAborted();
-    }
-    yield {
-      type: 'response.output_item.done',
-      output_index: 0,
-      item: {
-        type: 'message',
-        id: 'msg_bg',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: 'done', annotations: [] }],
-      },
-    };
-    yield { type: 'response.completed', response: response('completed') };
-  };
-}
-
-/**
- * The same shape as {@link gatedHandler}, with its output item tagged.
- *
- * For the tests that put two turns under one id and have to be able to tell their event logs
- * apart — untagged, two runs of the echo handler produce byte-identical streams, and "the stale
- * log replaced the fresh one" is indistinguishable from success.
- */
-function labelledHandler(label: string): ResponseHandler {
-  return async function* (_request: CreateResponseRequest, context: HandlerContext) {
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-    yield { type: 'response.created', response: response('queued') };
-    yield { type: 'response.in_progress', response: response('in_progress') };
-    yield {
-      type: 'response.output_item.done',
-      output_index: 0,
-      item: {
-        type: 'message',
-        id: `msg_${label}`,
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: label, annotations: [] }],
-      },
-    };
-    yield { type: 'response.completed', response: response('completed') };
-  };
+  return lifecycleHandler({ label: 'bg', gate });
 }
 
 /**
@@ -126,37 +46,17 @@ function labelledHandler(label: string): ResponseHandler {
  * handler's own terminal must not be honoured however long after the promise it arrives.
  */
 function stubbornHandler(gate: Promise<void>): ResponseHandler {
-  return async function* (_request: CreateResponseRequest, context: HandlerContext) {
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-    yield { type: 'response.created', response: response('queued') };
-    yield {
-      type: 'response.in_progress',
-      // Fields only a handler can put on the resource. The cancelled snapshot has to strip both:
-      // `error` and `completed_at` must be absent on a `cancelled` response.
-      response: {
-        ...response('in_progress'),
-        error: { code: 'server_error', message: 'handler-owned', type: 'server_error' },
-        completed_at: 1234,
-      },
-    };
-    yield {
-      type: 'response.output_item.done',
-      output_index: 0,
-      item: {
-        type: 'message',
-        id: 'msg_stubborn',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: 'produced anyway', annotations: [] }],
-      },
-    };
-    // Deliberately *not* racing `context.signal`: this handler does not honour cancellation.
-    await gate;
-    yield { type: 'response.completed', response: response('completed') };
-  };
+  return lifecycleHandler({
+    label: 'stubborn',
+    gate,
+    ignoreAbort: true,
+    // Fields only a handler can put on the resource. The cancelled snapshot has to strip both:
+    // `error` and `completed_at` must be absent on a `cancelled` response.
+    inProgressResponse: {
+      error: { code: 'server_error', message: 'handler-owned', type: 'server_error' },
+      completed_at: 1234,
+    },
+  });
 }
 
 /**
@@ -229,21 +129,6 @@ class ObservableStore implements ResponseProvider {
   }
 }
 
-function makeServer(
-  handler: ResponseHandler,
-  store: ResponseProvider = new InMemoryResponseProvider(),
-): ResponsesServer {
-  return new ResponsesServer({ handler, store });
-}
-
-function post(body: unknown): Request {
-  return new Request('http://localhost:8088/responses', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
 /**
  * A create whose *body* only arrives once `gate` opens.
  *
@@ -289,21 +174,6 @@ async function waitFor(predicate: () => boolean, what: string): Promise<void> {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-async function readSse(response: Response): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
-  const text = await response.text();
-  return text
-    .split('\n\n')
-    .filter((block) => block.trim() !== '' && !block.startsWith(':'))
-    .map((block) => {
-      const eventLine = must(block.split('\n').find((line) => line.startsWith('event: ')));
-      const dataLine = must(block.split('\n').find((line) => line.startsWith('data: ')));
-      return {
-        event: eventLine.slice('event: '.length),
-        data: JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>,
-      };
-    });
-}
-
 /** Polls `GET /responses/{id}` until the predicate holds; the background turn's clock. */
 async function pollUntil(
   server: ResponsesServer,
@@ -330,7 +200,7 @@ async function errorOf(response: Response): Promise<{ code: string; message: str
 
 describe('background non-stream', () => {
   it('answers immediately with the queued/in_progress snapshot and completes detached', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
 
     const created = await server.handle(post({ input: 'hi', background: true }));
@@ -372,7 +242,7 @@ describe('background non-stream', () => {
   });
 
   it('serves input_items from the in-flight run before anything is persisted', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
     const inputs = [
       { type: 'message', id: 'bg_i1', role: 'user', content: [{ type: 'input_text', text: 'a' }] },
@@ -411,7 +281,7 @@ describe('background + stream', () => {
   });
 
   it('does not cancel the run when the streaming client disconnects', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
 
     const created = await server.handle(post({ input: 'hi', background: true, stream: true }));
@@ -460,7 +330,7 @@ describe('streamed replay', () => {
   });
 
   it('replays the retained prefix of a still-running stream, then follows it live', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
 
     const created = await server.handle(post({ input: 'hi', background: true, stream: true }));
@@ -518,7 +388,7 @@ describe('streamed replay', () => {
   });
 
   it('drops replay when a stream crosses the retention cap, without cutting the live subscriber', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = new ResponsesServer({
       handler: gatedHandler(gate.promise),
       store: new InMemoryResponseProvider(),
@@ -552,7 +422,7 @@ describe('streamed replay', () => {
   });
 
   it('keeps a mid-run subscriber to the terminal once the cap has already bitten', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = new ResponsesServer({
       handler: gatedHandler(gate.promise),
       store: new InMemoryResponseProvider(),
@@ -578,8 +448,8 @@ describe('streamed replay', () => {
   it('carries a subscriber that stopped draining to the terminal, past a moving window', async () => {
     // `created` → hold1 → `in_progress` → hold2 → the output item and the terminal, so the test
     // decides exactly when the window moves relative to a parked subscriber.
-    const hold1 = deferred();
-    const hold2 = deferred();
+    const hold1 = Promise.withResolvers<void>();
+    const hold2 = Promise.withResolvers<void>();
     const server = new ResponsesServer({
       handler: async function* (_request: CreateResponseRequest, context: HandlerContext) {
         const response = (status: ResponseObject['status']): ResponseObject => ({
@@ -665,7 +535,7 @@ describe('streamed replay', () => {
     const server = new ResponsesServer({
       handler: (request, context) => {
         turn += 1;
-        return labelledHandler(`turn${turn}`)(request, context);
+        return lifecycleHandler({ label: `turn${turn}` })(request, context);
       },
       store,
     });
@@ -709,7 +579,7 @@ describe('stores without event persistence stay fail-closed', () => {
   }
 
   it('answers 501 for a background create, after the store=true validation', async () => {
-    const server = makeServer(gatedHandler(), baseStore());
+    const server = makeServer(gatedHandler(), { store: baseStore() });
 
     // The store=false violation is still the caller's 400, learned first.
     const invalid = await server.handle(post({ input: 'x', background: true, store: false }));
@@ -733,7 +603,7 @@ describe('stores without event persistence stay fail-closed', () => {
         background: true,
       },
     };
-    const server = makeServer(gatedHandler(), baseStore(canned));
+    const server = makeServer(gatedHandler(), { store: baseStore(canned) });
 
     const replay = await server.handle(get(`/responses/${responseId}?stream=true`));
     expect(replay.status).toBe(501);
@@ -748,7 +618,7 @@ describe('stores without event persistence stay fail-closed', () => {
 
 describe('cancel', () => {
   it('cancels an in-flight background run; cancellation wins and is idempotent', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
 
     const created = await server.handle(post({ input: 'hi', background: true }));
@@ -801,7 +671,7 @@ describe('cancel', () => {
 
 describe('delete', () => {
   it('refuses to delete an in-flight run, then deletes the finished turn and its replay log', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
 
     const created = await server.handle(post({ input: 'hi', background: true, stream: true }));
@@ -842,7 +712,7 @@ describe('cancellation always wins over the handler', () => {
 
   it('is not overwritten when the handler ignores the signal and finishes past the grace', async () => {
     shortGrace();
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const store = new ObservableStore();
     const server = new ResponsesServer({ handler: stubbornHandler(gate.promise), store });
     const id = newResponseId();
@@ -870,7 +740,7 @@ describe('cancellation always wins over the handler', () => {
 
   it('overrides the terminal on the wire too, so no follower reads `completed`', async () => {
     shortGrace();
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(stubbornHandler(gate.promise));
     const id = newResponseId();
 
@@ -891,7 +761,7 @@ describe('cancellation always wins over the handler', () => {
   it('reports cancelled to GET while the winddown is still inside its grace', async () => {
     // Long enough that every GET below happens while the cancel route is still waiting.
     vi.stubEnv('AGENTSERVER_CANCEL_GRACE_MS', '60000');
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(stubbornHandler(gate.promise));
     const id = newResponseId();
 
@@ -928,7 +798,7 @@ describe('cancellation always wins over the handler', () => {
 
   it('does not write its terminal into the turn that reused its id', async () => {
     shortGrace();
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const store = new ObservableStore();
     // The first turn ignores its cancellation and stays gated; the second is an ordinary turn that
     // takes the same id once the first has been cancelled and deleted.
@@ -963,7 +833,7 @@ describe('cancellation always wins over the handler', () => {
 
   it('clears output, error and completed_at from the cancelled snapshot', async () => {
     shortGrace();
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const store = new ObservableStore();
     const server = new ResponsesServer({ handler: stubbornHandler(gate.promise), store });
     const id = newResponseId();
@@ -1005,14 +875,14 @@ describe('a registered run that has already finished', () => {
     release: () => void;
   }> {
     const store = new ObservableStore();
-    const hold = deferred();
+    const hold = Promise.withResolvers<void>();
     store.putEventsGate = hold.promise;
     // Each turn under this id is tagged, so a replay log can be attributed to the run that made it.
     let turn = 0;
     const server = new ResponsesServer({
       handler: (request, context) => {
         turn += 1;
-        return labelledHandler(`turn${turn}`)(request, context);
+        return lifecycleHandler({ label: `turn${turn}` })(request, context);
       },
       store,
     });
@@ -1101,10 +971,10 @@ describe('a registered run that has already finished', () => {
 
   it('fences stale replay writes across two server instances sharing one store', async () => {
     const store = new ObservableStore();
-    const hold = deferred();
+    const hold = Promise.withResolvers<void>();
     store.putEventsGate = hold.promise;
-    const firstServer = new ResponsesServer({ handler: labelledHandler('server1'), store });
-    const secondServer = new ResponsesServer({ handler: labelledHandler('server2'), store });
+    const firstServer = new ResponsesServer({ handler: lifecycleHandler({ label: 'server1' }), store });
+    const secondServer = new ResponsesServer({ handler: lifecycleHandler({ label: 'server2' }), store });
     const id = newResponseId();
 
     const first = await firstServer.handle(
@@ -1164,7 +1034,7 @@ describe('a registered run that has already finished', () => {
 
 describe('the background registry survives a reused id', () => {
   it('refuses a second background run under an id that is already in flight', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
     const id = newResponseId();
 
@@ -1188,7 +1058,7 @@ describe('the background registry survives a reused id', () => {
   });
 
   it('admits exactly one of two simultaneous creates under one id', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
     const id = newResponseId();
 
@@ -1236,7 +1106,7 @@ describe('the background registry survives a reused id', () => {
   });
 
   it('tells a different user nothing at all about an id that is busy', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer(gatedHandler(gate.promise));
     const id = newResponseId();
 
@@ -1264,9 +1134,9 @@ describe('the background registry survives a reused id', () => {
 
   it('lets a finishing run deregister only its own registration', async () => {
     const store = new ObservableStore();
-    const hold = deferred();
+    const hold = Promise.withResolvers<void>();
     store.putEventsGate = hold.promise;
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     // The first turn runs straight through; the second is held open, so it is still registered
     // when the first one's teardown finally runs.
     let turn = 0;
@@ -1303,7 +1173,7 @@ describe('the background registry survives a reused id', () => {
 
 describe('draining background runs', () => {
   it('winds an in-flight run down to a persisted incomplete terminal on drain', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const store = new InMemoryResponseProvider();
     const server = new ResponsesServer({ handler: gatedHandler(gate.promise), store });
 
@@ -1324,7 +1194,7 @@ describe('draining background runs', () => {
     // the writability check, the session lookup, the handler's own setup — before there is a run
     // to register. A drain that only knows about *runs* sees an empty registry here and returns
     // while the turn it was supposed to wind down is still coming.
-    const setup = deferred();
+    const setup = Promise.withResolvers<void>();
     const store = new ObservableStore();
     store.assertWritableGate = setup.promise;
     const server = new ResponsesServer({ handler: gatedHandler(), store });
@@ -1408,7 +1278,7 @@ describe('draining background runs', () => {
     // `#route` checks the draining flag, but the body read that follows is an await: a request
     // admitted a moment before `drain()` can still claim an id after drain has taken its snapshot
     // of what to wait for, and that run would outlive the drain unobserved.
-    const body = deferred();
+    const body = Promise.withResolvers<void>();
     const store = new ObservableStore();
     const server = new ResponsesServer({ handler: gatedHandler(), store });
 

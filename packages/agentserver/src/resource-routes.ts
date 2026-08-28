@@ -1,10 +1,9 @@
 import type { BackgroundRun, IdClaim } from './background-run.js';
 import { sequenceOf } from './background-run.js';
-import { cancelGraceMs, sseKeepAliveSeconds } from './config.js';
+import { cancelGraceMs, sseKeepAliveMs } from './config.js';
 import { badRequest, notFound, notImplemented, ProtocolError } from './errors.js';
-import { jsonResponse } from './http.js';
+import { jsonResponse, sseResponse } from './http.js';
 import { applyCancelledTerminal } from './lifecycle.js';
-import { SSE_HEADERS, toSseStream } from './sse.js';
 import type { ResponseOwner, ResponseProvider } from './store/provider.js';
 import { sameOwner } from './store/provider.js';
 import { parseLimit, parseOrder, parseStartingAfter } from './validation.js';
@@ -45,6 +44,11 @@ const REPLAY_UNAVAILABLE =
 /** A 400 with `code: "invalid_mode"` on `param: "stream"`, Python's `_invalid_mode` shape. */
 function invalidMode(message: string): ProtocolError {
   return badRequest(message, { code: 'invalid_mode', param: 'stream' });
+}
+
+/** A 400 refusal on `param: "response_id"` — the shape every delete/cancel refusal here shares. */
+function refuse(message: string): ProtocolError {
+  return new ProtocolError(400, message, { code: 'invalid_request_error', param: 'response_id' });
 }
 
 /** The states a response never leaves (Python `_RuntimeState._TERMINAL_STATUSES`). */
@@ -106,15 +110,13 @@ export async function getResponse(
   if (run !== undefined) {
     if (!streamReplay) {
       // A cancel that is still inside its winddown grace has already promised `cancelled`, and
-      // the reference refreshes the record's status from the cancel signal before answering any
-      // GET (`_refresh_background_status`). Only the status is refreshed — the rest of the
-      // snapshot, accumulated output included, stays the handler's until the cancel route
-      // applies the actual cancelled terminal.
+      // `runStatus` refreshes a registered run's status from the cancel signal exactly the way
+      // the reference does before answering any GET (`_refresh_background_status`). Only the
+      // status is refreshed — the rest of the snapshot, accumulated output included, stays the
+      // handler's until the cancel route applies the actual cancelled terminal.
       const snapshot = run.tracker.response;
-      if (run.cancelRequested && !TERMINAL_STATUSES.has(String(snapshot.status))) {
-        return jsonResponse({ ...snapshot, status: 'cancelled' }, 200);
-      }
-      return jsonResponse(snapshot, 200);
+      const status = runStatus(run);
+      return jsonResponse(status === String(snapshot.status) ? snapshot : { ...snapshot, status }, 200);
     }
     if (!run.streamed) {
       throw invalidMode('This response cannot be streamed because it was not created with stream=true.');
@@ -124,11 +126,7 @@ export async function getResponse(
     }
     // Replay the retained prefix, then follow live to the terminal (the resilience contract's
     // reconnect clause: events strictly after the cursor, then live-tail).
-    const keepAliveMs = sseKeepAliveSeconds() * 1000;
-    return new Response(toSseStream(run.follow(startingAfter), { keepAliveMs }), {
-      status: 200,
-      headers: SSE_HEADERS,
-    });
+    return sseResponse(run.follow(startingAfter), { keepAliveMs: sseKeepAliveMs() });
   }
 
   const stored = await state.store.get(id, owner);
@@ -176,7 +174,7 @@ export async function getResponse(
   const replayable = events.filter((event) => sequenceOf(event) > startingAfter);
   // A finished stream replays as-is and closes; no keep-alive timer for a body that is already
   // complete (Python's fallback replay does not wrap `with_keep_alive` either).
-  return new Response(toSseStream(replayEvents(replayable)), { status: 200, headers: SSE_HEADERS });
+  return sseResponse(replayEvents(replayable));
 }
 
 /** `DELETE /responses/{id}`. */
@@ -192,10 +190,7 @@ export async function deleteResponse(
     // the record's mere presence, and the difference is a real window here: the registration
     // outlives the terminal state by however long the replay log takes to store, and during it
     // the finished turn is already in the store and perfectly deletable.
-    throw new ProtocolError(400, 'Cannot delete an in-flight response.', {
-      code: 'invalid_request_error',
-      param: 'response_id',
-    });
+    throw refuse('Cannot delete an in-flight response.');
   }
   const deleted = await state.store.delete(id, owner);
   if (!deleted) {
@@ -228,7 +223,7 @@ export async function cancelResponse(
     const status = runStatus(run);
     const refusal = CANCEL_TERMINAL_ERRORS[status];
     if (refusal !== undefined) {
-      throw new ProtocolError(400, refusal, { code: 'invalid_request_error', param: 'response_id' });
+      throw refuse(refusal);
     }
     if (status === 'cancelled') {
       // Repeats the cancelled snapshot instead of opening a second winddown — the case where a
@@ -267,14 +262,11 @@ export async function cancelResponse(
     throw notFound(id);
   }
   if (stored.response.background !== true) {
-    throw new ProtocolError(400, 'Cannot cancel a synchronous response.', {
-      code: 'invalid_request_error',
-      param: 'response_id',
-    });
+    throw refuse('Cannot cancel a synchronous response.');
   }
   const message = CANCEL_TERMINAL_ERRORS[String(stored.response.status)];
   if (message !== undefined) {
-    throw new ProtocolError(400, message, { code: 'invalid_request_error', param: 'response_id' });
+    throw refuse(message);
   }
   if (stored.response.status === 'cancelled') {
     // Idempotent: cancelling a cancelled response repeats the snapshot (Python's sentinel path).

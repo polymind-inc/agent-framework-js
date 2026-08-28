@@ -16,7 +16,7 @@ import type {
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
-import { MockChatClient } from './test-support.js';
+import { MockChatClient, must } from './test-support.js';
 
 const deleteAll = tool({
   name: 'delete_all',
@@ -35,12 +35,6 @@ const readOnly = tool({
 
 function call(callId: string, name: string): FunctionCallContent {
   return { type: 'function_call', callId, name, arguments: '{}' };
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 /** Every `function_result` in a transcript, as `[callId, result]`. */

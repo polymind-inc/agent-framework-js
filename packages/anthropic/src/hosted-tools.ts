@@ -1,5 +1,6 @@
 import type { HostedTool, McpToolOptions, WebSearchToolOptions } from '@polymind-inc/agent-framework-core';
-import { ConfigurationError, hostedTool, withoutUndefined } from '@polymind-inc/agent-framework-core';
+import { hostedTool, withoutUndefined } from '@polymind-inc/agent-framework-core';
+import { normalizeServerLabel } from '@polymind-inc/agent-framework-core/internal';
 
 /**
  * Declares the provider-hosted web search tool.
@@ -47,14 +48,9 @@ export const MCP_SERVER_SPEC_TYPE = 'anthropic.mcp_server';
  * disclosed to that server on every call.
  */
 export function mcpTool(options: McpToolOptions): HostedTool {
-  if (options.serverLabel.trim() === '') {
-    throw new ConfigurationError('mcpTool requires a non-empty serverLabel.');
-  }
-  // The API rejects an `mcp_servers[].name` containing spaces; Python's `get_mcp_tool` applies the
-  // same substitution (`_chat_client.py`: `"server_label": name.replace(" ", "_")`), as does the
-  // openai package. Only spaces are replaced — matching the reference implementation exactly rather
-  // than sanitising every character the API might dislike.
-  const serverLabel = options.serverLabel.replaceAll(' ', '_');
+  // Here the normalized label lands on the wire as `mcp_servers[].name`, which is the field the
+  // Messages API rejects when it contains spaces.
+  const serverLabel = normalizeServerLabel(options.serverLabel);
   const authorizationEntry = Object.entries(options.headers ?? {}).find(
     ([name]) => name.toLowerCase() === 'authorization',
   );

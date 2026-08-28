@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatClient, ChatOptions } from '../client/chat-client.js';
-import { MockChatClient } from '../client/test-support.js';
+import { MockChatClient, must } from '../client/test-support.js';
 import type { ContextProvider, HistoryProvider } from '../context/context-provider.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError, StreamConsumedError, UserInputRequiredError } from '../errors.js';
@@ -17,12 +17,6 @@ import { AgentSession } from './session.js';
 
 function client(...texts: string[]): MockChatClient {
   return new MockChatClient(texts.map((text) => ({ contents: [textContent(text)], finishReason: 'stop' })));
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 describe('Agent.run', () => {

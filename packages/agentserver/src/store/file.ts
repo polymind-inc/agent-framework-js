@@ -4,22 +4,22 @@ import { notFound } from '../errors.js';
 import { resolveUnder } from '../paths.js';
 import type { OutputItem, ResponseEvent } from '../wire.js';
 import { readJsonFile, writeJsonFile } from './json-file.js';
-import type { ResponseGeneration, ResponseOwner, ResponseProvider, StoredResponse } from './provider.js';
+import type {
+  ResponseGeneration,
+  ResponseOwner,
+  ResponseProvider,
+  StoredEventLog,
+  StoredResponse,
+} from './provider.js';
 import {
   assertOwnerCanWrite,
   assertWritable,
-  historyOf,
+  fencedEvents,
+  historyVia,
   isCurrentGeneration,
   ownedOrUndefined,
   sameOwner,
 } from './provider.js';
-
-/** The on-disk shape of a persisted event stream: the events plus who they belong to. */
-interface StoredEventsFile {
-  userId?: string;
-  generation?: ResponseGeneration;
-  events: ResponseEvent[];
-}
 
 /**
  * Persists responses as JSON files under a root directory.
@@ -120,8 +120,9 @@ export class FileResponseProvider implements ResponseProvider {
     assertOwnerCanWrite(await this.#read(id), id, owner);
   }
 
-  async #readEvents(id: string): Promise<StoredEventsFile | undefined> {
-    return readJsonFile<StoredEventsFile>(this.#eventsPathFor(id));
+  /** Reads one on-disk event stream, with the same unchecked-assertion caveat as `#read`. */
+  async #readEvents(id: string): Promise<StoredEventLog | undefined> {
+    return readJsonFile<StoredEventLog>(this.#eventsPathFor(id));
   }
 
   async putEvents(
@@ -145,7 +146,7 @@ export class FileResponseProvider implements ResponseProvider {
       if (existing !== undefined && !sameOwner(existing.userId, owner)) {
         throw notFound(id);
       }
-      const payload: StoredEventsFile = {
+      const payload: StoredEventLog = {
         ...(owner === undefined || owner === '' ? {} : { userId: owner }),
         generation,
         events: [...events],
@@ -159,10 +160,7 @@ export class FileResponseProvider implements ResponseProvider {
     owner: ResponseOwner,
     generation: ResponseGeneration,
   ): Promise<ResponseEvent[] | undefined> {
-    const record = await this.#readEvents(id);
-    return record !== undefined && record.generation === generation && sameOwner(record.userId, owner)
-      ? record.events
-      : undefined;
+    return fencedEvents(await this.#readEvents(id), owner, generation);
   }
 
   async delete(id: string, owner: ResponseOwner): Promise<boolean> {
@@ -185,7 +183,6 @@ export class FileResponseProvider implements ResponseProvider {
   }
 
   async history(id: string, owner: ResponseOwner): Promise<OutputItem[] | undefined> {
-    const stored = await this.get(id, owner);
-    return stored === undefined ? undefined : historyOf(stored);
+    return historyVia(this, id, owner);
   }
 }

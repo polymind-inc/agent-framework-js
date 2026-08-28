@@ -20,6 +20,17 @@ function mergeAdditionalProperties(
   return { ...a, ...b };
 }
 
+/** The folded `additionalProperties` of a run: the first item's record seeds, later keys win. */
+function mergedRunProps(
+  run: readonly { additionalProperties?: Record<string, unknown> }[],
+): Record<string, unknown> | undefined {
+  let props = run[0]?.additionalProperties;
+  for (const item of run.slice(1)) {
+    props = mergeAdditionalProperties(props, item.additionalProperties);
+  }
+  return props;
+}
+
 function withOptionalProps<T extends object>(base: T, props: Record<string, unknown> | undefined): T {
   return props === undefined ? base : { ...base, additionalProperties: props };
 }
@@ -137,9 +148,7 @@ function canMergeData(a: DataContent, b: DataContent): boolean {
 }
 
 function mergeTextRun(run: TextContent[]): TextContent {
-  const first = run[0] as TextContent;
   let text = '';
-  let props = first.additionalProperties;
   const annotations: NonNullable<Content['annotations']> = [];
   for (const item of run) {
     text += item.text;
@@ -147,10 +156,7 @@ function mergeTextRun(run: TextContent[]): TextContent {
       annotations.push(...item.annotations);
     }
   }
-  for (const item of run.slice(1)) {
-    props = mergeAdditionalProperties(props, item.additionalProperties);
-  }
-  const merged = withOptionalProps<TextContent>({ type: 'text', text }, props);
+  const merged = withOptionalProps<TextContent>({ type: 'text', text }, mergedRunProps(run));
   // Only an empty annotated item can be in this run (see `coalescableText`), so nothing here
   // shifts the offsets the annotations refer to.
   if (annotations.length > 0) {
@@ -166,15 +172,11 @@ function mergeTextReasoningRun(run: TextReasoningContent[]): TextReasoningConten
   // string is falsy). An id-less run keeps the first fragment's spelling of "no id".
   const id = run.find((item) => item.id !== undefined && item.id !== '')?.id ?? first.id;
   let protectedData: string | undefined;
-  let props = first.additionalProperties;
   for (const item of run) {
     text += item.text ?? '';
     if (item.protectedData !== undefined) {
       protectedData = item.protectedData;
     }
-  }
-  for (const item of run.slice(1)) {
-    props = mergeAdditionalProperties(props, item.additionalProperties);
   }
   const merged: TextReasoningContent = { type: 'text_reasoning' };
   if (id !== undefined) {
@@ -186,7 +188,7 @@ function mergeTextReasoningRun(run: TextReasoningContent[]): TextReasoningConten
   if (protectedData !== undefined) {
     merged.protectedData = protectedData;
   }
-  return withOptionalProps(merged, props);
+  return withOptionalProps(merged, mergedRunProps(run));
 }
 
 function mergeFunctionCallRun(run: FunctionCallContent[]): FunctionCallContent {
@@ -195,7 +197,6 @@ function mergeFunctionCallRun(run: FunctionCallContent[]): FunctionCallContent {
   let name = '';
   let callId = '';
   let informationalOnly = false;
-  let props = first.additionalProperties;
   for (const item of run) {
     if (typeof args === 'string' && typeof item.arguments === 'string') {
       args += item.arguments;
@@ -206,19 +207,15 @@ function mergeFunctionCallRun(run: FunctionCallContent[]): FunctionCallContent {
     callId ||= item.callId;
     informationalOnly ||= item.informationalOnly === true;
   }
-  for (const item of run.slice(1)) {
-    props = mergeAdditionalProperties(props, item.additionalProperties);
-  }
   const merged: FunctionCallContent = { type: 'function_call', callId, name, arguments: args };
   if (informationalOnly) {
     merged.informationalOnly = true;
   }
-  return withOptionalProps(merged, props);
+  return withOptionalProps(merged, mergedRunProps(run));
 }
 
 function mergeDataRun(run: DataContent[]): DataContent {
   const first = run[0] as DataContent;
-  let props = first.additionalProperties;
   // Concatenated with typed-array copies rather than a spread push: spreading a large decoded
   // payload as function arguments overflows the engine's argument limit (~100k elements).
   const parts = run.map((item) => decodeBase64(dataUriPayload(item.uri)));
@@ -232,9 +229,6 @@ function mergeDataRun(run: DataContent[]): DataContent {
     bytes.set(part, offset);
     offset += part.length;
   }
-  for (const item of run.slice(1)) {
-    props = mergeAdditionalProperties(props, item.additionalProperties);
-  }
   const merged: DataContent = {
     type: 'data',
     uri: `data:${first.mediaType};base64,${encodeBase64(bytes)}`,
@@ -243,7 +237,7 @@ function mergeDataRun(run: DataContent[]): DataContent {
   if (first.name !== undefined) {
     merged.name = first.name;
   }
-  return withOptionalProps(merged, props);
+  return withOptionalProps(merged, mergedRunProps(run));
 }
 
 /**

@@ -8,6 +8,7 @@ function source(path: string): string {
 // Subpaths precede their package roots so Vite's prefix matching always selects the exact entry.
 const workspaceAliases = {
   '@polymind-inc/agent-framework-core/testing': source('core/src/testing.ts'),
+  '@polymind-inc/agent-framework-core/internal': source('core/src/internal.ts'),
   '@polymind-inc/agent-framework-core/node': source('core/src/node.ts'),
   '@polymind-inc/agent-framework-core': source('core/src/index.ts'),
   '@polymind-inc/agent-framework-foundry/hosting': source('foundry/src/hosting.ts'),

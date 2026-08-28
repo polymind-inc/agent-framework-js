@@ -1,25 +1,10 @@
-import type { HandlerContext } from '@polymind-inc/agent-framework-agentserver';
-import { createRequestContext } from '@polymind-inc/agent-framework-agentserver';
 import { describe, expect, it } from 'vitest';
+import { testHandlerContext } from '../test-helpers.js';
 import { getHostedAgentContext, hostedAgentContextOf, withHostedAgentContext } from './hosted-context.js';
-
-function makeHandlerContext(): HandlerContext {
-  const responseId = 'caresp_test';
-  return {
-    responseId,
-    conversationId: undefined,
-    request: createRequestContext(new Headers({ 'x-agent-user-id': 'alice' })),
-    agentReference: { type: 'agent_reference', name: 'test-agent' },
-    agentSessionId: 'session-test',
-    history: [],
-    signal: new AbortController().signal,
-    response: { id: responseId, object: 'response', created_at: 0, status: 'queued', output: [] },
-  };
-}
 
 describe('withHostedAgentContext', () => {
   it('keeps the context installed while the stream is torn down early', async () => {
-    const context = hostedAgentContextOf(makeHandlerContext());
+    const context = hostedAgentContextOf(testHandlerContext({ 'x-agent-user-id': 'alice' }));
     // 'unread' rather than undefined, so a finally that never ran cannot pass the assertion.
     let seenInFinally: unknown = 'unread';
     async function* source(): AsyncGenerator<number> {
@@ -44,7 +29,7 @@ describe('withHostedAgentContext', () => {
 
 describe('hostedAgentContextOf', () => {
   it('freezes the agent reference as a copy, apart from the protocol resource', () => {
-    const handlerContext = makeHandlerContext();
+    const handlerContext = testHandlerContext({ 'x-agent-user-id': 'alice' });
     const context = hostedAgentContextOf(handlerContext);
 
     expect(Object.isFrozen(context)).toBe(true);

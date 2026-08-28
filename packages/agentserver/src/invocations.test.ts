@@ -3,6 +3,7 @@ import { getRequestContext, HEADERS } from './context.js';
 import { badRequest, ProtocolError } from './errors.js';
 import type { InvocationHandler, InvocationsServerConfig } from './invocations.js';
 import { INVOCATION_ID_HEADER, InvocationsServer } from './invocations.js';
+import { must } from './test-helpers.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -447,7 +448,7 @@ describe('draining', () => {
 
 describe('cancellation', () => {
   it('aborts the handler when the caller disconnects', async () => {
-    const aborted = deferred<void>();
+    const aborted = Promise.withResolvers<void>();
     const server = makeServer({
       handler: async (_request, context) => {
         if (context.signal.aborted) {
@@ -474,8 +475,8 @@ describe('cancellation', () => {
   });
 
   it('aborts in-flight handlers when the server drains', async () => {
-    const entered = deferred<void>();
-    const aborted = deferred<void>();
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
     const server = makeServer({
       handler: async (_request, context) => {
         context.signal.addEventListener('abort', () => aborted.resolve(), { once: true });
@@ -529,7 +530,7 @@ describe('SSE keep-alive', () => {
   }
 
   it('stays silent by default', async () => {
-    const gate = deferred<void>();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer({ handler: sseHandler(gate.promise) });
     const pending = server.handle(invoke());
     setTimeout(() => gate.resolve(), 50);
@@ -541,7 +542,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({ handler: sseHandler(gate.promise) });
       const response = await server.handle(invoke());
       const reader = must(response.body).getReader();
@@ -568,7 +569,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({ handler: sseHandler(gate.promise) });
       const response = await server.handle(invoke());
       const reader = must(response.body).getReader();
@@ -594,7 +595,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({ handler: sseHandler(gate.promise) });
       const response = await server.handle(invoke());
       const reader = must(response.body).getReader();
@@ -625,7 +626,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({
         handler: () =>
           new Response(
@@ -658,7 +659,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({
         handler: () =>
           new Response(
@@ -688,18 +689,3 @@ describe('SSE keep-alive', () => {
     }
   });
 });
-
-/** A promise with its `resolve` in hand. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-/** Narrows away null/undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}

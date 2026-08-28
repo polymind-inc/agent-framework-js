@@ -17,6 +17,7 @@ import { DefaultAzureCredential } from '@azure/identity';
 import type { ResponseObject } from '@polymind-inc/agent-framework-agentserver';
 import { ID_PREFIX, newId, newResponseId } from '@polymind-inc/agent-framework-agentserver';
 import { Agent, tool } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import { FoundryChatClient } from './chat-client.js';
 import { FoundryResponseStore } from './hosting/response-store.js';
@@ -30,12 +31,6 @@ const serverAgent = process.env.FOUNDRY_SERVER_AGENT;
 const toolboxName = process.env.FOUNDRY_TOOLBOX_NAME;
 const runIntegration = process.env.RUN_INTEGRATION_TESTS === '1';
 const TIMEOUT = 60_000;
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 const project = (): FoundryProject => new FoundryProject(must(projectEndpoint), new DefaultAzureCredential());
 

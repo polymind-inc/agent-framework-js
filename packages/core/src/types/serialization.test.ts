@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { must } from '../client/test-support.js';
 import { unknownContent } from './content.js';
 import type { Message } from './message.js';
 import { deserializeMessage, serializeContent, serializeMessage } from './serialization.js';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 describe('message serialization', () => {
   it('drops rawRepresentation from the message and from every content item', () => {

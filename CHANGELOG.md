@@ -6,6 +6,21 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — the `MiddlewareKind` type is removed. It
+  was a free-standing alias nothing in the framework consumed; the discriminant lives on the
+  middleware objects themselves, so `Middleware['kind']` expresses the same type where one is
+  needed.
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`** — the `TERMINAL_EVENT_TYPES`
+  constant is no longer exported. The `TerminalEventType` type and the `isTerminalEventType`
+  predicate remain: use the predicate to test an individual event type. Code that enumerated or
+  iterated the exported tuple has no direct replacement.
+- **`@polymind-inc/agent-framework-core`** — a new `/internal` subpath holds the utilities the
+  framework's own packages and test suites share. Like the other `/internal` entries, it is a
+  contract between the framework's packages and not part of the supported surface.
+- **`@polymind-inc/agent-framework-anthropic`** — a replayed `function_call` whose string
+  arguments parse to a JSON array or scalar no longer reaches the API as `tool_use.input`; it
+  degrades to `{}` like every other non-object payload, keeping `input` the JSON object the
+  Messages API requires.
 - **[BREAKING] `@polymind-inc/agent-framework-foundry`** — Foundry credentials and the project
   endpoint are centralized in the new `FoundryProject` handle
   (`new FoundryProject(endpoint, credential, { scope?, fetch? })`, mirroring

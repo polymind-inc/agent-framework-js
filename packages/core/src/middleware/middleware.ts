@@ -6,17 +6,6 @@ import type { AnyFunctionTool, Tool } from '../tools/tool.js';
 import type { Message } from '../types/message.js';
 import type { AgentResponse, AgentResponseUpdate } from '../types/response.js';
 
-/**
- * What a middleware intercepts.
- *
- * Two kinds are public in v1: `agent` wraps a whole `run()`, `function` wraps
- * a single tool invocation. Interception of individual model calls stays an internal concern —
- * telemetry, the function-calling loop and the approval layer are implemented as chat-client
- * layers (`withChatTelemetry`, `withFunctionInvocation`, `withToolApproval`), and a public chat
- * middleware would be a second way to do the same thing.
- */
-export type MiddlewareKind = 'agent' | 'function';
-
 /** The `(ctx, next)` signature every middleware handler follows. */
 export type MiddlewareHandler<TContext> = (ctx: TContext, next: () => Promise<void>) => Promise<void> | void;
 
@@ -36,7 +25,15 @@ export interface FunctionMiddleware {
   readonly name?: string;
 }
 
-/** Anything accepted where middleware is collected. */
+/**
+ * Anything accepted where middleware is collected.
+ *
+ * Two kinds exist, and the `kind` discriminant says which layer a middleware wraps: `agent` wraps
+ * a whole `run()`, `function` wraps a single tool invocation. Interception of individual model
+ * calls stays an internal concern — telemetry, the function-calling loop and the approval layer
+ * are implemented as chat-client layers (`withChatTelemetry`, `withFunctionInvocation`,
+ * `withToolApproval`), and a public chat middleware would be a second way to do the same thing.
+ */
 export type Middleware = AgentMiddleware | FunctionMiddleware;
 
 /**
@@ -161,8 +158,13 @@ export function agentMiddleware(
   handler: MiddlewareHandler<AgentMiddlewareContext>,
   options?: { name?: string },
 ): AgentMiddleware {
+  return { kind: 'agent', handler, ...middlewareName(handler, options) };
+}
+
+/** The shared name resolution: an explicit option wins, then the handler's own function name. */
+function middlewareName(handler: MiddlewareHandler<never>, options?: { name?: string }): { name?: string } {
   const name = options?.name ?? (handler.name === '' ? undefined : handler.name);
-  return { kind: 'agent', handler, ...(name === undefined ? {} : { name }) };
+  return name === undefined ? {} : { name };
 }
 
 /**
@@ -180,8 +182,7 @@ export function functionMiddleware(
   handler: MiddlewareHandler<FunctionMiddlewareContext>,
   options?: { name?: string },
 ): FunctionMiddleware {
-  const name = options?.name ?? (handler.name === '' ? undefined : handler.name);
-  return { kind: 'function', handler, ...(name === undefined ? {} : { name }) };
+  return { kind: 'function', handler, ...middlewareName(handler, options) };
 }
 
 /** Middleware split by kind. */

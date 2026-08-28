@@ -111,3 +111,5 @@ export class MockChatClient implements ChatClient<ChatOptions> {
     });
   }
 }
+
+export { must } from '../must.js';

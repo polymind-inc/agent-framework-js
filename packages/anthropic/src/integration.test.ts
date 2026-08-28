@@ -25,6 +25,7 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
+import { must } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
 import { AnthropicChatClient } from './chat-client.js';
 
@@ -32,12 +33,6 @@ const apiKey = process.env.ANTHROPIC_API_KEY;
 const model = process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001';
 const thinkingModel = process.env.ANTHROPIC_THINKING_MODEL ?? model;
 const TIMEOUT = 120_000;
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 const client = (override?: string): AnthropicChatClient =>
   new AnthropicChatClient({ model: override ?? model, apiKey: must(apiKey) });

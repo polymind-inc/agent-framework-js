@@ -5,6 +5,7 @@ import {
   writeJsonFile,
 } from '@polymind-inc/agent-framework-agentserver/internal';
 import type { FunctionApprovalRequestContent } from '@polymind-inc/agent-framework-core';
+import { compositeKey } from './composite-key.js';
 
 /**
  * Remembers the approval requests this container issued, keyed by the id they went out under.
@@ -26,26 +27,12 @@ export interface ApprovalStorage {
 export class InMemoryApprovalStorage implements ApprovalStorage {
   readonly #requests = new Map<string, FunctionApprovalRequestContent>();
 
-  /**
-   * A map key that cannot collide across `(userId, wireId)` pairs.
-   *
-   * Both halves are untrusted at load: the user id is a platform header and the wire id is the
-   * request body's `approval_request_id`. Joining them with *any* delimiter lets one pair
-   * impersonate another — under the previous space-joined scheme, `("alice", "smith mcpr_1")`
-   * read the entry saved for `("alice smith", "mcpr_1")`, which is another user's pending
-   * approval. `JSON.stringify` escapes every character, so the composition is injective. Same
-   * defect and same fix as {@link InMemoryAgentSessionStore}.
-   */
-  static #compositeKey(userId: string, wireId: string): string {
-    return JSON.stringify([userId, wireId]);
-  }
-
   async save(userId: string, wireId: string, request: FunctionApprovalRequestContent): Promise<void> {
-    this.#requests.set(InMemoryApprovalStorage.#compositeKey(userId, wireId), request);
+    this.#requests.set(compositeKey(userId, wireId), request);
   }
 
   async load(userId: string, wireId: string): Promise<FunctionApprovalRequestContent | undefined> {
-    return this.#requests.get(InMemoryApprovalStorage.#compositeKey(userId, wireId));
+    return this.#requests.get(compositeKey(userId, wireId));
   }
 }
 

@@ -28,6 +28,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ToolboxConsentRequest } from './consent.js';
+import { runInScope } from './run-in-scope.js';
 
 /** One turn's consent reports, keyed by the `callId` of the tool call that hit the refusal. */
 export interface ConsentChannel {
@@ -67,29 +68,13 @@ export function reportConsent(callId: string, consents: readonly ToolboxConsentR
 }
 
 /**
- * Drives `stream` with `channel` installed as the ambient channel.
- *
- * Each `next()` is invoked *inside* `AsyncLocalStorage.run`, which is where the agent runs the
- * round — including the tool calls — so a report from a tool lands in this turn's channel and
- * nowhere else. Wrapping the whole `for await` instead would leave the store's propagation into
- * the generator's resumption up to where the loop happened to be suspended.
+ * Drives `stream` with `channel` installed as the ambient channel, so a report from a tool —
+ * including one made during teardown after an early stop — lands in this turn's channel and
+ * nowhere else (see {@link runInScope} for the scoping mechanics).
  */
-export async function* withConsentChannel<T>(
+export function withConsentChannel<T>(
   channel: ConsentChannel,
   stream: AsyncIterable<T>,
 ): AsyncGenerator<T, void, undefined> {
-  const iterator = stream[Symbol.asyncIterator]();
-  try {
-    for (;;) {
-      const next = await storage.run(channel, () => iterator.next());
-      if (next.done === true) {
-        return;
-      }
-      yield next.value;
-    }
-  } finally {
-    // `break` in the consumer has to reach the agent's own cleanup (session save, tool teardown)
-    // exactly as it would without this wrapper.
-    await iterator.return?.();
-  }
+  return runInScope(storage, channel, stream);
 }

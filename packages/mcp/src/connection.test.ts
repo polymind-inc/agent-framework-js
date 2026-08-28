@@ -11,7 +11,7 @@ import { ConfigurationError } from '@polymind-inc/agent-framework-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCP_CLIENT_VERSION, McpConnection } from './connection.js';
 import type { TestTool } from './test-server.js';
-import { TestMcpServer } from './test-server.js';
+import { SlowStartServer, TestMcpServer } from './test-server.js';
 
 function echoTool(): TestTool {
   return {
@@ -380,32 +380,3 @@ describe('telemetry', () => {
     expect(span?.status.message).toBe('the tool is broken');
   });
 });
-
-/** A transport whose first `start()` blocks until the test releases it. */
-class SlowStartServer extends TestMcpServer {
-  release!: () => void;
-  /** Resolves once the client's connect has reached the transport. */
-  readonly reached: Promise<void>;
-  readonly #gate: Promise<void>;
-  #reachedResolve!: () => void;
-  #first = true;
-
-  constructor(tools: TestTool[]) {
-    super(tools);
-    this.#gate = new Promise((resolve) => {
-      this.release = resolve;
-    });
-    this.reached = new Promise((resolve) => {
-      this.#reachedResolve = resolve;
-    });
-  }
-
-  override async start(): Promise<void> {
-    if (this.#first) {
-      this.#first = false;
-      this.#reachedResolve();
-      await this.#gate;
-    }
-    await super.start();
-  }
-}

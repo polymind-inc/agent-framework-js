@@ -12,6 +12,7 @@ import {
   textOfContents,
   tool,
 } from '@polymind-inc/agent-framework-core';
+import { errorMessageOf } from '@polymind-inc/agent-framework-core/internal';
 import { McpConnection } from './connection.js';
 import { fromMcpContents, mcpMetaProperties } from './content.js';
 import type { McpHeaderProvider } from './headers.js';
@@ -207,14 +208,13 @@ export class McpClient {
   }
 
   #toFunctionTool(declared: DeclaredTool): FunctionTool<Record<string, unknown>, unknown> {
-    const target = this.#target;
     return tool({
       name: declared.name,
       // Python parity (`_mcp.py`: `tool.description or ""`): a missing description stays empty
       // rather than the name doubling as prose.
       description: declared.description ?? '',
       // The server's JSON Schema is the contract; the framework does not re-derive it.
-      parameters: (declared.inputSchema ?? { type: 'object' }) as Record<string, unknown>,
+      parameters: declared.inputSchema ?? { type: 'object' },
       approvalMode: approvalModeFor(this.#config.approvalMode, declared.name),
       execute: async (input: unknown, ctx: ToolContext): Promise<Content[]> => {
         try {
@@ -260,7 +260,7 @@ export class McpClient {
           }
           throw new ToolInvocationError(
             declared.name,
-            `MCP call to ${target} failed: ${error instanceof Error ? error.message : String(error)}`,
+            `MCP call to ${this.#target} failed: ${errorMessageOf(error)}`,
             { cause: error },
           );
         }

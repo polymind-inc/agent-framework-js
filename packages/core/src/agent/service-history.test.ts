@@ -5,6 +5,7 @@ import type {
   ChatOptions,
   ChatResponseStream,
 } from '../client/chat-client.js';
+import { must } from '../client/test-support.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
 import { ConfigurationError } from '../errors.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -13,12 +14,6 @@ import type { Message } from '../types/message.js';
 import type { ChatResponse, ChatResponseUpdate } from '../types/response.js';
 import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import { Agent } from './agent.js';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 /** A client that answers with text and reports a service-side conversation id, like Responses. */
 class StoringClient implements ChatClient<ChatOptions> {
