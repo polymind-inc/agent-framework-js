@@ -1,6 +1,6 @@
 {
   "name": "@polymind-inc/agent-framework-foundry",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Microsoft Foundry chat client and Hosted Agent hosting adapter for the Agent Framework.",
   "keywords": [
     "agent",

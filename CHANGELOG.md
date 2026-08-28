@@ -4,7 +4,13 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
-## Unreleased
+## 0.4.0
+
+A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
+and the supported surface against the reference implementations — Foundry configuration
+centralizes in `FoundryProject`, GenAI message events move to the `chat` span with v1.36.0
+bodies, and the provider request-assembly helpers leave the supported core surface — alongside
+safety fixes across streaming, serialization, hosting and the release pipeline.
 
 - **[BREAKING] `@polymind-inc/agent-framework-core`** — `setIfDefined`, `withoutUndefined`,
   `topLevelMediaType` and `arrayToStream` are no longer exported from the root entry. They assemble
@@ -71,6 +77,19 @@ contain breaking changes**; patch releases are fixes only.
   .NET (the `model` parameter on `FoundryAgent` and `AsAIAgent`) and Python (the `model` keyword,
   `FOUNDRY_MODEL`) call it, while Go's `ModelDeployment` is a per-mode *type* name in a design
   TypeScript's discriminated union does not share.
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — with sensitive-data capture enabled, the
+  per-message GenAI telemetry events (`gen_ai.system.message`, `gen_ai.user.message`,
+  `gen_ai.assistant.message`, `gen_ai.tool.message`, `gen_ai.choice`) are emitted on the `chat`
+  span only, with the OTel GenAI v1.36.0 structured bodies carried as JSON on the `body`
+  attribute. Previously every exchange was double-reported — the same events also fired on the
+  `invoke_agent` span — and the payload was a role+parts serialization matching neither semconv
+  generation; the reference implementations emit message events for the model invocation only.
+  The `invoke_agent` span keeps attribute-form content (`gen_ai.input.messages` /
+  `gen_ai.output.messages` are unchanged on both span kinds). Every event carries `gen_ai.system`,
+  a response without a finish reason emits no `gen_ai.choice`, and event timestamps step one
+  microsecond apart so ordering survives backends that collapse tight timestamps. Consumers
+  reading message events off `invoke_agent` spans, or parsing the previous `content` attribute
+  payload, must switch to the `chat` span's events and the JSON `body` attribute.
 - **Security:** approval requests are immutable snapshots before they reach callers, so mutating a
   streamed or awaited request cannot change the arguments later executed after approval. Raw JSON
   Schema arguments are checked locally, executable-only approval bypassing no longer consumes
@@ -78,6 +97,17 @@ contain breaking changes**; patch releases are fixes only.
 - `ResponseStream.finalResponse()` now shares concurrent source initialization and draining, so
   repeated concurrent calls cannot duplicate model/tool work or leak an iterator. Middleware
   cancellation before the first pull and update-hook failures now finalize the run consistently.
+- A streamed run interrupted under `allowBackgroundResponses` no longer double-stores its
+  exchange. A streaming run that ends suspended skips history persistence entirely — its
+  continuation token replays the caller's input and every update already produced — so the run
+  that finally completes appends the whole exchange exactly once, with partial messages merged by
+  the fold rather than split across store entries. Previously the suspended run and the resumed
+  run each persisted the input and the partial updates, so the next turn replayed the question
+  and the partial answer twice, violating the documented `HistoryProvider` contract
+  (`saveMessages` is handed only the messages new to that turn). Awaited suspensions are
+  unchanged: their tokens carry nothing, so each half stores its own fragment. The fold takes the
+  continuation token from the latest update, so a background stream that runs to completion
+  persists normally.
 - Serializing content now sanitizes `Content` values nested in function `result` fields, while
   deserialization leaves plain tool-result JSON untouched so it round-trips exactly. Future content types that
   carry the `userInputRequest` marker suspend structured-output parsing without requiring a core
@@ -98,7 +128,9 @@ contain breaking changes**; patch releases are fixes only.
   sessions; serialize concurrent turns for one Invocations session; reject duplicate foreground
   response ids, releasing the in-flight hold when the request aborts even if the response body was
   never consumed; and keep response aliases outside the primary retention quota. The Foundry
-  container examples run as the unprivileged `node` user. SSE keep-alives obey backpressure,
+  container examples align with the platform's root-owned persistent `HOME` mount — forcing a
+  non-root user there kept the hosting stores from writing session and approval state.
+  SSE keep-alives obey backpressure,
   abandoned telemetry spans no longer remain strongly retained, storage credential acquisition is
   included in bounded retries, and structured custom-tool outputs retain their JSON shape.
 - MCP rejects headers or custom fetch options that a custom transport cannot consume, and skill
@@ -112,8 +144,17 @@ contain breaking changes**; patch releases are fixes only.
   a patched release.
 - Agent Skills documentation and examples now use the hardened `directorySkillsSource` from the
   documented `/node` entry point instead of a custom filesystem walker.
+- The skills system prompt now distinguishes the two script-argument shapes: a JSON object for
+  named arguments (inline scripts included), and a string array for file-based scripts that
+  document CLI-style positional arguments (`args: ["input.docx", "--output", "result.idx"]`). The
+  script runner has accepted both all along, but the prompt showed only the object form, steering
+  models away from positional arguments; the wording now matches the Python implementation.
 - Core base64 conversion now writes pre-sized typed arrays, avoiding per-byte boxed allocations for
   large attachments while retaining the runtime-neutral implementation.
+- Repository: repeated tsdown, Vitest and TypeScript configuration is consolidated into shared
+  workspace presets, and single-consumer internal layers were removed with published entry points
+  and generated declarations unchanged (the Foundry chat client now inherits the OpenAI
+  implementation). Dependencies were bumped, the provider SDKs among them.
 
 ## 0.3.0
 
