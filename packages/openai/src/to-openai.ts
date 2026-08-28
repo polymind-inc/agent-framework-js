@@ -17,6 +17,7 @@ import {
   resolveResponseFormat,
   topLevelMediaType,
 } from '@polymind-inc/agent-framework-core';
+import { answeredCallIds, safeStringify } from '@polymind-inc/agent-framework-core/internal';
 
 /** A Responses API input item, kept loose so unmodelled item types pass through. */
 export type ResponsesInputItem = Record<string, unknown>;
@@ -29,13 +30,9 @@ function stringifyArguments(args: Record<string, unknown> | string): string {
  * Renders a tool or model result value as the string a wire field carries.
  *
  * A string passes through, an absent value (`undefined` / `null`) becomes an empty string, and
- * anything else is JSON-encoded — the same shape Python's `Content.from_function_result` and
- * .NET's `EncodeFunctionResultAsJsonStringPayload` give a function result. A value
- * `JSON.stringify` cannot encode — it throws on a cycle or a `BigInt`, and answers `undefined`
- * for a symbol or a function — degrades to `String(value)` instead, mirroring Python's
- * `str(result)` fallback: a wire mapper renders a transcript that already exists, so failing the
- * whole request over one unencodable value is not an option, and the string form still says
- * *something* about what the tool answered.
+ * anything else goes through {@link safeStringify} — the same shape Python's
+ * `Content.from_function_result` and .NET's `EncodeFunctionResultAsJsonStringPayload` give a
+ * function result.
  *
  * The single implementation of this rendering: the live provider path and the Foundry hosting
  * replay and persist paths all go through it, so they cannot drift apart.
@@ -47,18 +44,7 @@ export function stringifyResult(value: unknown): string {
   if (value === undefined || value === null) {
     return '';
   }
-  const fallback = (): string => {
-    try {
-      return String(value);
-    } catch {
-      return '[unserializable]';
-    }
-  };
-  try {
-    return JSON.stringify(value) ?? fallback();
-  } catch {
-    return fallback();
-  }
+  return safeStringify(value);
 }
 
 /**
@@ -250,19 +236,6 @@ function contentToMessagePart(role: Role, content: Content): ResponsesInputItem 
     default:
       return undefined;
   }
-}
-
-/** Collects the `callId`s answered by a `function_result` anywhere in the transcript. */
-function answeredCallIds(messages: readonly Message[]): Set<string> {
-  const answered = new Set<string>();
-  for (const msg of messages) {
-    for (const content of msg.contents) {
-      if (content.type === 'function_result') {
-        answered.add(content.callId);
-      }
-    }
-  }
-  return answered;
 }
 
 /**

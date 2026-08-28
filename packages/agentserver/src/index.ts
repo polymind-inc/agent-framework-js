@@ -60,7 +60,7 @@ export type {
   ResponseUsage,
   TerminalEventType,
 } from './wire.js';
-export { isTerminalEventType, TERMINAL_EVENT_TYPES } from './wire.js';
+export { isTerminalEventType } from './wire.js';
 // The remaining config getters, the SSE framing internals (sse.ts) and the lifecycle
 // enforcement machinery (lifecycle.ts values) are internal — the server owns those
 // responsibilities and handlers must not re-implement them.

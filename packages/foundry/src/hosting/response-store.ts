@@ -14,6 +14,7 @@ import {
   resolveAgentReference,
   stateRoot,
 } from '@polymind-inc/agent-framework-agentserver';
+import { isRecord } from '@polymind-inc/agent-framework-core/internal';
 import type { FoundryProject } from '../project.js';
 import { FoundryStorageClient } from './foundry-storage-client.js';
 
@@ -25,11 +26,11 @@ export interface FoundryResponseStoreConfig {
    * The project's endpoint must be the **project** endpoint — not a storage URL. `/storage/` is
    * appended unconditionally, so a value that already ends in `/storage` produces
    * `.../storage/storage/`. That is deliberate parity, not an oversight: both response-store
-   * references append without looking (Python `store/_foundry_settings.py:55`
-   * `endpoint.rstrip("/") + "/storage/"`, .NET `ResponsesServerServiceCollectionExtensions.cs:170`
+   * references append without looking (Python `store/_foundry_settings.py`
+   * `endpoint.rstrip("/") + "/storage/"`, .NET `ResponsesServerServiceCollectionExtensions.cs`
    * `uri...TrimEnd('/') + "/storage/"`), and the platform never sets `FOUNDRY_PROJECT_ENDPOINT` to
    * a storage URL. .NET's *shared* `FoundryStorageEndpoint.FromEndpoint`
-   * (`AgentServer.Core/src/Storage/FoundryStorageEndpoint.cs:77-79`) does skip a `/storage` suffix,
+   * (`AgentServer.Core/src/Storage/FoundryStorageEndpoint.cs`) does skip a `/storage` suffix,
    * but it documents its parameter as "the project endpoint **or** a full `.../storage` URL" — a
    * wider contract, for the state store, which this package does not have. Narrowing the accepted
    * form keeps a misconfigured endpoint a visible 404 rather than something silently repaired.
@@ -80,7 +81,7 @@ interface CreateBody {
  * The `error.code` values the service uses for a duplicate create.
  *
  * Verbatim from the reference's `_is_conflict`
- * (`azure-ai-agentserver-responses/.../store/_foundry_provider.py:41-61`).
+ * (`azure-ai-agentserver-responses/.../store/_foundry_provider.py`).
  */
 const CONFLICT_CODES = new Set(['conflict', 'already_exists', 'duplicate']);
 
@@ -88,13 +89,13 @@ const CONFLICT_CODES = new Set(['conflict', 'already_exists', 'duplicate']);
  * Whether a failed create is the service saying *this id already exists*.
  *
  * **The status line alone is not the signal.** The reference maps HTTP 400 *and* 409 to the same
- * `FoundryBadRequestError` (`store/_foundry_errors.py:59-62`) and then separates a duplicate create
+ * `FoundryBadRequestError` (`store/_foundry_errors.py`) and then separates a duplicate create
  * from a genuine bad request by the body — `error.code` in {@link CONFLICT_CODES}, or the phrase
- * `already exists` in `error.message` (`store/_foundry_provider.py:280`). Reading only the status
+ * `already exists` in `error.message` (`store/_foundry_provider.py`). Reading only the status
  * would turn a 400-flavoured conflict into a lost turn.
  *
  * A body that is not the Foundry error envelope is *not* a conflict: the reference's message in
- * that case is its own generated fallback (`_foundry_errors.py:96`), which matches neither test.
+ * that case is its own generated fallback (`_foundry_errors.py`), which matches neither test.
  */
 function isDuplicateCreate(body: string): boolean {
   let parsed: unknown;
@@ -103,14 +104,14 @@ function isDuplicateCreate(body: string): boolean {
   } catch {
     return false;
   }
-  if (typeof parsed !== 'object' || parsed === null) {
+  if (!isRecord(parsed)) {
     return false;
   }
-  const error = (parsed as { error?: unknown }).error;
-  if (typeof error !== 'object' || error === null) {
+  const error = parsed.error;
+  if (!isRecord(error)) {
     return false;
   }
-  const { code, message } = error as { code?: unknown; message?: unknown };
+  const { code, message } = error;
   if (typeof code === 'string' && CONFLICT_CODES.has(code.toLowerCase())) {
     return true;
   }
@@ -172,7 +173,7 @@ function sameTurn(local: ResponseObject, remote: ResponseObject): boolean {
  *
  * Transient failures get a bounded retry (see {@link FoundryResponseStoreConfig.retry}), the way
  * both references get one from their platform HTTP stack — Python an `AsyncPipelineClient` with
- * `policies.AsyncRetryPolicy()` (`store/_foundry_provider.py:181-204`), .NET a
+ * `policies.AsyncRetryPolicy()` (`store/_foundry_provider.py`), .NET a
  * `ClientOptions`-derived `HttpPipeline`. Retrying the **non-idempotent** `POST responses` is
  * safe here for the same reason it is in Python: a create that landed before its response was
  * lost answers the retry as a duplicate, which `put` already treats as the update branch.
@@ -180,9 +181,9 @@ function sameTurn(local: ResponseObject, remote: ResponseObject): boolean {
  * **Abort propagation is a separate claim, and it does not hold.** Neither reference cancels a
  * storage call from the request. Python's provider takes no cancellation argument at all; .NET's
  * takes `CancellationToken cancellationToken = default` on every method and its hosting layer
- * passes one at **zero** call sites — every `_provider.CreateResponseAsync` /
- * `UpdateResponseAsync` / `GetResponseAsync` / `DeleteResponseAsync` in
- * `Internal/ResponseOrchestrator.cs` (:377, :569, :574, :898, :904) supplies only the platform
+ * passes one at **zero** call sites — all five `_provider.CreateResponseAsync` /
+ * `UpdateResponseAsync` / `GetResponseAsync` / `DeleteResponseAsync` calls in
+ * `Internal/ResponseOrchestrator.cs` supply only the platform
  * context, leaving `CancellationToken.None`. That is the safe reading: aborting a *terminal*
  * persist when a client hangs up is how a finished turn becomes an unrecoverable one, which is
  * also why background runs are independent of the request signal to begin with. Threading a

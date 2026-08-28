@@ -77,7 +77,6 @@ export type {
   FunctionMiddlewareContext,
   Middleware,
   MiddlewareHandler,
-  MiddlewareKind,
 } from './middleware/middleware.js';
 export {
   agentMiddleware,
@@ -231,7 +230,13 @@ export type {
   UsageContent,
   UserInputRequestContent,
 } from './types/content.js';
-export { dataContent, textContent, textOfContents, unknownContent, uriContent } from './types/content.js';
+export {
+  dataContent,
+  textContent,
+  textOfContents,
+  unknownContent,
+  uriContent,
+} from './types/content.js';
 // messages
 export type {
   AgentRunInput,

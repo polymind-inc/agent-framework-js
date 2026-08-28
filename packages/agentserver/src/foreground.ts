@@ -1,10 +1,10 @@
-import { sseKeepAliveSeconds } from './config.js';
+import { sseKeepAliveMs } from './config.js';
 import { HEADERS } from './context.js';
 import { ProtocolError } from './errors.js';
-import { jsonResponse } from './http.js';
+import { jsonResponse, sseResponse } from './http.js';
 import type { ResponseTracker } from './lifecycle.js';
 import { flushTelemetry } from './observability/flush.js';
-import { SequenceNumberWriter, SSE_HEADERS, toSseStream } from './sse.js';
+import { SequenceNumberWriter } from './sse.js';
 import { storageFailed, TerminalPersister } from './terminal.js';
 import type { ResponseEvent } from './wire.js';
 import { isTerminalEventType } from './wire.js';
@@ -93,7 +93,7 @@ export async function streamResponse(
       let pending = first;
       while (pending.done !== true) {
         let event = pending.value;
-        if (isTerminalEventType(String(event.type))) {
+        if (isTerminalEventType(event.type)) {
           event = await persister.onTerminal(event);
         }
         yield sequence.stamp(event);
@@ -113,15 +113,11 @@ export async function streamResponse(
   // source lets a pending pull deliver what the handler winds down with, and whichever of the
   // two paths gets there second is a no-op.
   signal.addEventListener('abort', () => void windDown(), { once: true });
-  // A signal that aborted before the listener went up never fires it; re-read the state after
-  // registering so neither the edge nor the state can be missed.
+  // Re-read after registering — an already-aborted signal never fires a later listener (the same
+  // edge-and-state rule `linkedAbort` documents).
   if (signal.aborted) {
     void windDown();
   }
 
-  const keepAliveMs = sseKeepAliveSeconds() * 1000;
-  return new Response(toSseStream(numbered(), { keepAliveMs }), {
-    status: 200,
-    headers: { ...SSE_HEADERS, [HEADERS.sessionId]: sessionId },
-  });
+  return sseResponse(numbered(), { keepAliveMs: sseKeepAliveMs(), sessionId });
 }

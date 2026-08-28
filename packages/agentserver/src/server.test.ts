@@ -1,5 +1,5 @@
 import { getEventListeners } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HEADERS } from './context.js';
 import { ProtocolError } from './errors.js';
 import { partitionKeyOf } from './ids.js';
@@ -7,79 +7,8 @@ import type { HandlerContext, ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { encodeEvent } from './sse.js';
 import { InMemoryResponseProvider } from './store/memory.js';
+import { lifecycleHandler, makeServer, post, readSse } from './test-helpers.js';
 import type { CreateResponseRequest, ResponseObject } from './wire.js';
-
-/** The echo handler from the reference samples: one message item, streamed as one delta. */
-function echoHandler(): ResponseHandler {
-  return async function* (request: CreateResponseRequest, context: HandlerContext) {
-    const text = `Echo: ${typeof request.input === 'string' ? request.input : JSON.stringify(request.input)}`;
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-
-    yield { type: 'response.created', response: response('queued') };
-    yield { type: 'response.in_progress', response: response('in_progress') };
-    yield {
-      type: 'response.output_item.added',
-      output_index: 0,
-      item: { type: 'message', id: 'msg_1', role: 'assistant', status: 'in_progress', content: [] },
-    };
-    yield {
-      type: 'response.output_text.delta',
-      item_id: 'msg_1',
-      output_index: 0,
-      content_index: 0,
-      delta: text,
-    };
-    yield {
-      type: 'response.output_item.done',
-      output_index: 0,
-      item: {
-        type: 'message',
-        id: 'msg_1',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text, annotations: [] }],
-      },
-    };
-    yield { type: 'response.completed', response: response('completed') };
-  };
-}
-
-function makeServer(handler: ResponseHandler = echoHandler(), hosted = false): ResponsesServer {
-  return new ResponsesServer({ handler, store: new InMemoryResponseProvider(), hosted });
-}
-
-function post(body: unknown, headers: Record<string, string> = {}): Request {
-  return new Request('http://localhost:8088/responses', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-  });
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
-/** Parses an SSE body into `{ event, data }` pairs. */
-async function readSse(response: Response): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
-  const text = await response.text();
-  return text
-    .split('\n\n')
-    .filter((block) => block.trim() !== '' && !block.startsWith(':'))
-    .map((block) => {
-      const eventLine = must(block.split('\n').find((line) => line.startsWith('event: ')));
-      const dataLine = must(block.split('\n').find((line) => line.startsWith('data: ')));
-      return {
-        event: eventLine.slice('event: '.length),
-        data: JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>,
-      };
-    });
-}
 
 describe('routes', () => {
   it('answers the readiness probe', async () => {
@@ -87,6 +16,14 @@ describe('routes', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'healthy' });
+  });
+
+  it('stays non-hosted even when FOUNDRY_HOSTING_ENVIRONMENT is set in the test environment', async () => {
+    // The helper always passes an explicit `hosted`; without it, a stray platform variable in the
+    // runner's environment would flip every test into hosted mode and its strict header checks.
+    vi.stubEnv('FOUNDRY_HOSTING_ENVIRONMENT', '1');
+    const response = await makeServer().handle(post({ input: 'Hi' }));
+    expect(response.status).toBe(200);
   });
 
   it('creates a response and returns the finished resource', async () => {
@@ -103,7 +40,7 @@ describe('routes', () => {
 
   it('keeps the response addressable when a conversation alias is stored at capacity one', async () => {
     const store = new InMemoryResponseProvider({ maxResponses: 1 });
-    const server = new ResponsesServer({ handler: echoHandler(), store, hosted: false });
+    const server = new ResponsesServer({ handler: lifecycleHandler({ echo: true }), store, hosted: false });
     const conversationId = `caresp_${'c'.repeat(18)}${'d'.repeat(32)}`;
 
     const created = (await (
@@ -119,54 +56,46 @@ describe('routes', () => {
     // A service-side store validates that every persisted response names its agent — without the
     // stamp, the write dies as an opaque 500. Resolved once at resource construction so every
     // store sees it: the request's own reference first, else the environment, else the default.
-    const saved = { name: process.env.FOUNDRY_AGENT_NAME, version: process.env.FOUNDRY_AGENT_VERSION };
-    try {
-      process.env.FOUNDRY_AGENT_NAME = 'weather-agent';
-      process.env.FOUNDRY_AGENT_VERSION = '2';
-      const server = makeServer();
+    vi.stubEnv('FOUNDRY_AGENT_NAME', 'weather-agent');
+    vi.stubEnv('FOUNDRY_AGENT_VERSION', '2');
+    const server = makeServer();
 
-      const fromEnv = (await (await server.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
-      expect(fromEnv.agent_reference).toEqual({
-        type: 'agent_reference',
-        name: 'weather-agent',
-        version: '2',
-      });
+    const fromEnv = (await (await server.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
+    expect(fromEnv.agent_reference).toEqual({
+      type: 'agent_reference',
+      name: 'weather-agent',
+      version: '2',
+    });
 
-      const requested = (await (
-        await server.handle(
-          post({ input: 'Hi', agent_reference: { type: 'agent_reference', name: 'router', version: '9' } }),
-        )
-      ).json()) as ResponseObject;
-      expect(requested.agent_reference).toEqual({
-        type: 'agent_reference',
-        name: 'router',
-        version: '9',
-      });
+    const requested = (await (
+      await server.handle(
+        post({ input: 'Hi', agent_reference: { type: 'agent_reference', name: 'router', version: '9' } }),
+      )
+    ).json()) as ResponseObject;
+    expect(requested.agent_reference).toEqual({
+      type: 'agent_reference',
+      name: 'router',
+      version: '9',
+    });
 
-      delete process.env.FOUNDRY_AGENT_NAME;
-      delete process.env.FOUNDRY_AGENT_VERSION;
-      const fallback = (await (await server.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
-      expect(fallback.agent_reference).toEqual({ type: 'agent_reference', name: 'server-default-agent' });
+    vi.stubEnv('FOUNDRY_AGENT_NAME', undefined);
+    vi.stubEnv('FOUNDRY_AGENT_VERSION', undefined);
+    const fallback = (await (await server.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
+    expect(fallback.agent_reference).toEqual({ type: 'agent_reference', name: 'server-default-agent' });
 
-      // Validation only checks name and version, so a caller can omit the discriminator or send
-      // a wrong one — the resolved reference normalizes it to the literal the wire type declares.
-      const untyped = (await (
-        await server.handle(post({ input: 'Hi', agent_reference: { name: 'router' } }))
-      ).json()) as ResponseObject;
-      expect(untyped.agent_reference).toEqual({ type: 'agent_reference', name: 'router' });
+    // Validation only checks name and version, so a caller can omit the discriminator or send
+    // a wrong one — the resolved reference normalizes it to the literal the wire type declares.
+    const untyped = (await (
+      await server.handle(post({ input: 'Hi', agent_reference: { name: 'router' } }))
+    ).json()) as ResponseObject;
+    expect(untyped.agent_reference).toEqual({ type: 'agent_reference', name: 'router' });
 
-      const mistyped = (await (
-        await server.handle(
-          post({ input: 'Hi', agent_reference: { type: 'other', name: 'router', version: '3' } }),
-        )
-      ).json()) as ResponseObject;
-      expect(mistyped.agent_reference).toEqual({ type: 'agent_reference', name: 'router', version: '3' });
-    } finally {
-      if (saved.name !== undefined) process.env.FOUNDRY_AGENT_NAME = saved.name;
-      else delete process.env.FOUNDRY_AGENT_NAME;
-      if (saved.version !== undefined) process.env.FOUNDRY_AGENT_VERSION = saved.version;
-      else delete process.env.FOUNDRY_AGENT_VERSION;
-    }
+    const mistyped = (await (
+      await server.handle(
+        post({ input: 'Hi', agent_reference: { type: 'other', name: 'router', version: '3' } }),
+      )
+    ).json()) as ResponseObject;
+    expect(mistyped.agent_reference).toEqual({ type: 'agent_reference', name: 'router', version: '3' });
   });
 
   it('gets, lists input items for, and deletes a response', async () => {
@@ -555,7 +484,7 @@ describe('route-level errors', () => {
   });
 
   it('does not claim a path that merely starts with the prefix', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), prefix: '/api' });
+    const server = new ResponsesServer({ handler: lifecycleHandler({ echo: true }), prefix: '/api' });
 
     expect((await server.handle(post({ input: 'x' }))).status).toBe(404);
     expect(
@@ -747,7 +676,7 @@ describe('request limits', () => {
     expect(
       () =>
         new ResponsesServer({
-          handler: echoHandler(),
+          handler: lifecycleHandler({ echo: true }),
           limits: { [name]: value },
         }),
     ).toThrow(`${name} must be a safe integer of at least 1`);
@@ -771,7 +700,10 @@ describe('request limits', () => {
   });
 
   it('bounds the number of input items', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), limits: { maxInputItems: 2 } });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      limits: { maxInputItems: 2 },
+    });
     const items = Array.from({ length: 3 }, (_, i) => ({ type: 'message', id: `in_${i}` }));
 
     const response = await server.handle(post({ input: items }));
@@ -888,7 +820,8 @@ describe('lifecycle enforcement', () => {
     });
 
     const events = await readSse(await server.handle(post({ input: 'x', stream: true })));
-    const terminal = must(events.at(-1));
+    const terminal = events.at(-1);
+    assert.exists(terminal);
 
     // The caller already holds a 200 by now, so the terminal event is the only place it can learn
     // why the turn failed. Both hosting references surface the exception's own message there
@@ -912,7 +845,8 @@ describe('lifecycle enforcement', () => {
     });
 
     const events = await readSse(await server.handle(post({ input: 'x', stream: true })));
-    const terminal = must(events.at(-1));
+    const terminal = events.at(-1);
+    assert.exists(terminal);
 
     // Python's fallback: `str(ex) or type(ex).__name__`.
     expect((terminal.data.response as ResponseObject).error?.message).toBe('RangeError');
@@ -934,7 +868,8 @@ describe('lifecycle enforcement', () => {
     });
 
     const events = await readSse(await server.handle(post({ input: 'x', stream: true })));
-    const terminal = must(events.at(-1));
+    const terminal = events.at(-1);
+    assert.exists(terminal);
 
     // `failed` would tell the platform the agent broke, and invite a retry against a container
     // that is going away. The turn is unfinished, and resumable with previous_response_id.
@@ -972,7 +907,8 @@ describe('header contract', () => {
     const server = makeServer();
 
     const first = await server.handle(post({ input: 'x' }));
-    const firstId = must(first.headers.get(HEADERS.sessionId));
+    const firstId = first.headers.get(HEADERS.sessionId);
+    assert.exists(firstId);
     // A session id names the sandbox the turn runs in, so it must not be the response id — that
     // would send every turn of one conversation to a different filesystem.
     expect(firstId).toMatch(/^[0-9a-f]{63}$/);
@@ -990,16 +926,12 @@ describe('header contract', () => {
   });
 
   it('follows the platform-assigned session id when there is one', async () => {
-    process.env.FOUNDRY_AGENT_SESSION_ID = 'platform-session';
-    try {
-      const created = await makeServer().handle(post({ input: 'x' }));
-      expect(created.headers.get(HEADERS.sessionId)).toBe('platform-session');
-      // Routes with no request body to derive from report the container's own session.
-      const probe = await makeServer().handle(new Request('http://localhost:8088/readiness'));
-      expect(probe.headers.get(HEADERS.sessionId)).toBe('platform-session');
-    } finally {
-      delete process.env.FOUNDRY_AGENT_SESSION_ID;
-    }
+    vi.stubEnv('FOUNDRY_AGENT_SESSION_ID', 'platform-session');
+    const created = await makeServer().handle(post({ input: 'x' }));
+    expect(created.headers.get(HEADERS.sessionId)).toBe('platform-session');
+    // Routes with no request body to derive from report the container's own session.
+    const probe = await makeServer().handle(new Request('http://localhost:8088/readiness'));
+    expect(probe.headers.get(HEADERS.sessionId)).toBe('platform-session');
   });
 
   it('lets the platform choose the response id', async () => {
@@ -1103,7 +1035,7 @@ describe('header contract', () => {
 
 describe('protocol version fail-close', () => {
   it('refuses a hosted request with no call id', async () => {
-    const response = await makeServer(echoHandler(), true).handle(
+    const response = await makeServer(lifecycleHandler({ echo: true }), { hosted: true }).handle(
       post({ input: 'x' }, { [HEADERS.userId]: 'user-1' }),
     );
     const body = (await response.json()) as { error: { code: string } };
@@ -1114,14 +1046,16 @@ describe('protocol version fail-close', () => {
   });
 
   it('serves a hosted request that carries a call id', async () => {
-    const response = await makeServer(echoHandler(), true).handle(
+    const response = await makeServer(lifecycleHandler({ echo: true }), { hosted: true }).handle(
       post({ input: 'x' }, { [HEADERS.foundryCallId]: 'call-1' }),
     );
     expect(response.status).toBe(200);
   });
 
   it('does not require a call id outside a hosted environment', async () => {
-    const response = await makeServer(echoHandler(), false).handle(post({ input: 'x' }));
+    const response = await makeServer(lifecycleHandler({ echo: true }), { hosted: false }).handle(
+      post({ input: 'x' }),
+    );
     expect(response.status).toBe(200);
   });
 });
@@ -1191,7 +1125,10 @@ describe('persistence failure', () => {
   }
 
   it('answers a non-streaming turn as failed with storage_error, not an opaque 500', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), store: new FailingPutProvider() });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new FailingPutProvider(),
+    });
 
     const response = await server.handle(post({ input: 'x' }));
     const body = (await response.json()) as ResponseObject;
@@ -1206,10 +1143,14 @@ describe('persistence failure', () => {
   });
 
   it('replaces the streamed terminal event instead of delivering a completed that was never stored', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), store: new FailingPutProvider() });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new FailingPutProvider(),
+    });
 
     const events = await readSse(await server.handle(post({ input: 'x', stream: true })));
-    const terminal = must(events.at(-1));
+    const terminal = events.at(-1);
+    assert.exists(terminal);
 
     // Persist happens *before* the terminal goes out; a client that reads `response.completed`
     // must be able to come back with `previous_response_id`, and this one could not.
@@ -1221,7 +1162,10 @@ describe('persistence failure', () => {
   });
 
   it('does not report storage_error when the caller opted out of storage', async () => {
-    const server = new ResponsesServer({ handler: echoHandler(), store: new FailingPutProvider() });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new FailingPutProvider(),
+    });
 
     const response = await server.handle(post({ input: 'x', store: false }));
     const body = (await response.json()) as ResponseObject;
@@ -1494,12 +1438,15 @@ describe('handler context identity', () => {
     const response = await server.handle(post({ input: 'hi' }));
     expect(response.status).toBe(200);
 
-    const context = must(seen);
+    const context = seen;
+    assert.exists(context);
     // The same resolution the response resource and the `x-agent-session-id` header carry — the
     // handler no longer has to re-derive either.
     expect(context.agentReference).toEqual(((await response.json()) as ResponseObject).agent_reference);
     expect(context.agentReference.name).not.toBe('');
-    expect(context.agentSessionId).toBe(must(response.headers.get(HEADERS.sessionId)));
+    const sessionId = response.headers.get(HEADERS.sessionId);
+    assert.exists(sessionId);
+    expect(context.agentSessionId).toBe(sessionId);
   });
 
   it('resolves the agent reference the request named', async () => {
@@ -1515,7 +1462,8 @@ describe('handler context identity', () => {
       post({ input: 'hi', agent_reference: { type: 'agent_reference', name: 'triage', version: '3' } }),
     );
 
-    expect(must(seen).agentReference).toMatchObject({ name: 'triage', version: '3' });
+    assert.exists(seen);
+    expect(seen.agentReference).toMatchObject({ name: 'triage', version: '3' });
   });
 });
 
@@ -1560,7 +1508,8 @@ describe('draining', () => {
 
     // Pull one chunk so the generator is genuinely parked at a `yield` past the committed 200,
     // then walk away from the body: no further reads, and — the crux — no cancel.
-    const reader = must(response.body).getReader();
+    assert.exists(response.body);
+    const reader = response.body.getReader();
     await reader.read();
     reader.releaseLock();
 

@@ -59,9 +59,9 @@ export function agentSessionId(): string | undefined {
   return env('FOUNDRY_AGENT_SESSION_ID');
 }
 
-/** Seconds between SSE keep-alive comments. `0` disables them. */
-export function sseKeepAliveSeconds(): number {
-  return intEnv('SSE_KEEPALIVE_INTERVAL', 0);
+/** Milliseconds between SSE keep-alive comments (`SSE_KEEPALIVE_INTERVAL` is in seconds). `0` disables them. */
+export function sseKeepAliveMs(): number {
+  return intEnv('SSE_KEEPALIVE_INTERVAL', 0) * 1000;
 }
 
 /**
@@ -210,7 +210,7 @@ export class UnsupportedOtlpProtocolError extends Error {
  *
  * `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` is **not** in the parameter type, and its absence is the
  * point. The reference resolves all three protocols in one place
- * (`core/_tracing.py:336-338`) because it builds all three pipelines; it validates the logs
+ * (`core/_tracing.py`) because it builds all three pipelines; it validates the logs
  * protocol as a side effect of needing its value. This package has no log pipeline at all
  * (a deliberate deviation — core emits messages as span events), so there is no logs
  * exporter whose protocol could be read, and no signal a typo there could silently disable.

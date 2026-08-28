@@ -1,21 +1,10 @@
-import type { AccessToken, TokenCredential } from '@azure/identity';
+import type { TokenCredential } from '@azure/identity';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from './project.js';
+import { fakeCredential } from './test-helpers.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
-
-/** A credential whose tokens expire `ttlMs` from now. */
-function fakeCredential(ttlMs = 60 * 60 * 1000): TokenCredential & { calls: number } {
-  const credential = {
-    calls: 0,
-    async getToken(): Promise<AccessToken> {
-      credential.calls++;
-      return { token: `token-${credential.calls}`, expiresOnTimestamp: Date.now() + ttlMs };
-    },
-  };
-  return credential;
-}
 
 describe('FoundryProject', () => {
   it('normalizes the endpoint and exposes it', () => {
@@ -40,7 +29,7 @@ describe('FoundryProject', () => {
 
     expect(await project.getToken()).toBe('token-1');
     expect(await project.getToken()).toBe('token-1');
-    expect(credential.calls).toBe(1);
+    expect(credential.getToken).toHaveBeenCalledOnce();
   });
 
   it('refreshes a token that is about to expire', async () => {
@@ -59,7 +48,7 @@ describe('FoundryProject', () => {
     const tokens = await Promise.all([project.getToken(), project.getToken(), project.getToken()]);
 
     expect(tokens).toEqual(['token-1', 'token-1', 'token-1']);
-    expect(credential.calls).toBe(1);
+    expect(credential.getToken).toHaveBeenCalledOnce();
   });
 
   it('requests the Foundry data-plane scope by default', async () => {
@@ -89,7 +78,7 @@ describe('FoundryProject', () => {
     await project.getToken();
     await project.getToken('https://other.example/.default');
 
-    expect(credential.calls).toBe(2);
+    expect(credential.getToken).toHaveBeenCalledTimes(2);
   });
 
   it('reports a credential that cannot produce a token', async () => {

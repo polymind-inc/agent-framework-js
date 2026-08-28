@@ -1,5 +1,5 @@
 import type { AgentSession } from '../agent/session.js';
-import { throwIfAborted, validateSafeInteger } from '../errors.js';
+import { validateSafeInteger } from '../errors.js';
 import type { FunctionMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import {
@@ -66,8 +66,21 @@ const DEFAULT_MAX_ITERATIONS = 40;
 const DEFAULT_MAX_CONSECUTIVE_ERRORS = 3;
 
 /** A `function_call` this layer is expected to act on, rather than one the provider already ran. */
-function isPendingCall(content: Content): content is FunctionCallContent {
+export function isPendingCall(content: Content): content is FunctionCallContent {
   return content.type === 'function_call' && content.informationalOnly !== true;
+}
+
+/** Collects the `callId`s answered by a `function_result` anywhere in the transcript. */
+export function answeredCallIds(messages: readonly Message[]): Set<string> {
+  const answered = new Set<string>();
+  for (const msg of messages) {
+    for (const content of msg.contents) {
+      if (content.type === 'function_result') {
+        answered.add(content.callId);
+      }
+    }
+  }
+  return answered;
 }
 
 function buildToolMap(
@@ -163,19 +176,12 @@ function optionsForNextIteration<TOptions extends ChatOptions>(
  * mutated: the caller's messages and any previously returned response stay immutable.
  */
 function collectExecutableCalls(messages: Message[]): FunctionCallContent[] {
-  const answered = new Set<string>();
-  for (const msg of messages) {
-    for (const content of msg.contents) {
-      if (content.type === 'function_result') {
-        answered.add(content.callId);
-      }
-    }
-  }
+  const answered = answeredCallIds(messages);
   const calls: FunctionCallContent[] = [];
   const seen = new Set<string>();
   for (const msg of messages) {
     for (const content of msg.contents) {
-      if (content.type !== 'function_call' || content.informationalOnly === true) {
+      if (!isPendingCall(content)) {
         continue;
       }
       if (answered.has(content.callId)) {
@@ -592,7 +598,7 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
     }
     // Only a round that actually *ran* something advances the options. Go gates the same call on
     // `newMsg != nil` — the message `invokeApprovedToolApprovalResponses` produces, which is `nil`
-    // when there are no approved calls (`autocall.go:196` and `:629-644`). A turn that carried only
+    // when there are no approved calls (Go `autocall.go`). A turn that carried only
     // rejections, or only stale approval requests, has not answered the model yet, so relaxing
     // `toolChoice: 'required'` to `'auto'` there lets the model reply with prose to a request that
     // demanded a tool call. The loop below still relaxes after the first real round, which is what
@@ -602,7 +608,7 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
     }
 
     for (let iteration = 0; ; iteration++) {
-      throwIfAborted(signal);
+      signal?.throwIfAborted();
       const isFinalIteration = iteration >= maxIterations;
       const roundOptions = isFinalIteration ? withoutFunctionTools(current) : current;
       const tools = buildToolMap(roundOptions.tools, additionalTools);
@@ -627,9 +633,7 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
           }
         }
       } else {
-        for (const update of chatResponseToUpdates(await inner)) {
-          updates.push(update);
-        }
+        updates.push(...chatResponseToUpdates(await inner));
         if (!mayRequireApproval) {
           for (const update of updates) {
             flushed++;

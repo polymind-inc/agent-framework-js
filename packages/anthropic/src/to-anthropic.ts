@@ -11,8 +11,10 @@ import {
   isFunctionTool,
   resolveResponseFormat,
   serializeContent,
+  textOfContents,
   topLevelMediaType,
 } from '@polymind-inc/agent-framework-core';
+import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
 import { MCP_SERVER_SPEC_TYPE } from './hosted-tools.js';
 
 /** A Messages API content block, kept loose so unmodelled block types pass through. */
@@ -53,7 +55,8 @@ function toolInput(args: Record<string, unknown> | string): Record<string, unkno
   }
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+    // Arrays and scalars are valid JSON but not a valid `input`; they degrade the same way.
+    return isRecord(parsed) ? parsed : {};
   } catch {
     // A half-streamed fragment can reach here after a fold; an empty object is closer to the
     // model's intent than a 400 from the API.
@@ -110,20 +113,8 @@ function toolResultContent(result: unknown): AnthropicBlock[] | string {
   }
   // Caller-built or replayed transcripts can carry results JSON cannot encode (circular
   // references, bigints, symbols); degrade to the value's string form rather than failing the
-  // whole request, as Python does with json.dumps falling back to str(). Same contract as
-  // stringifyResult in the OpenAI package, which this package cannot depend on.
-  const fallback = (): string => {
-    try {
-      return String(result);
-    } catch {
-      return '[unserializable]';
-    }
-  };
-  try {
-    return JSON.stringify(result) ?? fallback();
-  } catch {
-    return fallback();
-  }
+  // whole request, as Python does with json.dumps falling back to str().
+  return safeStringify(result);
 }
 
 /**
@@ -327,16 +318,9 @@ export function toAnthropicSystem(
   messages: readonly Message[],
   instructions: string | undefined,
 ): string | undefined {
-  const leading = messages[0]?.role === 'system' ? textOfMessage(messages[0]) : undefined;
+  const leading = messages[0]?.role === 'system' ? textOfContents(messages[0].contents) : undefined;
   const parts = [instructions, leading].filter((part): part is string => part !== undefined && part !== '');
   return parts.length === 0 ? undefined : parts.join('\n\n');
-}
-
-function textOfMessage(msg: Message): string {
-  return msg.contents
-    .filter((content): content is Extract<Content, { type: 'text' }> => content.type === 'text')
-    .map((content) => content.text)
-    .join('');
 }
 
 /** The `tools` and `mcp_servers` halves of the request. */

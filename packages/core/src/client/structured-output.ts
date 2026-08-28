@@ -5,8 +5,7 @@ import { resolveJsonSchema } from '../tools/json-schema.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
 import { formatSchemaIssues, isStandardSchema } from '../tools/standard-schema.js';
 import { isUserInputRequest } from '../types/content.js';
-import type { ChatResponseUpdate, ResponseBase } from '../types/response.js';
-import { chatResponseToUpdates } from '../types/response.js';
+import type { ResponseBase } from '../types/response.js';
 import type {
   ChatClient,
   ChatOptions,
@@ -14,6 +13,8 @@ import type {
   JsonSchemaResponseFormat,
   ResponseFormat,
 } from './chat-client.js';
+import { answeredCallIds, isPendingCall } from './function-invocation.js';
+import { updatesOf } from './provider-utils.js';
 
 /** A {@link ResponseFormat} reduced to what a provider request needs. */
 export interface ResolvedResponseFormat {
@@ -76,21 +77,11 @@ function isSuspended(response: ResponseBase<unknown>): boolean {
   if (response.continuationToken !== undefined) {
     return true;
   }
-  const resultCallIds = new Set<string>();
-  for (const msg of response.messages) {
-    for (const content of msg.contents) {
-      if (content.type === 'function_result') {
-        resultCallIds.add(content.callId);
-      }
-    }
-  }
+  const resultCallIds = answeredCallIds(response.messages);
   return response.messages.some((msg) =>
     msg.contents.some(
       (content) =>
-        isUserInputRequest(content) ||
-        (content.type === 'function_call' &&
-          content.informationalOnly !== true &&
-          !resultCallIds.has(content.callId)),
+        isUserInputRequest(content) || (isPendingCall(content) && !resultCallIds.has(content.callId)),
     ),
   );
 }
@@ -176,24 +167,23 @@ export async function applyStructuredOutput<TResponse extends ResponseBase<unkno
     throw new ChatClientError('Structured output was requested but the model returned no text.');
   }
 
+  const invalidJson = (cause: unknown): ChatClientError =>
+    new ChatClientError(
+      `Structured output was requested but the model returned text that is not valid JSON: ${text.slice(0, 200)}`,
+      { cause },
+    );
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (error) {
     const first = sliceFirstTopLevelValue(text);
     if (first === undefined) {
-      throw new ChatClientError(
-        `Structured output was requested but the model returned text that is not valid JSON: ${text.slice(0, 200)}`,
-        { cause: error },
-      );
+      throw invalidJson(error);
     }
     try {
       parsed = JSON.parse(first) as unknown;
     } catch (innerError) {
-      throw new ChatClientError(
-        `Structured output was requested but the model returned text that is not valid JSON: ${text.slice(0, 200)}`,
-        { cause: innerError },
-      );
+      throw invalidJson(innerError);
     }
   }
 
@@ -228,15 +218,8 @@ export function withStructuredOutput<TOptions extends ChatOptions>(
       if (format === undefined) {
         return inner;
       }
-      const relay = async function* (stream: boolean): AsyncGenerator<ChatResponseUpdate> {
-        if (stream) {
-          yield* inner;
-        } else {
-          yield* chatResponseToUpdates(await inner);
-        }
-      };
       return createResponseStream({
-        start: (ctx) => relay(ctx.stream),
+        start: (ctx) => updatesOf(inner, ctx.stream),
         finalize: async () => inner.finalResponse(),
         // Parsing is a result hook rather than part of `finalize` so it can see whether the caller
         // abandoned the stream: a `break` leaves a truncated answer that was never meant to be a

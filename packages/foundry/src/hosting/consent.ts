@@ -17,6 +17,8 @@
  * it reports out of band instead — `consent-channel.ts`.
  */
 
+import { isRecord } from '@polymind-inc/agent-framework-core/internal';
+
 /** The JSON-RPC error code the Foundry MCP gateway uses for CONSENT_REQUIRED. */
 export const CONSENT_REQUIRED_JSON_RPC_CODE = -32006;
 
@@ -54,10 +56,6 @@ export class ToolboxConsentRequiredError extends Error {
     this.name = 'ToolboxConsentRequiredError';
     this.consents = [...consents];
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 /**

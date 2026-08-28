@@ -1,5 +1,5 @@
 import type { ResponseTracker } from './lifecycle.js';
-import type { ApiError, ResponseEvent, ResponseObject } from './wire.js';
+import type { ApiError, ResponseEvent, ResponseLifecycleEvent, ResponseObject } from './wire.js';
 
 /**
  * What the caller is told when a finished response could not be stored (.NET
@@ -44,7 +44,11 @@ export class TerminalPersister {
       await this.#persist();
       return event;
     } catch {
-      return { type: 'response.failed', response: storageFailed(this.#tracker.response) };
+      const failed: ResponseLifecycleEvent = {
+        type: 'response.failed',
+        response: storageFailed(this.#tracker.response),
+      };
+      return failed;
     }
   }
 

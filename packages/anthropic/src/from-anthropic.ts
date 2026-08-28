@@ -346,15 +346,29 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
   return contents;
 }
 
+/**
+ * The `responseId` / `model` / `finishReason` init entries `fields` carries, each omitted rather
+ * than set to `undefined` when the wire did not report it.
+ */
+function envelopeInit(fields: ParsedMessageFields): {
+  responseId?: string;
+  model?: string;
+  finishReason?: FinishReason;
+} {
+  return {
+    ...(fields.responseId === undefined ? {} : { responseId: fields.responseId }),
+    ...(fields.model === undefined ? {} : { model: fields.model }),
+    ...(fields.finishReason === undefined ? {} : { finishReason: fields.finishReason }),
+  };
+}
+
 /** Converts a complete Messages API response. */
 export function parseMessage(message: unknown): ChatResponse<undefined> {
   const fields = parseMessageFields(message);
   const usage = parseUsage(fields.raw.usage);
   return chatResponse<undefined>({
     messages: [{ role: 'assistant', contents: fields.contents, rawRepresentation: message }],
-    ...(fields.responseId === undefined ? {} : { responseId: fields.responseId }),
-    ...(fields.model === undefined ? {} : { model: fields.model }),
-    ...(fields.finishReason === undefined ? {} : { finishReason: fields.finishReason }),
+    ...envelopeInit(fields),
     ...(usage === undefined ? {} : { usageDetails: usage }),
     rawRepresentation: message,
   });
@@ -378,9 +392,7 @@ export function parseStreamEvent(event: unknown, state: StreamParseState): ChatR
       return chatResponseUpdate({
         role: 'assistant',
         contents: [...fields.contents, ...(usage === undefined ? [] : [usage])],
-        ...(fields.responseId === undefined ? {} : { responseId: fields.responseId }),
-        ...(fields.model === undefined ? {} : { model: fields.model }),
-        ...(fields.finishReason === undefined ? {} : { finishReason: fields.finishReason }),
+        ...envelopeInit(fields),
         rawRepresentation: event,
       });
     }

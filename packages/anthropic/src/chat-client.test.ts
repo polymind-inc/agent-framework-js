@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Content, Message } from '@polymind-inc/agent-framework-core';
 import {
   Agent,
+  arrayToStream,
   ChatClientError,
   ConfigurationError,
   deserializeMessage,
@@ -34,12 +35,7 @@ class MockMessages {
     this.requests.push(body);
     const turn = this.#turns[Math.min(this.requests.length - 1, this.#turns.length - 1)];
     if (body.stream === true) {
-      const events = Array.isArray(turn) ? turn : [];
-      return (async function* () {
-        for (const event of events) {
-          yield event;
-        }
-      })();
+      return arrayToStream(Array.isArray(turn) ? turn : []);
     }
     return Promise.resolve(turn);
   }
@@ -201,7 +197,7 @@ describe('request mapping', () => {
   it('replaces spaces in the server label, as Python does', () => {
     // Messages API rejects a `mcp_servers[].name` containing spaces. Python's
     // `AnthropicClient.get_mcp_tool` normalises with `name.replace(" ", "_")`
-    // (`_chat_client.py:520`), and the openai package already does the same.
+    // (`_chat_client.py`), and the openai package already does the same.
     const { client } = clientWith([message('hi')]);
     const request = client.buildRequest([{ role: 'user', contents: [textContent('hi')] }], {
       tools: [client.getMcpTool({ serverLabel: 'my docs', serverUrl: 'https://mcp.example/sse' })],
@@ -334,6 +330,28 @@ describe('beta namespace routing', () => {
 });
 
 describe('message conversion', () => {
+  it('coerces non-object tool arguments to an empty input object', () => {
+    // `tool_use.input` must be a JSON object on the wire; a replayed transcript can carry a
+    // stringified array or scalar, and neither may pass through as `input`.
+    const calls: Message = {
+      role: 'assistant',
+      contents: [
+        { type: 'function_call', callId: 'c1', name: 'search', arguments: '[]' },
+        { type: 'function_call', callId: 'c2', name: 'search', arguments: '"text"' },
+      ],
+    };
+
+    expect(toAnthropicMessages([calls])).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'c1', name: 'search', input: {} },
+          { type: 'tool_use', id: 'c2', name: 'search', input: {} },
+        ],
+      },
+    ]);
+  });
+
   it('splits a mixed message into the roles the API requires', () => {
     const exchange: Message = {
       role: 'assistant',

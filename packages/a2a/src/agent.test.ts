@@ -1,18 +1,11 @@
 import { UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import type { AgentResponseUpdate, ContinuationToken } from '@polymind-inc/agent-framework-core';
 import { AgentSession, ConfigurationError, isAbortError } from '@polymind-inc/agent-framework-core';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { A2AAgent } from './agent.js';
 import { A2AAgentError } from './errors.js';
 import { readA2ASessionState } from './session.js';
 import { agentCard, fakeClient, message, streamEvent, task } from './test-support.js';
-
-function must<T>(value: T | undefined): T {
-  if (value === undefined) {
-    throw new Error('expected a value');
-  }
-  return value;
-}
 
 const answer = message({
   messageId: 'm1',
@@ -69,11 +62,15 @@ describe('a blocking turn', () => {
 
     const response = await agent.run('Is invoice 42 paid?');
 
-    expect(must(transport.calls[0]).method).toBe('sendMessage');
-    expect(sentMessage(must(transport.calls[0]).params).parts).toHaveLength(1);
+    const [call] = transport.calls;
+    const [responseMessage] = response.messages;
+    assert.exists(call);
+    assert.exists(responseMessage);
+    expect(call.method).toBe('sendMessage');
+    expect(sentMessage(call.params).parts).toHaveLength(1);
     expect(response.text).toBe('Invoice 42 is paid.');
     expect(response.agentId).toBe('a1');
-    expect(must(response.messages[0]).authorName).toBe('Invoice agent');
+    expect(responseMessage.authorName).toBe('Invoice agent');
     expect(response.finishReason).toBe('stop');
   });
 
@@ -82,9 +79,9 @@ describe('a blocking turn', () => {
 
     await new A2AAgent({ client }).run('hello');
 
-    const configuration = (
-      must(transport.calls[0]).params as { configuration: { returnImmediately: boolean } }
-    ).configuration;
+    const [call] = transport.calls;
+    assert.exists(call);
+    const configuration = (call.params as { configuration: { returnImmediately: boolean } }).configuration;
     expect(configuration.returnImmediately).toBe(false);
   });
 
@@ -97,9 +94,9 @@ describe('a blocking turn', () => {
 
     const response = await agent.run('long one', { session, allowBackgroundResponses: true });
 
-    const configuration = (
-      must(transport.calls[0]).params as { configuration: { returnImmediately: boolean } }
-    ).configuration;
+    const [call] = transport.calls;
+    assert.exists(call);
+    const configuration = (call.params as { configuration: { returnImmediately: boolean } }).configuration;
     expect(configuration.returnImmediately).toBe(true);
     expect(response.continuationToken).toEqual({ taskId: 'task-1' });
   });
@@ -116,8 +113,10 @@ describe('a blocking turn', () => {
 
     await agent.run('long one', { session: agent.createSession(), allowBackgroundResponses: true });
 
+    const [call] = transport.calls;
+    assert.exists(call);
     const configuration = (
-      must(transport.calls[0]).params as {
+      call.params as {
         configuration: { returnImmediately: boolean; acceptedOutputModes: string[] };
       }
     ).configuration;
@@ -152,7 +151,9 @@ describe('a blocking turn', () => {
 
     await new A2AAgent({ client }).run('hi', { metadata: { tenantHint: 'acme' } });
 
-    expect((must(transport.calls[0]).params as { metadata: unknown }).metadata).toEqual({
+    const [call] = transport.calls;
+    assert.exists(call);
+    expect((call.params as { metadata: unknown }).metadata).toEqual({
       tenantHint: 'acme',
     });
   });
@@ -194,7 +195,9 @@ describe('a streamed turn', () => {
     }
     const response = await stream.finalResponse();
 
-    expect(must(transport.calls[0]).method).toBe('sendMessageStream');
+    const [call] = transport.calls;
+    assert.exists(call);
+    expect(call.method).toBe('sendMessageStream');
     expect(updates).toHaveLength(4);
     expect(response.text).toBe('Invoice 42 is paid.');
     expect(session.serviceSessionId).toBe('ctx-1');
@@ -308,7 +311,9 @@ describe('a streamed turn', () => {
 
     expect(response.text).toBe('Invoice 42 is paid.');
     expect(response.messages).toHaveLength(1);
-    expect(must(response.messages[0]).contents).toHaveLength(1);
+    const [responseMessage] = response.messages;
+    assert.exists(responseMessage);
+    expect(responseMessage.contents).toHaveLength(1);
   });
 
   it('leaves the session alone when the caller stops early', async () => {
@@ -352,7 +357,9 @@ describe('linking turns together', () => {
     transport.calls.length = 0;
     await agent.run('42', { session });
 
-    const sent = sentMessage(must(transport.calls[0]).params);
+    const [call] = transport.calls;
+    assert.exists(call);
+    const sent = sentMessage(call.params);
     expect(sent.taskId).toBe('task-1');
     expect(sent.referenceTaskIds).toEqual([]);
     expect(sent.contextId).toBe('ctx-1');
@@ -373,7 +380,9 @@ describe('linking turns together', () => {
     transport.calls.length = 0;
     await agent.run('and invoice 43?', { session });
 
-    const sent = sentMessage(must(transport.calls[0]).params);
+    const [call] = transport.calls;
+    assert.exists(call);
+    const sent = sentMessage(call.params);
     expect(sent.taskId).toBe('');
     expect(sent.referenceTaskIds).toEqual(['task-1']);
   });
@@ -484,7 +493,9 @@ describe('a session whose conversation is gone', () => {
 
     // A task id means nothing outside the conversation it was created in: referencing it here
     // would point the remote agent at a task belonging to a context this message does not name.
-    const sent = sentMessage(must(transport.calls[0]).params);
+    const [call] = transport.calls;
+    assert.exists(call);
+    const sent = sentMessage(call.params);
     expect(sent.contextId).toBe('');
     expect(sent.referenceTaskIds).toEqual([]);
     expect(sent.taskId).toBe('');
@@ -513,7 +524,9 @@ describe('a session whose conversation is gone', () => {
 
     // Neither continued nor referenced: the recorded task belongs to ctx-2, and this message is
     // being sent in ctx-1.
-    const sent = sentMessage(must(transport.calls[0]).params);
+    const [call] = transport.calls;
+    assert.exists(call);
+    const sent = sentMessage(call.params);
     expect(sent.contextId).toBe('ctx-1');
     expect(sent.taskId).toBe('');
     expect(sent.referenceTaskIds).toEqual([]);
@@ -538,8 +551,10 @@ describe('resuming a background turn', () => {
       continuationToken: { taskId: 'task-1' },
     });
 
-    expect(must(transport.calls[0]).method).toBe('getTask');
-    expect(must(transport.calls[0]).params).toMatchObject({ id: 'task-1' });
+    const [call] = transport.calls;
+    assert.exists(call);
+    expect(call.method).toBe('getTask');
+    expect(call.params).toMatchObject({ id: 'task-1' });
     expect(response.text).toBe('done');
     expect(response.continuationToken).toBeUndefined();
   });
@@ -559,7 +574,9 @@ describe('resuming a background turn', () => {
       continuationToken: { taskId: 'task-1' },
     });
 
-    expect(must(transport.calls[0]).method).toBe('getTask');
+    const [call] = transport.calls;
+    assert.exists(call);
+    expect(call.method).toBe('getTask');
     expect(response.text).toBe('done');
   });
 
@@ -597,7 +614,9 @@ describe('resuming a background turn', () => {
       // Drain.
     }
 
-    expect(must(transport.calls[0]).method).toBe('resubscribeTask');
+    const [call] = transport.calls;
+    assert.exists(call);
+    expect(call.method).toBe('resubscribeTask');
   });
 
   it('reads the final state when the task can no longer be subscribed to', async () => {
@@ -624,7 +643,9 @@ describe('resuming a background turn', () => {
     }
 
     expect(transport.calls.map((call) => call.method)).toEqual(['resubscribeTask', 'getTask']);
-    expect(must(updates[0]).text).toBe('done');
+    const [update] = updates;
+    assert.exists(update);
+    expect(update.text).toBe('done');
   });
 
   it('reports any other subscription failure', async () => {
@@ -732,7 +753,9 @@ describe('failures', () => {
 
     await new A2AAgent({ client }).run('hi', { signal: controller.signal });
 
-    expect(must(transport.calls[0]).options?.signal).toBe(controller.signal);
+    const [call] = transport.calls;
+    assert.exists(call);
+    expect(call.options?.signal).toBe(controller.signal);
   });
 });
 

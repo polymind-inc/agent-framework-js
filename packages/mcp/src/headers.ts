@@ -7,7 +7,7 @@
 export type McpHeaderProvider = () => Record<string, string> | Promise<Record<string, string>>;
 
 /** Reads the configured headers, calling the provider when there is one. */
-export async function resolveHeaders(
+async function resolveHeaders(
   headers: Record<string, string> | McpHeaderProvider | undefined,
 ): Promise<Record<string, string>> {
   if (headers === undefined) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { decodeBase64 } from './base64.js';
 import { coalesceContents } from './coalesce.js';
 import { dataContent, textContent, unknownContent } from './content.js';
@@ -16,12 +16,6 @@ import { addUsage } from './usage.js';
 
 function update(init: Partial<Parameters<typeof agentResponseUpdate>[0]> = {}): AgentResponseUpdate {
   return agentResponseUpdate({ contents: [], ...init });
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 describe('mergeUpdates', () => {
@@ -123,7 +117,9 @@ describe('mergeUpdates', () => {
       update({ contents: [{ type: 'function_call', callId: 'c1', name: 'f', arguments: ':1}' }] }),
     ]);
 
-    const contents = must(response.messages[0]).contents;
+    const message = response.messages[0];
+    assert.exists(message);
+    const contents = message.contents;
     expect(contents).toHaveLength(2);
     expect(contents.map((c) => (c as { arguments: string }).arguments)).toEqual(['{"a"', ':1}']);
   });
@@ -270,7 +266,8 @@ describe('coalesceContents', () => {
     const big = new Uint8Array(300_000).fill(65);
     const merged = coalesceContents([dataContent(big, 'text/plain'), dataContent(big, 'text/plain')]);
     expect(merged).toHaveLength(1);
-    const payload = must((merged[0] as { uri: string }).uri.split(',')[1]);
+    const payload = (merged[0] as { uri: string }).uri.split(',')[1];
+    assert.exists(payload);
     expect(decodeBase64(payload)).toHaveLength(600_000);
   });
 

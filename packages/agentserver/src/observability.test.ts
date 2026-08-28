@@ -6,7 +6,7 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 import { otlpProtocol, UnsupportedOtlpProtocolError } from './config.js';
 import { platformHeaders } from './context.js';
 import { ProtocolError } from './errors.js';
@@ -17,11 +17,12 @@ import { GenAIMainAgentSpanProcessor } from './observability/main-agent.js';
 // `vi.resetModules()`, so importing it here would pin the very instance those tests replace.
 import type * as HostObservabilitySetup from './observability/setup.js';
 import { RESPONSE_BAGGAGE } from './observability/trace-context.js';
-import type { HandlerContext, ResponseHandler } from './server.js';
+import type { ResponseHandler } from './server.js';
 import { ResponsesServer } from './server.js';
 import { InMemoryResponseProvider } from './store/memory.js';
 import type { ResponseProvider } from './store/provider.js';
-import type { CreateResponseRequest, ResponseObject } from './wire.js';
+import { lifecycleHandler, post } from './test-helpers.js';
+import type { ResponseObject } from './wire.js';
 
 /** Resets every piece of global OTel state a test may have registered. */
 function disableGlobalOtel(): void {
@@ -32,38 +33,12 @@ function disableGlobalOtel(): void {
   setTelemetryFlusher(undefined);
 }
 
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
-function post(body: unknown, headers: Record<string, string> = {}): Request {
-  return new Request('http://localhost:8088/responses', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-  });
-}
-
 /** The smallest event sequence the lifecycle contract accepts, with room for span-making work. */
 function minimalHandler(work?: (stage: 'start' | 'late') => void): ResponseHandler {
-  return async function* (_request: CreateResponseRequest, context: HandlerContext) {
-    const response = (status: ResponseObject['status']): ResponseObject => ({
-      ...context.response,
-      status,
-    });
-    work?.('start');
-    yield { type: 'response.created', response: response('queued') };
-    yield { type: 'response.in_progress', response: response('in_progress') };
-    work?.('late');
-    yield { type: 'response.completed', response: response('completed') };
-  };
+  return lifecycleHandler({ work });
 }
 
 describe('otlpProtocol', () => {
-  afterEach(() => vi.unstubAllEnvs());
-
   it('defaults to http/protobuf', () => {
     expect(otlpProtocol('OTEL_EXPORTER_OTLP_TRACES_PROTOCOL')).toBe('http/protobuf');
   });
@@ -253,7 +228,6 @@ describe('GenAIMainAgentSpanProcessor', () => {
 
 describe('setupHostObservability', () => {
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.resetModules();
     vi.restoreAllMocks();
     disableGlobalOtel();
@@ -642,7 +616,8 @@ describe('server trace context', () => {
     expect(response.status).toBe(200);
     expect(requestIdBaggage).toBe('req-42');
     const spans = exporter.getFinishedSpans();
-    const start = must(spans.find((span) => span.name === 'start-span'));
+    const start = spans.find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.spanContext().traceId).toBe('0123456789abcdef0123456789abcdef');
     expect(start.parentSpanContext?.spanId).toBe('0123456789abcdef');
   });
@@ -662,7 +637,8 @@ describe('server trace context', () => {
 
     // The `late-span` is created on a pull made by the SSE writer, outside the request scope —
     // the exact resumption `bindIterable` pins back to the extracted context.
-    const late = must(exporter.getFinishedSpans().find((span) => span.name === 'late-span'));
+    const late = exporter.getFinishedSpans().find((span) => span.name === 'late-span');
+    assert.exists(late);
     expect(late.spanContext().traceId).toBe('0123456789abcdef0123456789abcdef');
     expect(late.parentSpanContext?.spanId).toBe('0123456789abcdef');
   });
@@ -858,9 +834,7 @@ describe('per-turn flush', () => {
     expect(created.status).toBe(200);
 
     // The detached run owns the turn, and its own teardown is what flushes.
-    for (let attempt = 0; attempt < 200 && flusher.mock.calls.length === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await vi.waitUntil(() => flusher.mock.calls.length > 0, { timeout: 1_000, interval: 5 });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(flusher).toHaveBeenCalledTimes(1);
   });
@@ -916,7 +890,8 @@ describe('server-stamped baggage', () => {
 
     // The lift in the enrichment processor is what the portal actually reads, and it is dead code
     // until the entry exists.
-    const start = must(exporter.getFinishedSpans().find((span) => span.name === 'start-span'));
+    const start = exporter.getFinishedSpans().find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.attributes[FOUNDRY_ATTR.conversationId]).toBe('conv_7');
   });
 
@@ -959,7 +934,8 @@ describe('server-stamped baggage', () => {
     expect(captured.conversationId).toBe('');
     // …and its enrichment processor tests the value for truth, so an empty one stamps nothing.
     expect(captured.requestId).toBeUndefined();
-    const start = must(exporter.getFinishedSpans().find((span) => span.name === 'start-span'));
+    const start = exporter.getFinishedSpans().find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.attributes[FOUNDRY_ATTR.conversationId]).toBeUndefined();
   });
 
@@ -983,7 +959,8 @@ describe('server-stamped baggage', () => {
 
     expect(response.status).toBe(200);
     expect(captured.conversationId).toBe('conv_9');
-    const start = must(exporter.getFinishedSpans().find((span) => span.name === 'start-span'));
+    const start = exporter.getFinishedSpans().find((span) => span.name === 'start-span');
+    assert.exists(start);
     expect(start.attributes[FOUNDRY_ATTR.sessionId]).toBe('sess-1');
     expect(start.attributes[FOUNDRY_ATTR.conversationId]).toBe('conv_9');
   });

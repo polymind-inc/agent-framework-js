@@ -8,18 +8,12 @@ import {
 } from '@polymind-inc/agent-framework-agentserver';
 import type { ContextProvider, Tool } from '@polymind-inc/agent-framework-core';
 import { AgentSession, ConfigurationError, isFunctionTool } from '@polymind-inc/agent-framework-core';
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { ToolboxConsentRequiredError } from './consent.js';
 import { FoundryToolbox } from './toolbox.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 let tokenCounter = 0;
 const credential: TokenCredential = {
@@ -235,7 +229,9 @@ describe('FoundryToolbox tools', () => {
       name: 'search_docs',
       description: 'Search the documentation',
     });
-    expect(isFunctionTool(must(tools[0]))).toBe(true);
+    const firstTool = tools[0];
+    assert.exists(firstTool);
+    expect(isFunctionTool(firstTool)).toBe(true);
     await toolbox.close();
   });
 
@@ -418,7 +414,8 @@ describe('FoundryToolbox skills', () => {
     expect(contributed.tools.map((entry) => entry.name)).toContain('load_skill');
     // Nothing new is authenticated: the discovery request carries the same per-call token and
     // call id every `tools/call` does.
-    const read = must(calls.find((call) => call.method === 'resources/read'));
+    const read = calls.find((call) => call.method === 'resources/read');
+    assert.exists(read);
     expect(read.headers.authorization).toMatch(/^Bearer token-/);
     expect(read.headers[HEADERS.foundryCallId]).toBe('call-1');
     await toolbox.close();
@@ -432,7 +429,8 @@ describe('FoundryToolbox skills', () => {
     const contributed = await contribute(
       toolbox.asSkillsProvider({ approvals: { loadSkill: 'never_require' } }),
     );
-    const loadSkill = must(contributed.tools.filter(isFunctionTool).find((t) => t.name === 'load_skill'));
+    const loadSkill = contributed.tools.filter(isFunctionTool).find((t) => t.name === 'load_skill');
+    assert.exists(loadSkill);
     const content = await (loadSkill.execute as (i: unknown, c: { callId: string }) => Promise<string>)(
       { skill_name: 'escalation-policy' },
       { callId: 'c1' },

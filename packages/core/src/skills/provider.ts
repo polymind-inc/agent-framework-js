@@ -211,11 +211,11 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
     execute: async (input: Record<string, unknown>, toolCtx: ToolContext): Promise<string> => {
       const skillName = asName(input.skill_name);
       if (skillName === undefined) {
-        return 'Error: Skill name cannot be empty.';
+        return emptyNameError('Skill');
       }
       const skill = findSkill(skills, skillName);
       if (skill === undefined) {
-        return `Error: Skill '${skillName}' not found.`;
+        return skillNotFoundError(skillName);
       }
       return await skill.getContent(accessOptions(toolCtx));
     },
@@ -236,15 +236,15 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
     execute: async (input: Record<string, unknown>, toolCtx: ToolContext): Promise<unknown> => {
       const skillName = asName(input.skill_name);
       if (skillName === undefined) {
-        return 'Error: Skill name cannot be empty.';
+        return emptyNameError('Skill');
       }
       const resourceName = asName(input.resource_name);
       if (resourceName === undefined) {
-        return 'Error: Resource name cannot be empty.';
+        return emptyNameError('Resource');
       }
       const skill = findSkill(skills, skillName);
       if (skill === undefined) {
-        return `Error: Skill '${skillName}' not found.`;
+        return skillNotFoundError(skillName);
       }
       const resource = await skill.getResource?.(resourceName, accessOptions(toolCtx));
       if (resource === undefined) {
@@ -298,15 +298,15 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
     execute: async (input: Record<string, unknown>, toolCtx: ToolContext): Promise<unknown> => {
       const skillName = asName(input.skill_name);
       if (skillName === undefined) {
-        return 'Error: Skill name cannot be empty.';
+        return emptyNameError('Skill');
       }
       const scriptName = asName(input.script_name);
       if (scriptName === undefined) {
-        return 'Error: Script name cannot be empty.';
+        return emptyNameError('Script');
       }
       const skill = findSkill(skills, skillName);
       if (skill === undefined) {
-        return `Error: Skill '${skillName}' not found.`;
+        return skillNotFoundError(skillName);
       }
       const script = await skill.getScript?.(scriptName, accessOptions(toolCtx));
       if (script === undefined) {
@@ -337,6 +337,16 @@ function invocationContext(skill: Skill, toolCtx: ToolContext): SkillInvocationC
     ...(toolCtx.signal === undefined ? {} : { signal: toolCtx.signal }),
     ...(toolCtx.session === undefined ? {} : { session: toolCtx.session }),
   };
+}
+
+// The refusal strings are shared across the three skill tools so the wording — which the model
+// reads and acts on — cannot drift between them.
+function emptyNameError(what: 'Skill' | 'Resource' | 'Script'): string {
+  return `Error: ${what} name cannot be empty.`;
+}
+
+function skillNotFoundError(name: string): string {
+  return `Error: Skill '${name}' not found.`;
 }
 
 /** Returns the name exactly as sent, or `undefined` when it is missing or blank. */

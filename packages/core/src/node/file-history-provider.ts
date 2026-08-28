@@ -8,7 +8,11 @@ import type {
   ProviderRunContext,
 } from '../context/context-provider.js';
 import type { ResolvedHistoryStoreOptions } from '../context/history-store.js';
-import { messagesToStore, resolveHistoryStoreOptions } from '../context/history-store.js';
+import {
+  persistRunHistory,
+  replayStoredHistory,
+  resolveHistoryStoreOptions,
+} from '../context/history-store.js';
 import { ConfigurationError } from '../errors.js';
 import type { Message } from '../types/message.js';
 import type { SerializedMessage } from '../types/serialization.js';
@@ -230,17 +234,11 @@ export class FileHistoryProvider implements HistoryProvider {
   }
 
   async beforeRun(ctx: ProviderRunContext): Promise<void> {
-    const history = this.#options.provideFilter(await this.getMessages(ctx.session, ctx.state));
-    if (history.length > 0) {
-      ctx.extendMessages(history);
-    }
+    await replayStoredHistory(this, ctx, this.#options);
   }
 
   async afterRun(ctx: ProviderAfterRunContext): Promise<void> {
-    const toSave = messagesToStore(ctx, this.#options);
-    if (toSave.length > 0) {
-      await this.saveMessages(ctx.session, toSave, ctx.state);
-    }
+    await persistRunHistory(this, ctx, this.#options);
   }
 
   async #sessionFile(session: AgentSession): Promise<string> {

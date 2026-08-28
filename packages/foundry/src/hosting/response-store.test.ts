@@ -9,7 +9,7 @@ import {
   runWithRequestContext,
 } from '@polymind-inc/agent-framework-agentserver';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { FoundryResponseStore } from './response-store.js';
 import { defaultStore } from './server.js';
@@ -92,17 +92,9 @@ async function asPlatformRequest<T>(headers: Record<string, string>, fn: () => P
 
 // The write path stamps the agent identity from the environment when the response carries none, so
 // a developer shell configured for a real agent must not leak into the assertions below.
-const savedAgentEnv = {
-  name: process.env.FOUNDRY_AGENT_NAME,
-  version: process.env.FOUNDRY_AGENT_VERSION,
-};
 beforeEach(() => {
-  delete process.env.FOUNDRY_AGENT_NAME;
-  delete process.env.FOUNDRY_AGENT_VERSION;
-});
-afterEach(() => {
-  if (savedAgentEnv.name !== undefined) process.env.FOUNDRY_AGENT_NAME = savedAgentEnv.name;
-  if (savedAgentEnv.version !== undefined) process.env.FOUNDRY_AGENT_VERSION = savedAgentEnv.version;
+  vi.stubEnv('FOUNDRY_AGENT_NAME', undefined);
+  vi.stubEnv('FOUNDRY_AGENT_VERSION', undefined);
 });
 
 /** The reference the store stamps when neither the response nor the environment names an agent. */
@@ -170,7 +162,7 @@ describe('FoundryResponseStore', () => {
 
   it('falls back to an update when the conflict arrives as a 400 with a conflict code', async () => {
     // The service expresses duplicate-create as either status; the reference's `_is_conflict`
-    // (`store/_foundry_provider.py:41-61`) reads the body, not the status line.
+    // (`store/_foundry_provider.py`) reads the body, not the status line.
     const { store: subject, calls } = store([
       { status: 400, body: { error: { code: 'already_exists', message: 'nope' } } },
       { status: 200 },
@@ -355,28 +347,20 @@ describe('FoundryResponseStore request headers', () => {
 });
 
 describe('default store selection', () => {
-  const saved = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...saved };
-  });
-
   it('keeps a local run in memory', () => {
     expect(defaultStore(false).constructor.name).toBe('InMemoryResponseProvider');
   });
 
   it('activates the Foundry storage service in a container, the way Python does', () => {
-    process.env.FOUNDRY_PROJECT_ENDPOINT = PROJECT;
-    process.env.FOUNDRY_AGENT_NAME = 'weather-agent';
-    process.env.FOUNDRY_AGENT_VERSION = '1';
+    vi.stubEnv('FOUNDRY_PROJECT_ENDPOINT', PROJECT);
+    vi.stubEnv('FOUNDRY_AGENT_NAME', 'weather-agent');
+    vi.stubEnv('FOUNDRY_AGENT_VERSION', '1');
 
     expect(defaultStore(true).constructor.name).toBe('FoundryResponseStore');
   });
 
   it('activates it on the project endpoint alone — the agent identity has a default', () => {
-    process.env.FOUNDRY_PROJECT_ENDPOINT = PROJECT;
-    delete process.env.FOUNDRY_AGENT_NAME;
-    delete process.env.FOUNDRY_AGENT_VERSION;
+    vi.stubEnv('FOUNDRY_PROJECT_ENDPOINT', PROJECT);
 
     expect(defaultStore(true).constructor.name).toBe('FoundryResponseStore');
   });
@@ -384,7 +368,7 @@ describe('default store selection', () => {
   it('falls back to the sandbox filesystem when a hosted container has no endpoint', () => {
     // Should not happen — the platform injects FOUNDRY_PROJECT_ENDPOINT — but a misconfigured
     // container serving turns off its sandbox beats one that cannot start.
-    delete process.env.FOUNDRY_PROJECT_ENDPOINT;
+    vi.stubEnv('FOUNDRY_PROJECT_ENDPOINT', undefined);
 
     expect(defaultStore(true).constructor.name).toBe('FileResponseProvider');
   });
@@ -396,8 +380,8 @@ describe('agent reference stamping', () => {
   // from inside a hosted container). The store therefore never sends a response without one.
 
   it('stamps the environment agent identity onto a response that lacks one', async () => {
-    process.env.FOUNDRY_AGENT_NAME = 'weather-agent';
-    process.env.FOUNDRY_AGENT_VERSION = '3';
+    vi.stubEnv('FOUNDRY_AGENT_NAME', 'weather-agent');
+    vi.stubEnv('FOUNDRY_AGENT_VERSION', '3');
     const { store: subject, calls } = store([{ status: 201 }]);
 
     await subject.put({ response: response() });
@@ -418,7 +402,7 @@ describe('agent reference stamping', () => {
   });
 
   it('passes a caller-supplied agent reference through unchanged', async () => {
-    process.env.FOUNDRY_AGENT_NAME = 'weather-agent';
+    vi.stubEnv('FOUNDRY_AGENT_NAME', 'weather-agent');
     const { store: subject, calls } = store([{ status: 201 }]);
     const supplied = { type: 'agent_reference' as const, name: 'router-agent', version: '2' };
 
@@ -706,6 +690,21 @@ describe('bounded retry', () => {
     await subject.put({ response: response() });
 
     expect(calls).toHaveLength(2);
+  });
+
+  it('retries with no timer at all when baseDelayMs is 0', async () => {
+    // "Zero base delay" means no waiting — not even a zero-millisecond timer task, which is why
+    // this runs under fake timers that are never advanced.
+    vi.useFakeTimers();
+    try {
+      const { store: subject, calls } = store([{ status: 503 }, { status: 201 }]);
+
+      await subject.put({ response: response() });
+
+      expect(calls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives up after the attempt budget and surfaces the last failure', async () => {

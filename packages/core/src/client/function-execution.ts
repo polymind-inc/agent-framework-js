@@ -421,10 +421,11 @@ async function runTool(
  * The metadata a generated `function_result` inherits from the call it answers.
  *
  * Python passes `additional_properties=function_call_content.additional_properties` at every site
- * that builds a result for a call it executed — success (`_tools.py:1553`), tool not found
- * (`:1475`), argument parsing failure (`:1527`), a thrown tool body
- * (`_function_execution_error_result`, `:1422`) and a middleware-terminated result (`:1616`) — plus
- * the rejected-approval result (`:2439`). Provider-specific routing lives there: a hosted MCP call
+ * in `_tools.py` that builds a result for a call it executed — success, tool not found, argument
+ * parsing failure, a thrown tool body (`_function_execution_error_result`) and a
+ * middleware-terminated result — plus the rejected-approval result. There is no site that omits
+ * it, which is what makes it an invariant rather than a convention. Provider-specific routing
+ * rides on it: a hosted MCP call
  * carries its `serverLabel`, and Python's own approval bookkeeping reads it back off the call
  * (`_sessions.py` `_approval_controls_to_keep`). Dropping it means the result can no longer be
  * attributed to the server that produced the call.

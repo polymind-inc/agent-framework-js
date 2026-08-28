@@ -1,4 +1,5 @@
 import { SchemaResolutionError } from '../errors.js';
+import { isRecord } from '../types/content.js';
 import type { StandardSchemaV1 } from './standard-schema.js';
 import { isStandardSchema } from './standard-schema.js';
 
@@ -139,9 +140,7 @@ function compilePattern(source: string): RegExp | null {
 }
 
 function schemaRecord(schema: unknown): Record<string, unknown> | undefined {
-  return typeof schema === 'object' && schema !== null && !Array.isArray(schema)
-    ? (schema as Record<string, unknown>)
-    : undefined;
+  return isRecord(schema) ? schema : undefined;
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
@@ -165,7 +164,7 @@ function typeMatches(value: unknown, type: string): boolean {
     case 'array':
       return Array.isArray(value);
     case 'object':
-      return typeof value === 'object' && value !== null && !Array.isArray(value);
+      return isRecord(value);
     case 'integer':
       return typeof value === 'number' && Number.isInteger(value);
     case 'number':
@@ -289,8 +288,8 @@ function validateValue(
     if (branch !== undefined) validateValue(value, branch, root, path, issues, activeReferences);
   }
 
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    validateObject(value as Record<string, unknown>, rule, root, path, issues, activeReferences);
+  if (isRecord(value)) {
+    validateObject(value, rule, root, path, issues, activeReferences);
   }
   if (Array.isArray(value)) validateArray(value, rule, root, path, issues, activeReferences);
   if (typeof value === 'string') validateString(value, rule, path, issues);

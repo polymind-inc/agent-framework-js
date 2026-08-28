@@ -112,8 +112,8 @@ export class GenAIMainAgentSpanProcessor implements SpanProcessor {
       }
     }
 
-    // The SDK refuses setAttribute on an ended span, so this writes the attribute record
-    // directly — the same workaround the enrichment processor uses.
+    // Written into the attribute record directly — `FoundryEnrichmentSpanProcessor.onEnd`
+    // explains the workaround (the SDK refuses setAttribute on an ended span).
     try {
       for (const [key, value] of Object.entries(updates)) {
         attributes[key] = value;

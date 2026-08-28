@@ -120,11 +120,12 @@ export class AnthropicChatClient
   readonly #model: string;
   readonly #defaultMaxTokens: number;
   /**
-   * A cancellation is not a provider failure and must not be laundered into one: hosting maps
-   * `AbortError` to `response.incomplete`/`interrupted` and everything else to `response.failed`.
-   * The SDK's own abort error is *not* named `AbortError` — `APIUserAbortError` never sets
-   * `this.name`, so it arrives as a plain `"Error"` (@anthropic-ai/sdk `core/error.mjs`) and is
-   * recognized by type instead.
+   * Normalizes anything thrown around an SDK call into the value this client throws, following
+   * the `createClientErrorNormalizer` contract: a cancellation passes through as the
+   * standards-shaped abort value rather than being laundered into a provider failure.
+   *
+   * This SDK's specifics: `APIUserAbortError` never sets `this.name`, so it arrives as a plain
+   * `"Error"` (@anthropic-ai/sdk `core/error.mjs`) and is recognized by type instead.
    */
   readonly #toClientError: ClientErrorNormalizer = createClientErrorNormalizer({
     abortErrorClass: Anthropic.APIUserAbortError,

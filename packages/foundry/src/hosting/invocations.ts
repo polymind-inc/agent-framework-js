@@ -14,7 +14,8 @@ import {
   unavailable,
 } from '@polymind-inc/agent-framework-agentserver';
 import type { AgentLike, AgentSession } from '@polymind-inc/agent-framework-core';
-import { ConfigurationError } from '@polymind-inc/agent-framework-core';
+import { isRecord, validateSafeInteger } from '@polymind-inc/agent-framework-core/internal';
+import { requireHostedUserId } from './user-id.js';
 
 const DEFAULT_MAX_SESSIONS = 1024;
 
@@ -32,13 +33,6 @@ export interface InvocationsHostServerConfig extends Pick<InvocationsServerConfi
   maxBodyBytes?: number;
   /** Maximum number of idle/in-use conversations retained in memory. Defaults to 1024. */
   maxSessions?: number;
-}
-
-function positiveLimit(name: string, value: number): number {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new ConfigurationError(`${name} must be a positive safe integer.`);
-  }
-  return value;
 }
 
 /**
@@ -68,17 +62,7 @@ function partitionKey(context: InvocationContext, hosted: boolean): string {
       'unsupported_container_protocol_version',
     );
   }
-  const userId = context.request.userId;
-  // An *empty* header is rejected the same as a missing one: it would silently fall through to
-  // an anonymous partition every caller of a misconfigured gateway would share.
-  if (userId === undefined || userId === '') {
-    throw new ProtocolError(
-      400,
-      'The hosted environment is missing the platform user id. The request did not come from a ' +
-        'Foundry platform service.',
-      { code: 'missing_user_id', source: 'platform' },
-    );
-  }
+  const userId = requireHostedUserId(context.request.userId);
   // The reference spells this `sessionId:userId`, but a bare join is not injective: the session
   // id is caller-supplied and may itself contain `:`, so `S:v` × user `u` and `S` × user `v:u`
   // would collapse into one identity (the same delimiter-collision defect the Responses session
@@ -90,7 +74,7 @@ function partitionKey(context: InvocationContext, hosted: boolean): string {
 
 /** What a well-formed invocation body carries. */
 function parseInvocation(payload: unknown): { message: string; stream: boolean } {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+  if (!isRecord(payload)) {
     throw badRequest('The request body must be a JSON object.');
   }
   const { message, stream } = payload as { message?: unknown; stream?: unknown };
@@ -279,8 +263,8 @@ export class InvocationsHostServer extends InvocationsServer {
         // split the container's behaviour over one variable. Only an explicit option is checked.
         options.maxBodyBytes === undefined
           ? maxBodyBytes()
-          : positiveLimit('maxBodyBytes', options.maxBodyBytes),
-        positiveLimit('maxSessions', options.maxSessions ?? DEFAULT_MAX_SESSIONS),
+          : validateSafeInteger('maxBodyBytes', options.maxBodyBytes, 1),
+        validateSafeInteger('maxSessions', options.maxSessions ?? DEFAULT_MAX_SESSIONS, 1),
       ),
       ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
     });

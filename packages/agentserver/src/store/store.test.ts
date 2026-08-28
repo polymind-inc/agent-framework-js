@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, assert, describe, expect, it } from 'vitest';
 import { ProtocolError } from '../errors.js';
 import type { ResponseEvent, ResponseObject } from '../wire.js';
 import { FileResponseProvider } from './file.js';
@@ -15,12 +15,6 @@ const EVENTS: ResponseEvent[] = [
 
 /** The generation every fixture below is written under, unless a test is about the fence itself. */
 const GENERATION = 'generation-default';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 function stored(id: string, userId?: string, generation: ResponseGeneration = GENERATION): StoredResponse {
   const response: ResponseObject = {
@@ -273,7 +267,8 @@ describe('FileResponseProvider', () => {
     expect(reason.status).toBe(404);
 
     // The record on disk belongs to whoever won; it was never replaced.
-    const raw = JSON.parse(await readFile(join(must(root), 'caresp_raced.json'), 'utf8')) as StoredResponse;
+    assert.exists(root);
+    const raw = JSON.parse(await readFile(join(root, 'caresp_raced.json'), 'utf8')) as StoredResponse;
     expect(raw.userId).toBe('alice');
     expect(await provider.get('caresp_raced', 'mallory')).toBeUndefined();
   });

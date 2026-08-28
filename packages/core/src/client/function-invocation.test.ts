@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { assert, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { ConfigurationError, SchemaResolutionError, UserInputRequiredError } from '../errors.js';
 import { functionMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
@@ -13,6 +13,7 @@ import type {
 import { textContent } from '../types/content.js';
 import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import type { ChatClient, ChatClientMetadata, ChatOptions } from './chat-client.js';
+import { FunctionInvocationLimitError } from './function-execution.js';
 import { withFunctionInvocation } from './function-invocation.js';
 import { MockChatClient } from './test-support.js';
 
@@ -26,12 +27,6 @@ function call(
 
 function resultsOf(contents: readonly Content[]): FunctionResultContent[] {
   return contents.filter((c): c is FunctionResultContent => c.type === 'function_result');
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 const echoSchema = {
@@ -68,7 +63,8 @@ describe('withFunctionInvocation', () => {
     expect(resultsOf(allContents).map((r) => r.result)).toEqual(['Tokyo is sunny']);
 
     // The second model call sees user -> assistant(tool_call) -> tool(result).
-    const secondCall = must(inner.calls[1]);
+    const secondCall = inner.calls[1];
+    assert.exists(secondCall);
     expect(secondCall.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
   });
 
@@ -241,6 +237,31 @@ describe('withFunctionInvocation', () => {
     ).rejects.toThrow(/2 times in a row|kaboom/);
     // 2 tolerated rounds, then the third failure is fatal.
     expect(inner.callCount).toBe(3);
+  });
+
+  it('throws FunctionInvocationLimitError once a concurrent round exhausts the budget', async () => {
+    // The serial path rethrows the raw tool error on the fatal round; the concurrent path is the
+    // one that aggregates the round's failures into the limit error. The thrown type is public
+    // API — callers catch it with `instanceof` — so this test pins the class, not just a message.
+    const failing = tool({
+      name: 'boom',
+      description: 'd',
+      parameters: echoSchema,
+      execute: async () => {
+        throw new Error('kaboom');
+      },
+    });
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'boom'), call('c2', 'boom')], finishReason: 'tool_calls' },
+      { contents: [call('c3', 'boom'), call('c4', 'boom')], finishReason: 'tool_calls' },
+    ]);
+
+    await expect(
+      withFunctionInvocation(inner, {
+        maxConsecutiveErrors: 1,
+        allowConcurrentInvocations: true,
+      }).getResponse([], { tools: [failing] } as ChatOptions),
+    ).rejects.toThrow(FunctionInvocationLimitError);
   });
 
   it('does not count unknown-tool rounds toward the consecutive-error budget', async () => {
@@ -751,7 +772,8 @@ describe('generated function_result metadata (Python parity)', () => {
 
   it('carries the call additionalProperties onto success, not_found and failure results', async () => {
     // Python passes `additional_properties=function_call_content.additional_properties` at every
-    // site that answers a call it executed (`_tools.py:1422 / :1475 / :1527 / :1553 / :1616`).
+    // site in `_tools.py` that answers a call it executed — success, tool not found, argument
+    // parsing failure, thrown tool body and middleware termination.
     // Losing it detaches the result from the server that asked for the call.
     const ok = tool({
       name: 'ok',
@@ -805,11 +827,12 @@ describe('generated function_result metadata (Python parity)', () => {
 
     const [result] = resultsOf(response.messages.flatMap((msg) => msg.contents));
     expect(result).toBeDefined();
-    expect('additionalProperties' in must(result)).toBe(false);
+    assert.exists(result);
+    expect('additionalProperties' in result).toBe(false);
   });
 
   it('carries them onto a rejected approval result too', async () => {
-    // Python's rejection path does the same (`_tools.py:2439`).
+    // Python's rejection path in `_tools.py` does the same.
     const gated = tool({
       name: 'gated',
       description: 'Needs a human',
@@ -903,8 +926,8 @@ describe('toolChoice across the approval boundary (Go parity)', () => {
   }
 
   it('keeps required when the turn carried only a rejection', async () => {
-    // Go relaxes `required` only when `invokeApprovedToolApprovalResponses` produced a message,
-    // i.e. only when an approved call actually ran (`autocall.go:196`, `:629-644`). A turn that
+    // Go relaxes `required` only when `invokeApprovedToolApprovalResponses` produced a message
+    // (`autocall.go`), i.e. only when an approved call actually ran. A turn that
     // answered nothing has not satisfied the `required` demand yet.
     const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
     const client = withFunctionInvocation(mock);
@@ -1407,7 +1430,9 @@ describe('conversation chaining between rounds', () => {
     } as ChatOptions);
 
     expect(requests).toHaveLength(2);
-    expect(must(requests[1]).conversationId).toBe('stable_1');
+    const secondRequest = requests[1];
+    assert.exists(secondRequest);
+    expect(secondRequest.conversationId).toBe('stable_1');
   });
 
   it('advances to the reported id when the provider declares no stable ids', async () => {
@@ -1420,7 +1445,9 @@ describe('conversation chaining between rounds', () => {
     } as ChatOptions);
 
     expect(requests).toHaveLength(2);
-    expect(must(requests[1]).conversationId).toBe('resp_r1');
+    const secondRequest = requests[1];
+    assert.exists(secondRequest);
+    expect(secondRequest.conversationId).toBe('resp_r1');
   });
 
   it('advances a non-stable id even when the provider declares a stable spelling', async () => {
@@ -1434,6 +1461,8 @@ describe('conversation chaining between rounds', () => {
     } as ChatOptions);
 
     expect(requests).toHaveLength(2);
-    expect(must(requests[1]).conversationId).toBe('resp_r1');
+    const secondRequest = requests[1];
+    assert.exists(secondRequest);
+    expect(secondRequest.conversationId).toBe('resp_r1');
   });
 });

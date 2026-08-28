@@ -1,5 +1,31 @@
-import { StreamConsumedError, throwIfAborted } from '../errors.js';
+import { StreamConsumedError } from '../errors.js';
 import { abortErrorFrom } from './abort.js';
+
+/**
+ * Folds `value` through `hooks` in order.
+ *
+ * A hook that answers `undefined` or `null` (or nothing at all) leaves the value unchanged —
+ * "nothing to replace" — which is the one subtlety every hook loop must agree on, so it is
+ * written once and shared by the stream's own `onResult` pass and the middleware pipeline's
+ * update/result passes.
+ */
+export async function applyHooks<T>(
+  value: T,
+  // What a hook may answer varies by hook family (`void`, `undefined`, a promise of either, or a
+  // replacement); each family's own declaration enforces its shape, so this fold accepts them all
+  // and cares only about the one distinction below.
+  hooks: Iterable<(value: T) => unknown> | undefined,
+): Promise<T> {
+  let current = value;
+  for (const hook of hooks ?? []) {
+    // A `void` answer is `undefined` at runtime; the cast collapses the two for the narrow below.
+    const hooked = (await hook(current)) as T | null | undefined;
+    if (hooked !== undefined && hooked !== null) {
+      current = hooked;
+    }
+  }
+  return current;
+}
 
 /** Context handed to a stream's `start` callback on first consumption. */
 export interface StreamStartContext {
@@ -149,9 +175,9 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
     this.#claimed = true;
   }
 
-  #createIterator(stream: boolean): AsyncIterator<TUpdate, void, void> {
+  #createIterator(): AsyncIterator<TUpdate, void, void> {
     return {
-      next: () => this.#next(stream),
+      next: () => this.#next(true),
       return: async () => {
         await this.#stop();
         return { done: true, value: undefined };
@@ -202,7 +228,7 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
     }
     let result: IteratorResult<TUpdate>;
     try {
-      throwIfAborted(this.#init.signal);
+      this.#init.signal?.throwIfAborted();
       const iterator = await this.#source(stream);
       result = await iterator.next();
     } catch (error) {
@@ -229,7 +255,7 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
       // @anthropic-ai/sdk `core/streaming.mjs`). Checking only before each pull would fold that
       // truncated turn into a normal final result — and a hosted turn would be persisted as
       // `completed` carrying output the model never finished, with no error anywhere to show for
-      // it. This is the same value `throwIfAborted` would have thrown one pull earlier, so the
+      // it. This is the same value `throwIfAborted()` would have thrown one pull earlier, so the
       // abort reports identically whichever side of the pull it lands on.
       if (this.#init.signal?.aborted === true) {
         const error = abortErrorFrom(this.#init.signal);
@@ -378,13 +404,10 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
     }
     const resultCtx: StreamResultContext = { abandoned: this.#abandoned };
     this.#finalizing ??= (async (): Promise<TFinal> => {
-      let final = await this.#init.finalize(this.#updates);
-      for (const hook of this.#init.onResult ?? []) {
-        const hooked = await hook(final, resultCtx);
-        if (hooked !== undefined && hooked !== null) {
-          final = hooked;
-        }
-      }
+      const final = await applyHooks(
+        await this.#init.finalize(this.#updates),
+        this.#init.onResult?.map((hook) => (value: TFinal) => hook(value, resultCtx)),
+      );
       this.#finalResult = final;
       this.#finalized = true;
       return final;
@@ -409,7 +432,7 @@ class HybridResponseStream<TUpdate, TFinal> implements ResponseStream<TUpdate, T
 
   [Symbol.asyncIterator](): AsyncIterator<TUpdate, void, void> {
     this.#claim();
-    return this.#createIterator(true);
+    return this.#createIterator();
   }
 
   // biome-ignore lint/suspicious/noThenProperty: the stream is deliberately awaitable (thenable + async iterable hybrid)

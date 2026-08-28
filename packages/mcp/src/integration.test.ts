@@ -19,7 +19,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { McpClient } from './client.js';
 
 const url = process.env.MCP_SERVER_URL;
@@ -28,15 +28,10 @@ const toolName = process.env.MCP_TOOL_NAME ?? 'microsoft_docs_search';
 const toolArgs = process.env.MCP_TOOL_ARGS ?? '{"query":"Azure AI Foundry agent"}';
 const TIMEOUT = 60_000;
 
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
 function connect(): McpClient {
+  assert.exists(url);
   return new McpClient({
-    url: must(url),
+    url,
     ...(authToken === undefined ? {} : { headers: { authorization: `Bearer ${authToken}` } }),
   });
 }
@@ -95,7 +90,8 @@ describe.runIf(process.env.RUN_INTEGRATION_TESTS === '1' && url !== undefined &&
       // A reachable host that speaks HTTP but not MCP — a copied-and-pasted URL, a proxy in front of
       // the wrong route. The connection must fail rather than hang, and it must fail on the first
       // `getTools()` rather than at construction, since the client is deliberately lazy.
-      const origin = new URL(must(url)).origin;
+      assert.exists(url);
+      const origin = new URL(url).origin;
       const mcp = new McpClient({ url: origin });
 
       expect(mcp.connected).toBe(false);
@@ -125,7 +121,8 @@ describe.runIf(process.env.RUN_INTEGRATION_TESTS === '1' && url !== undefined &&
         expect(call?.kind).toBe(SpanKind.CLIENT);
         expect(call?.attributes['mcp.method.name']).toBe('tools/call');
         expect(call?.attributes['gen_ai.tool.type']).toBe('mcp');
-        expect(call?.attributes['server.address']).toBe(new URL(must(url)).hostname);
+        assert.exists(url);
+        expect(call?.attributes['server.address']).toBe(new URL(url).hostname);
       } finally {
         await mcp.close();
         await provider.shutdown();

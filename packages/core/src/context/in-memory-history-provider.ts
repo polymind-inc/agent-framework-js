@@ -9,7 +9,7 @@ import type {
   ProviderRunContext,
 } from './context-provider.js';
 import type { ResolvedHistoryStoreOptions } from './history-store.js';
-import { messagesToStore, resolveHistoryStoreOptions } from './history-store.js';
+import { persistRunHistory, replayStoredHistory, resolveHistoryStoreOptions } from './history-store.js';
 
 const MESSAGES_KEY = 'messages';
 
@@ -66,16 +66,10 @@ export class InMemoryHistoryProvider implements HistoryProvider {
   }
 
   async beforeRun(ctx: ProviderRunContext): Promise<void> {
-    const history = this.#options.provideFilter(await this.getMessages(ctx.session, ctx.state));
-    if (history.length > 0) {
-      ctx.extendMessages(history);
-    }
+    await replayStoredHistory(this, ctx, this.#options);
   }
 
   async afterRun(ctx: ProviderAfterRunContext): Promise<void> {
-    const toSave = messagesToStore(ctx, this.#options);
-    if (toSave.length > 0) {
-      await this.saveMessages(ctx.session, toSave, ctx.state);
-    }
+    await persistRunHistory(this, ctx, this.#options);
   }
 }

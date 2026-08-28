@@ -21,6 +21,7 @@ import {
   decodeSegment,
   errorResponse,
   jsonResponse,
+  linkedAbort,
   stripPrefix,
   trimTrailingSlashes,
   withStandardHeaders,
@@ -246,11 +247,11 @@ export class ResponsesServer {
       return await otelContext.with(extractTraceContext(request.headers), () =>
         runWithRequestContext(context, async () => {
           const response = await this.#route(request, context, telemetry);
-          return this.#withStandardHeaders(response, context);
+          return withStandardHeaders(response, context, serverIdentity());
         }),
       );
     } catch (error) {
-      return this.#errorResponse(toProtocolError(error), context);
+      return errorResponse(toProtocolError(error), context, serverIdentity());
     } finally {
       // Unconditional, as the reference's is (Python `handle_create` flushes in a `finally`): the
       // failing turns are the ones whose spans are worth the most, and a hosted sandbox may be
@@ -527,37 +528,26 @@ export class ResponsesServer {
       ...(conversationId === undefined ? {} : { conversation: { id: conversationId } }),
     };
 
-    const abort = new AbortController();
-    const onShutdown = (): void => abort.abort();
-    this.#shutdown.signal.addEventListener('abort', onShutdown, { once: true });
-    if (!background) {
-      // A background run is decoupled from the connection that started it: the caller hanging up
-      // must not cancel work it was explicitly told would outlive the request — as in the Python
-      // reference, "a consumer disconnect must NOT cancel it". Only the container's own shutdown reaches it.
-      request.signal.addEventListener('abort', onShutdown, { once: true });
-    }
-    // `#shutdown.signal` lives as long as the server; a listener left on it after the turn ends
-    // is a leak that grows with every request served. Every exit path below releases both. The
-    // paths that share this teardown can each reach it, so every step is idempotent: removing a
-    // removed listener is a no-op, `#releaseClaim` only drops the claim it is given, and a
-    // settled claim stays settled.
+    // A background run is decoupled from the connection that started it: the caller hanging up
+    // must not cancel work it was explicitly told would outlive the request — as in the Python
+    // reference, "a consumer disconnect must NOT cancel it". Only the container's own shutdown
+    // reaches it. `linkedAbort` re-reads the sources after registering, so an abort that landed
+    // before this turn was routed is not missed.
+    const { controller: abort, release } = linkedAbort(
+      this.#shutdown.signal,
+      background ? undefined : request.signal,
+    );
+    // Every exit path below releases the listeners and — for a turn that lives inside its
+    // request — the claim. The paths that share this teardown can each reach it, so every step
+    // is idempotent: removing a removed listener is a no-op, `#releaseClaim` only drops the
+    // claim it is given, and a settled claim stays settled.
     const releaseSignals = (): void => {
-      this.#shutdown.signal.removeEventListener('abort', onShutdown);
-      request.signal.removeEventListener('abort', onShutdown);
+      release();
       if (!background) {
         this.#releaseClaim(responseId, claim);
         claim.settle();
       }
     };
-    // `addEventListener` is not a subscription to *state*: an `AbortSignal` that was already
-    // aborted never fires again, so a request whose client hung up before this turn was routed —
-    // or a `drain()` that landed between the `#draining` check in `#route` and the registration
-    // just above — would hand the handler a signal that reads as live, and the turn would report
-    // `completed` for work nobody is waiting for. Re-read here, after the
-    // listeners are in place, so neither the edge nor the state can be missed.
-    if (this.#shutdown.signal.aborted || (!background && request.signal.aborted)) {
-      onShutdown();
-    }
 
     const tracker = new ResponseTracker(initial);
     const handlerContext: HandlerContext = {
@@ -745,15 +735,5 @@ export class ResponsesServer {
         releaseSignals();
       }
     });
-  }
-
-  /** Adds the headers the platform expects on every response. */
-  #withStandardHeaders(response: Response, context: RequestContext): Response {
-    return withStandardHeaders(response, context, serverIdentity());
-  }
-
-  /** Renders a {@link ProtocolError} as the wire envelope, with diagnostics kept out of the body. */
-  #errorResponse(error: ProtocolError, context: RequestContext): Response {
-    return errorResponse(error, context, serverIdentity());
   }
 }

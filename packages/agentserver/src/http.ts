@@ -13,6 +13,8 @@ import type { RequestContext } from './context.js';
 import { HEADERS } from './context.js';
 import type { ProtocolError } from './errors.js';
 import { badRequest, toHeaderValue } from './errors.js';
+import { SSE_HEADERS, toSseStream } from './sse.js';
+import type { ResponseEvent } from './wire.js';
 
 /** A JSON body with the right content type. */
 export function jsonResponse(body: unknown, status: number, headers: Record<string, string> = {}): Response {
@@ -20,6 +22,56 @@ export function jsonResponse(body: unknown, status: number, headers: Record<stri
     status,
     headers: { 'content-type': 'application/json', ...headers },
   });
+}
+
+/**
+ * A committed SSE answer: `events` framed as the SSE body, under the headers every event stream
+ * carries. `keepAliveMs` (default off) and the `x-agent-session-id` header are per-route choices,
+ * so both stay explicit at the call sites.
+ */
+export function sseResponse(
+  events: AsyncIterable<ResponseEvent>,
+  options: { keepAliveMs?: number; sessionId?: string } = {},
+): Response {
+  return new Response(toSseStream(events, { keepAliveMs: options.keepAliveMs ?? 0 }), {
+    status: 200,
+    headers:
+      options.sessionId === undefined
+        ? SSE_HEADERS
+        : { ...SSE_HEADERS, [HEADERS.sessionId]: options.sessionId },
+  });
+}
+
+/**
+ * An `AbortController` linked to the server's shutdown signal and — when the turn is coupled to
+ * its request — the request's own signal.
+ *
+ * `addEventListener` is not a subscription to *state*: an `AbortSignal` that was already aborted
+ * never fires a listener registered afterwards, so a client that hung up before the turn was
+ * routed — or a shutdown that landed between the router's draining check and this registration —
+ * would otherwise hand the handler a signal that reads as live. The sources are therefore re-read
+ * after the listeners are in place, so neither the edge nor the state can be missed.
+ *
+ * `release` removes the listeners and is idempotent. The shutdown signal lives as long as the
+ * server, so a listener left on it after the turn ends is a leak that grows with every request
+ * served — every exit path must release.
+ */
+export function linkedAbort(
+  shutdown: AbortSignal,
+  request?: AbortSignal,
+): { controller: AbortController; release: () => void } {
+  const controller = new AbortController();
+  const onAbort = (): void => controller.abort();
+  shutdown.addEventListener('abort', onAbort, { once: true });
+  request?.addEventListener('abort', onAbort, { once: true });
+  const release = (): void => {
+    shutdown.removeEventListener('abort', onAbort);
+    request?.removeEventListener('abort', onAbort);
+  };
+  if (shutdown.aborted || request?.aborted === true) {
+    onAbort();
+  }
+  return { controller, release };
 }
 
 /**

@@ -1,13 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { unknownContent } from './content.js';
 import type { Message } from './message.js';
 import { deserializeMessage, serializeContent, serializeMessage } from './serialization.js';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 describe('message serialization', () => {
   it('drops rawRepresentation from the message and from every content item', () => {
@@ -28,7 +22,9 @@ describe('message serialization', () => {
     const wire = serializeMessage(msg);
     expect(wire).not.toHaveProperty('rawRepresentation');
     expect(wire.contents[0]).not.toHaveProperty('rawRepresentation');
-    expect((must(wire.contents[1]).annotations as unknown[])[0]).not.toHaveProperty('rawRepresentation');
+    const cited = wire.contents[1];
+    assert.exists(cited);
+    expect((cited.annotations as unknown[])[0]).not.toHaveProperty('rawRepresentation');
     expect(JSON.parse(JSON.stringify(wire))).toEqual(wire);
   });
 
@@ -326,5 +322,7 @@ describe('unknownContent', () => {
 function deserializeContentHelper(
   data: Record<string, unknown>,
 ): ReturnType<typeof deserializeMessage>['contents'][number] {
-  return must(deserializeMessage({ role: 'assistant', contents: [data] }).contents[0]);
+  const content = deserializeMessage({ role: 'assistant', contents: [data] }).contents[0];
+  assert.exists(content);
+  return content;
 }

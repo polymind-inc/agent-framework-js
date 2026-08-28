@@ -7,7 +7,7 @@ import type {
   UriContent,
 } from '@polymind-inc/agent-framework-core';
 import { dataContent, textContent, uriContent } from '@polymind-inc/agent-framework-core';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import {
   fromA2AParts,
   type ObservedTaskState,
@@ -18,21 +18,15 @@ import {
 import { A2AAgentError } from './errors.js';
 import { message, streamEvent, task } from './test-support.js';
 
-/** Fails the test rather than returning `undefined`, so a missing item is reported where it happens. */
-function must<T>(value: T | undefined): T {
-  if (value === undefined) {
-    throw new Error('expected a value');
-  }
-  return value;
-}
-
 describe('framework content to A2A parts', () => {
   it('sends text as a text part and carries its metadata', () => {
     const parts = toA2AParts([textContent('hello', { additionalProperties: { lang: 'en' } })]);
 
     expect(parts).toHaveLength(1);
-    expect(must(parts[0]).content).toEqual({ $case: 'text', value: 'hello' });
-    expect(must(parts[0]).metadata).toEqual({ lang: 'en' });
+    const [part] = parts;
+    assert.exists(part);
+    expect(part.content).toEqual({ $case: 'text', value: 'hello' });
+    expect(part.metadata).toEqual({ lang: 'en' });
   });
 
   it('skips empty text, which some agents reject', () => {
@@ -44,9 +38,11 @@ describe('framework content to A2A parts', () => {
       uriContent('https://example.test/a.pdf', 'application/pdf', { name: 'a.pdf' }),
     ]);
 
-    expect(must(parts[0]).content).toEqual({ $case: 'url', value: 'https://example.test/a.pdf' });
-    expect(must(parts[0]).mediaType).toBe('application/pdf');
-    expect(must(parts[0]).filename).toBe('a.pdf');
+    const [part] = parts;
+    assert.exists(part);
+    expect(part.content).toEqual({ $case: 'url', value: 'https://example.test/a.pdf' });
+    expect(part.mediaType).toBe('application/pdf');
+    expect(part.filename).toBe('a.pdf');
   });
 
   it('sends data content as raw bytes, decoded from its data URI', () => {
@@ -54,25 +50,33 @@ describe('framework content to A2A parts', () => {
 
     const parts = toA2AParts([dataContent(bytes, 'application/octet-stream')]);
 
-    const content = must(must(parts[0]).content);
+    const [part] = parts;
+    assert.exists(part);
+    const { content } = part;
+    assert.exists(content);
     expect(content.$case).toBe('raw');
     expect(Array.from(content.value as Uint8Array)).toEqual([1, 2, 3, 250]);
     // Round-trips through the SDK's own encoder rather than stopping at our object.
-    expect(Part.toJSON(must(parts[0]))).toEqual({ raw: 'AQID+g==', mediaType: 'application/octet-stream' });
+    expect(Part.toJSON(part)).toEqual({ raw: 'AQID+g==', mediaType: 'application/octet-stream' });
   });
 
   it('sends a hosted file as a url part carrying its id', () => {
     const parts = toA2AParts([{ type: 'hosted_file', fileId: 'file-1', name: 'report.csv' }]);
 
-    expect(must(parts[0]).content).toEqual({ $case: 'url', value: 'file-1' });
-    expect(must(parts[0]).filename).toBe('report.csv');
+    const [part] = parts;
+    assert.exists(part);
+    expect(part.content).toEqual({ $case: 'url', value: 'file-1' });
+    expect(part.filename).toBe('report.csv');
   });
 
   it('sends error content as text, with a stand-in when it has no message', () => {
     const parts = toA2AParts([{ type: 'error' }, { type: 'error', message: 'boom' }]);
 
-    expect(must(parts[0]).content).toEqual({ $case: 'text', value: 'An error occurred.' });
-    expect(must(parts[1]).content).toEqual({ $case: 'text', value: 'boom' });
+    const [withoutMessage, withMessage] = parts;
+    assert.exists(withoutMessage);
+    assert.exists(withMessage);
+    expect(withoutMessage.content).toEqual({ $case: 'text', value: 'An error occurred.' });
+    expect(withMessage.content).toEqual({ $case: 'text', value: 'boom' });
   });
 
   it('drops content the protocol cannot carry instead of failing', () => {
@@ -86,7 +90,9 @@ describe('framework content to A2A parts', () => {
     const parts = toA2AParts(contents);
 
     expect(parts).toHaveLength(1);
-    expect(must(parts[0]).content).toEqual({ $case: 'text', value: 'kept' });
+    const [part] = parts;
+    assert.exists(part);
+    expect(part.content).toEqual({ $case: 'text', value: 'kept' });
   });
 
   it('refuses data content whose URI is not base64, without quoting the payload', () => {
@@ -221,13 +227,15 @@ describe('payloads to response updates', () => {
     );
 
     expect(updates).toHaveLength(1);
-    expect(must(updates[0])).toMatchObject({
+    const [update] = updates;
+    assert.exists(update);
+    expect(update).toMatchObject({
       role: 'assistant',
       responseId: 'm1',
       messageId: 'm1',
       finishReason: 'stop',
     });
-    expect(must(updates[0]).text).toBe('hi');
+    expect(update.text).toBe('hi');
     expect(observed).toEqual({ contextId: 'ctx-1' });
   });
 
@@ -237,7 +245,9 @@ describe('payloads to response updates', () => {
       {},
     );
 
-    expect(must(updates[0]).role).toBe('user');
+    const [update] = updates;
+    assert.exists(update);
+    expect(update.role).toBe('user');
   });
 
   it('emits one update per artifact and merges task metadata into each', () => {
@@ -261,11 +271,14 @@ describe('payloads to response updates', () => {
     );
 
     expect(updates.map((update) => update.messageId)).toEqual(['a1', 'a2']);
-    expect(must(updates[0]).additionalProperties).toEqual({ seq: 1, turn: 1 });
+    const [first, second] = updates;
+    assert.exists(first);
+    assert.exists(second);
+    expect(first.additionalProperties).toEqual({ seq: 1, turn: 1 });
     expect(updates.every((update) => update.createdAt === '2026-08-03T10:00:00Z')).toBe(true);
     // Only the last update ends the turn, so folding does not stop at the first artifact.
-    expect(must(updates[0]).finishReason).toBeUndefined();
-    expect(must(updates[1]).finishReason).toBe('stop');
+    expect(first.finishReason).toBeUndefined();
+    expect(second.finishReason).toBe('stop');
     expect(observed).toEqual({
       contextId: 'ctx-1',
       taskId: 'task-1',
@@ -292,7 +305,9 @@ describe('payloads to response updates', () => {
 
     expect(updates.map((update) => update.text)).toEqual(['found two', 'which invoice?']);
     // An interrupted task waits for the caller, not for the agent: there is nothing to resume.
-    expect(must(updates[1]).continuationToken).toBeUndefined();
+    const [, question] = updates;
+    assert.exists(question);
+    expect(question.continuationToken).toBeUndefined();
   });
 
   it('surfaces a terminal status message, including a failure reason', () => {
@@ -355,7 +370,9 @@ describe('payloads to response updates', () => {
       const updates = updatesFromPayload({ $case: 'task', value: working }, {});
 
       expect(updates.map((update) => update.text)).not.toContain('stale answer');
-      expect(must(updates.at(-1)).continuationToken).toEqual({ taskId: 'task-1' });
+      const last = updates.at(-1);
+      assert.exists(last);
+      expect(last.continuationToken).toEqual({ taskId: 'task-1' });
     }
   });
 
@@ -368,7 +385,9 @@ describe('payloads to response updates', () => {
         artifact: { artifactId: 'a1', parts: [{ text: 'the answer' }] },
       },
     });
-    updatesFromPayload(must(streamed.payload), observed);
+    const { payload } = streamed;
+    assert.exists(payload);
+    updatesFromPayload(payload, observed);
 
     const terminal = updatesFromPayload(
       {
@@ -416,7 +435,9 @@ describe('payloads to response updates', () => {
         artifact: { artifactId: 'a1', parts: [{ text: 'once' }] },
       },
     });
-    const first = updatesFromPayload(must(streamed.payload), observed);
+    const { payload } = streamed;
+    assert.exists(payload);
+    const first = updatesFromPayload(payload, observed);
     const terminal = updatesFromPayload(
       {
         $case: 'task',
@@ -449,7 +470,8 @@ describe('payloads to response updates', () => {
       {},
     );
 
-    const last = must(updates.at(-1));
+    const last = updates.at(-1);
+    assert.exists(last);
     expect(last.continuationToken).toEqual(resumable ? { taskId: 'task-1' } : undefined);
     expect(last.finishReason).toBe(finishReason);
   });
@@ -464,8 +486,10 @@ describe('payloads to response updates', () => {
     );
 
     expect(updates).toHaveLength(1);
-    expect(must(updates[0]).contents).toEqual([]);
-    expect(must(updates[0]).continuationToken).toEqual({ taskId: 'task-1' });
+    const [update] = updates;
+    assert.exists(update);
+    expect(update.contents).toEqual([]);
+    expect(update.continuationToken).toEqual({ taskId: 'task-1' });
   });
 
   it('keeps progress commentary out of the transcript', () => {
@@ -480,12 +504,16 @@ describe('payloads to response updates', () => {
       },
     });
 
-    const updates = updatesFromPayload(must(event.payload), {});
+    const { payload } = event;
+    assert.exists(payload);
+    const updates = updatesFromPayload(payload, {});
 
-    expect(must(updates[0]).contents).toEqual([]);
+    const [update] = updates;
+    assert.exists(update);
+    expect(update.contents).toEqual([]);
     // Not even identified: a message id whose content was dropped would start an empty message
     // during folding and split the surrounding artifact in two.
-    expect(must(updates[0]).messageId).toBeUndefined();
+    expect(update.messageId).toBeUndefined();
   });
 
   it('surfaces a status message when the state is input-required', () => {
@@ -501,9 +529,13 @@ describe('payloads to response updates', () => {
     });
     const observed: ObservedTaskState = {};
 
-    const updates = updatesFromPayload(must(event.payload), observed);
+    const { payload } = event;
+    assert.exists(payload);
+    const updates = updatesFromPayload(payload, observed);
 
-    expect(must(updates[0]).text).toBe('which invoice?');
+    const [update] = updates;
+    assert.exists(update);
+    expect(update.text).toBe('which invoice?');
     expect(observed.taskState).toBe('TASK_STATE_INPUT_REQUIRED');
   });
 
@@ -517,10 +549,14 @@ describe('payloads to response updates', () => {
       },
     });
 
-    const updates = updatesFromPayload(must(event.payload), {});
+    const { payload } = event;
+    assert.exists(payload);
+    const updates = updatesFromPayload(payload, {});
 
-    expect(must(updates[0])).toMatchObject({ responseId: 'task-1', messageId: 'a1' });
-    expect(must(updates[0]).additionalProperties).toEqual({ seq: 1, from: 'event' });
+    const [update] = updates;
+    assert.exists(update);
+    expect(update).toMatchObject({ responseId: 'task-1', messageId: 'a1' });
+    expect(update.additionalProperties).toEqual({ seq: 1, from: 'event' });
   });
 
   it('keeps the last reported task state when an artifact update carries no status', () => {
@@ -537,7 +573,9 @@ describe('payloads to response updates', () => {
       },
     });
 
-    updatesFromPayload(must(event.payload), observed);
+    const { payload } = event;
+    assert.exists(payload);
+    updatesFromPayload(payload, observed);
 
     expect(observed.taskState).toBe('TASK_STATE_WORKING');
   });

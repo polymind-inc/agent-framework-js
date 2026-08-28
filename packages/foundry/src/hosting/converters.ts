@@ -172,6 +172,28 @@ function parseArguments(raw: unknown): Record<string, unknown> | string {
 }
 
 /**
+ * An assistant `function_call` replayed for information only, under a well-known name — this
+ * container cannot re-drive the call, but the model must keep seeing what it did. The arguments
+ * source stays a structured object where it is one: stringifying it would make the arguments
+ * unparseable on the next hop.
+ */
+function informationalCall(item: OutputItem, name: string, args: unknown): Message {
+  return {
+    role: 'assistant',
+    contents: [
+      {
+        type: 'function_call',
+        callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
+        name,
+        arguments: parseArguments(args),
+        informationalOnly: true,
+        rawRepresentation: item,
+      },
+    ],
+  };
+}
+
+/**
  * Converts one Responses input or output item into a framework message.
  *
  * Returns `undefined` only for items that are deliberately not replayed because another mechanism
@@ -183,20 +205,14 @@ function parseArguments(raw: unknown): Record<string, unknown> | string {
  */
 export function itemToMessage(item: OutputItem): Message | undefined {
   switch (item.type) {
-    case 'message': {
-      const role = typeof item.role === 'string' ? item.role : 'user';
+    case 'message':
+    case 'output_message': {
+      // `output_message` is an assistant turn under its dedicated wire type; the parts are the
+      // same message shapes, only the fallback role differs.
+      const fallbackRole = item.type === 'message' ? 'user' : 'assistant';
+      const role = typeof item.role === 'string' ? item.role : fallbackRole;
       const contents = contentsOfMessage(item.content, item);
       return { role, contents, ...(typeof item.id === 'string' ? { messageId: item.id } : {}) };
-    }
-
-    case 'output_message': {
-      // An assistant turn under its dedicated wire type; the parts are the same message shapes.
-      const contents = contentsOfMessage(item.content, item);
-      return {
-        role: typeof item.role === 'string' ? item.role : 'assistant',
-        contents,
-        ...(typeof item.id === 'string' ? { messageId: item.id } : {}),
-      };
     }
 
     case 'function_call':
@@ -428,22 +444,7 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       };
 
     case 'computer_call':
-      // Reported for information only, under a well-known name — this container cannot re-drive
-      // a computer-use session, but the model must keep seeing what it did. The action stays a
-      // structured object: stringifying it would make the arguments unparseable on the next hop.
-      return {
-        role: 'assistant',
-        contents: [
-          {
-            type: 'function_call',
-            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
-            name: 'computer_use',
-            arguments: parseArguments(item.action),
-            informationalOnly: true,
-            rawRepresentation: item,
-          },
-        ],
-      };
+      return informationalCall(item, 'computer_use', item.action);
 
     case 'computer_call_output':
       return {
@@ -460,34 +461,10 @@ export function itemToMessage(item: OutputItem): Message | undefined {
       };
 
     case 'custom_tool_call':
-      return {
-        role: 'assistant',
-        contents: [
-          {
-            type: 'function_call',
-            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
-            name: typeof item.name === 'string' ? item.name : '',
-            arguments: parseArguments(item.input),
-            informationalOnly: true,
-            rawRepresentation: item,
-          },
-        ],
-      };
+      return informationalCall(item, typeof item.name === 'string' ? item.name : '', item.input);
 
     case 'apply_patch_call':
-      return {
-        role: 'assistant',
-        contents: [
-          {
-            type: 'function_call',
-            callId: typeof item.call_id === 'string' ? item.call_id : (item.id ?? ''),
-            name: 'apply_patch',
-            arguments: parseArguments(item.operation),
-            informationalOnly: true,
-            rawRepresentation: item,
-          },
-        ],
-      };
+      return informationalCall(item, 'apply_patch', item.operation);
 
     case 'apply_patch_call_output':
       return {

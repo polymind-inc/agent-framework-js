@@ -14,20 +14,19 @@ import type {
   AgentLike,
   AgentSession,
   Content,
-  Message,
   SerializedAgentSession,
   UsageDetails,
 } from '@polymind-inc/agent-framework-core';
 import { addUsage, approvalResponse, AgentSession as Session } from '@polymind-inc/agent-framework-core';
 import type { ApprovalStorage } from './approval-storage.js';
 import { FileApprovalStorage, InMemoryApprovalStorage } from './approval-storage.js';
+import { compositeKey } from './composite-key.js';
 import type { ToolboxConsentRequest } from './consent.js';
 import { consentRequestsOf } from './consent.js';
 import { createConsentChannel, withConsentChannel } from './consent-channel.js';
 import {
   approvalResponseTarget,
   inputToMessages,
-  itemToMessage,
   requestToChatOptions,
   usageToResponseUsage,
 } from './converters.js';
@@ -41,6 +40,7 @@ import {
   sessionWriteKey,
   userPartition,
 } from './session-store.js';
+import { requireHostedUserId } from './user-id.js';
 
 /**
  * Picks the session store the environment calls for.
@@ -96,10 +96,7 @@ function dedupeConsents(consents: readonly ToolboxConsentRequest[]): ToolboxCons
   const seen = new Set<string>();
   const unique: ToolboxConsentRequest[] = [];
   for (const consent of consents) {
-    // JSON, not a separator: any chosen delimiter collides once a label or link can contain
-    // it, and both are gateway-authored strings (the same delimiter-collision defect fixed in
-    // the session store). A raw NUL also made this file unsearchable — ripgrep reads it as binary.
-    const key = JSON.stringify([consent.serverLabel, consent.consentLink]);
+    const key = compositeKey(consent.serverLabel, consent.consentLink);
     if (!seen.has(key)) {
       seen.add(key);
       unique.push(consent);
@@ -259,15 +256,8 @@ export function createFoundryHandler(options: FoundryHandlerConfig): ResponseHan
       assertNoExplicitHistory(agent);
     }
 
-    // An *empty* header is rejected the same as a missing one: it would silently fall through to
-    // the anonymous partition, and every caller of a misconfigured gateway would share it.
-    if (hosted && (context.request.userId === undefined || context.request.userId === '')) {
-      throw new ProtocolError(
-        400,
-        'The hosted environment is missing the platform user id. The request did not come from a ' +
-          'Foundry platform service.',
-        { code: 'missing_user_id', source: 'platform' },
-      );
+    if (hosted) {
+      requireHostedUserId(context.request.userId);
     }
 
     const userId = userPartition(context.request.userId);
@@ -335,15 +325,7 @@ export function createFoundryHandler(options: FoundryHandlerConfig): ResponseHan
     // model API's — sending it as `previous_response_id` is what the service rejects.
     clearLocalHistory(agent, session);
 
-    const history: Message[] = [];
-    for (const item of context.history) {
-      const message = itemToMessage(item);
-      if (message !== undefined) {
-        history.push(message);
-      }
-    }
-
-    const messages = [...history, ...inputToMessages(request.input)];
+    const messages = [...inputToMessages(context.history), ...inputToMessages(request.input)];
     const approvals = await resolveApprovals(request, approvalStorage, userId);
     if (approvals.length > 0) {
       messages.push({ role: 'user', contents: approvals });

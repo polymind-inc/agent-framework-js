@@ -1,4 +1,3 @@
-import type { Span } from '@opentelemetry/api';
 import type { ChatClient, ChatOptions, ChatResponseStream, ResponseFormat } from '../client/chat-client.js';
 import type { FunctionInvocationConfig } from '../client/function-invocation.js';
 import { createFunctionInvocationClientFactory } from '../client/function-invocation.js';
@@ -23,17 +22,8 @@ import type {
   Middleware,
 } from '../middleware/middleware.js';
 import { categorizeMiddleware } from '../middleware/middleware.js';
-import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
-import {
-  agentSpanAttributes,
-  inActiveSpan,
-  recordSpanError,
-  setMessageContent,
-  setResponseAttributes,
-  spanName,
-  startSpan,
-  withActiveSpan,
-} from '../observability/tracing.js';
+import type { AgentRunSpan } from '../observability/tracing.js';
+import { startAgentRunSpan } from '../observability/tracing.js';
 import type { ResponseStream } from '../streaming/response-stream.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import type { StandardSchemaV1 } from '../tools/standard-schema.js';
@@ -417,7 +407,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         const session = options?.session ?? this.createSession();
         pipeline = await runAgentPipeline<Final>({
           middleware: chain,
-          agent: { id: this.id, ...(this.name === undefined ? {} : { name: this.name }) },
+          agent: this.#agentInfo(),
           session,
           messages: [...callerMessages],
           tools: [...(options?.tools ?? [])],
@@ -477,7 +467,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     let streamedRun = false;
     // The `invoke_agent` span covers the whole run, including the tool loop and history
     // persistence, so it is started in `start` and closed by hand rather than around a call.
-    let runSpan: Span | undefined;
+    let runSpan: AgentRunSpan | undefined;
     let runFailure: unknown;
 
     /** Ends the run span once, on whichever path gets there first. */
@@ -486,7 +476,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
         return;
       }
       if (runFailure !== undefined) {
-        recordSpanError(runSpan, runFailure);
+        runSpan.setError(runFailure);
       }
       runSpan.end();
       runSpan = undefined;
@@ -531,11 +521,10 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       const chatOptions = this.#mergeOptions(options, prepared.accumulator, session, continuation.innerToken);
       const client = this.#approvalClient(session, functionMiddleware);
 
-      const span = this.#startRunSpan(session, chatOptions.model);
+      // Capturing the input messages serializes caller-supplied content and can throw;
+      // `startAgentRunSpan` ends the span itself in that case, so nothing leaks here.
+      const span = this.#startRunSpan(session, chatOptions.model, messages);
       runSpan = span;
-      // Capturing the input messages serializes caller-supplied content and can throw; it runs
-      // only after the span is assigned above, so the teardown can end what was started.
-      setMessageContent(span, GEN_AI.inputMessages, messages);
       const inner = client.getResponse(messages, chatOptions);
       // Everything the caller will have seen by the time a token is issued, so a resumed run can
       // persist the whole exchange rather than just its tail (Go `continuationUpdates`).
@@ -574,10 +563,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
             if (activeSession !== undefined) {
               this.#rejectHistoryConflict(activeSession);
             }
-            if (runSpan !== undefined) {
-              setResponseAttributes(runSpan, response);
-              setMessageContent(runSpan, GEN_AI.outputMessages, response.messages);
-            }
+            runSpan?.setResponse(response);
             // Persist first, parse second. The model answered:
             // whether the answer happens to satisfy the caller's schema does not change what was
             // said, and parsing before persisting loses the whole exchange — the next turn then
@@ -680,7 +666,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     const providerContexts = providers.map((provider) => ({
       provider,
       ctx: createProviderRunContext(provider, {
-        agent: { id: this.id, ...(this.name === undefined ? {} : { name: this.name }) },
+        agent: this.#agentInfo(),
         session,
         inputMessages,
         accumulator,
@@ -746,18 +732,27 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     );
   }
 
-  /** Opens the `invoke_agent` span and records the request-side attributes on it. */
-  #startRunSpan(session: AgentSession, model: string | undefined): Span {
-    return startSpan(
-      spanName(GEN_AI_OPERATION.invokeAgent, this.name ?? this.id),
-      agentSpanAttributes({
+  /** This agent's identity as handed to middleware and context providers. */
+  #agentInfo(): { id: string; name?: string } {
+    return { id: this.id, ...(this.name === undefined ? {} : { name: this.name }) };
+  }
+
+  /** Opens the `invoke_agent` span and records the request-side attributes and input on it. */
+  #startRunSpan(
+    session: AgentSession,
+    model: string | undefined,
+    inputMessages: readonly Message[],
+  ): AgentRunSpan {
+    return startAgentRunSpan(
+      {
         id: this.id,
         ...(this.name === undefined ? {} : { name: this.name }),
         ...(this.description === undefined ? {} : { description: this.description }),
         providerName: this.#client.metadata.providerName,
         ...(model === undefined ? {} : { model }),
         ...(session.serviceSessionId === undefined ? {} : { conversationId: session.serviceSessionId }),
-      }),
+      },
+      inputMessages,
     );
   }
 
@@ -845,7 +840,7 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
    */
   async *#pipeUpdates(run: {
     stream: boolean;
-    span: Span;
+    span: AgentRunSpan;
     inner: ChatResponseStream<unknown>;
     carried: readonly AgentResponseUpdate[];
     mapUpdate: (update: ChatResponseUpdate) => AgentResponseUpdate;
@@ -858,11 +853,11 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
       if (run.stream) {
         // Driven inside the run span so the tool loop's `chat` and `execute_tool` spans become
         // its children — the generator body would otherwise run outside any span context.
-        for await (const update of withActiveSpan(run.span, run.inner)) {
+        for await (const update of run.span.active(run.inner)) {
           yield run.mapUpdate(update);
         }
       } else {
-        const response = await inActiveSpan(run.span, () => run.inner);
+        const response = await run.span.awaited(() => run.inner);
         for (const update of chatResponseToUpdates(response)) {
           yield run.mapUpdate(update);
         }

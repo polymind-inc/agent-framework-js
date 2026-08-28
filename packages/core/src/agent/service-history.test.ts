@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import type {
   ChatClient,
   ChatClientMetadata,
@@ -14,12 +14,6 @@ import type { ChatResponse, ChatResponseUpdate } from '../types/response.js';
 import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import { Agent } from './agent.js';
 
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
 /** A client that answers with text and reports a service-side conversation id, like Responses. */
 class StoringClient implements ChatClient<ChatOptions> {
   readonly metadata: ChatClientMetadata;
@@ -34,9 +28,8 @@ class StoringClient implements ChatClient<ChatOptions> {
 
   getResponse(messages: Message[], options?: ChatOptions): ChatResponseStream {
     this.calls.push({ messages, conversationId: options?.conversationId });
-    const conversationId = must(
-      this.#conversationIds[Math.min(this.#turn, this.#conversationIds.length - 1)],
-    );
+    const conversationId = this.#conversationIds[Math.min(this.#turn, this.#conversationIds.length - 1)];
+    assert.exists(conversationId);
     this.#turn++;
     const update = chatResponseUpdate({
       contents: [textContent(`answer ${this.calls.length}`)],

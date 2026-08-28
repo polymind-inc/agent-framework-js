@@ -92,6 +92,20 @@ describe('discovery', () => {
     await connection.close();
   });
 
+  it('reports an index whose root is a JSON array as invalid, like any non-object', async () => {
+    const failures: SkillLoadFailure[] = [];
+    const { connection } = serverWith([{ uri: INDEX_URI, text: '[]' }]);
+
+    const skills = await mcpSkillsSource(connection).getSkills(
+      context({ reportSkillError: (failure) => failures.push(failure) }),
+    );
+
+    expect(skills).toEqual([]);
+    expect(failures).toHaveLength(1);
+    expect(String(failures[0]?.error)).toContain('must contain a JSON object');
+    await connection.close();
+  });
+
   it('surfaces a real failure instead of reading it as "no skills"', async () => {
     // An authorization rejection must not look the same as an empty catalogue: an agent that
     // silently lost its skills is worse than one that says why.

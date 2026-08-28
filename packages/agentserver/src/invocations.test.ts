@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { getRequestContext, HEADERS } from './context.js';
 import { badRequest, ProtocolError } from './errors.js';
 import type { InvocationHandler, InvocationsServerConfig } from './invocations.js';
@@ -38,10 +38,6 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 function errorCodeOf(payload: Record<string, unknown>): string {
   return (payload.error as { code: string }).code;
 }
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 describe('routes', () => {
   it('answers the readiness probe', async () => {
@@ -186,7 +182,9 @@ describe('routes', () => {
   it('generates the session id echoed on an unregistered-route 404 when nothing names one', async () => {
     const response = await makeServer().handle(new Request('http://localhost:8088/invocations/inv_404'));
     expect(response.status).toBe(404);
-    expect(must(response.headers.get(HEADERS.sessionId))).toMatch(UUID);
+    const sessionId = response.headers.get(HEADERS.sessionId);
+    assert.exists(sessionId);
+    expect(sessionId).toMatch(UUID);
   });
 
   it('mounts under a prefix without claiming sibling paths', async () => {
@@ -219,12 +217,16 @@ describe('invocation id', () => {
     ['overlong', 'a'.repeat(257)],
   ])('replaces an invalid header (%s) with a generated UUID', async (_name, value) => {
     const response = await makeServer().handle(invoke('x', { [INVOCATION_ID_HEADER]: value }));
-    expect(must(response.headers.get(INVOCATION_ID_HEADER))).toMatch(UUID);
+    const invocationId = response.headers.get(INVOCATION_ID_HEADER);
+    assert.exists(invocationId);
+    expect(invocationId).toMatch(UUID);
   });
 
   it('generates a UUID when the header is absent', async () => {
     const response = await makeServer().handle(invoke());
-    expect(must(response.headers.get(INVOCATION_ID_HEADER))).toMatch(UUID);
+    const invocationId = response.headers.get(INVOCATION_ID_HEADER);
+    assert.exists(invocationId);
+    expect(invocationId).toMatch(UUID);
   });
 
   it('overrides an invocation id header the handler set itself', async () => {
@@ -252,7 +254,9 @@ describe('session id', () => {
 
   it('generates a UUID when neither the query nor the environment names one', async () => {
     const response = await makeServer().handle(invoke());
-    expect(must(response.headers.get(HEADERS.sessionId))).toMatch(UUID);
+    const sessionId = response.headers.get(HEADERS.sessionId);
+    assert.exists(sessionId);
+    expect(sessionId).toMatch(UUID);
   });
 
   it('ignores an invalid query value rather than propagating it', async () => {
@@ -277,12 +281,16 @@ describe('header contract', () => {
   it('echoes x-request-id and reports the invocations protocol on x-platform-server', async () => {
     const response = await makeServer().handle(invoke('x', { [HEADERS.requestId]: 'req-1' }));
     expect(response.headers.get(HEADERS.requestId)).toBe('req-1');
-    expect(must(response.headers.get(HEADERS.serverVersion))).toContain('protocol/invocations-2.0.0');
+    const serverVersion = response.headers.get(HEADERS.serverVersion);
+    assert.exists(serverVersion);
+    expect(serverVersion).toContain('protocol/invocations-2.0.0');
   });
 
   it('generates a request id when the caller sent none', async () => {
     const response = await makeServer().handle(invoke());
-    expect(must(response.headers.get(HEADERS.requestId))).toMatch(UUID);
+    const requestId = response.headers.get(HEADERS.requestId);
+    assert.exists(requestId);
+    expect(requestId).toMatch(UUID);
   });
 
   it('hands the platform identity to the handler through the request context', async () => {
@@ -360,7 +368,8 @@ describe('body cancellation', () => {
         ),
     });
     const response = await server.handle(invoke('x', { [HEADERS.requestId]: 'req-cancel' }));
-    const reader = must(response.body).getReader();
+    assert.exists(response.body);
+    const reader = response.body.getReader();
     await reader.read();
     await reader.cancel('abandoned');
     expect(observed).toBe('req-cancel');
@@ -447,7 +456,7 @@ describe('draining', () => {
 
 describe('cancellation', () => {
   it('aborts the handler when the caller disconnects', async () => {
-    const aborted = deferred<void>();
+    const aborted = Promise.withResolvers<void>();
     const server = makeServer({
       handler: async (_request, context) => {
         if (context.signal.aborted) {
@@ -474,8 +483,8 @@ describe('cancellation', () => {
   });
 
   it('aborts in-flight handlers when the server drains', async () => {
-    const entered = deferred<void>();
-    const aborted = deferred<void>();
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
     const server = makeServer({
       handler: async (_request, context) => {
         context.signal.addEventListener('abort', () => aborted.resolve(), { once: true });
@@ -529,7 +538,7 @@ describe('SSE keep-alive', () => {
   }
 
   it('stays silent by default', async () => {
-    const gate = deferred<void>();
+    const gate = Promise.withResolvers<void>();
     const server = makeServer({ handler: sseHandler(gate.promise) });
     const pending = server.handle(invoke());
     setTimeout(() => gate.resolve(), 50);
@@ -541,10 +550,11 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({ handler: sseHandler(gate.promise) });
       const response = await server.handle(invoke());
-      const reader = must(response.body).getReader();
+      assert.exists(response.body);
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
       expect(decoder.decode((await reader.read()).value)).toBe('data: first\n\n');
@@ -568,10 +578,11 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({ handler: sseHandler(gate.promise) });
       const response = await server.handle(invoke());
-      const reader = must(response.body).getReader();
+      assert.exists(response.body);
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
       expect(decoder.decode((await reader.read()).value)).toBe('data: first\n\n');
@@ -594,10 +605,11 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({ handler: sseHandler(gate.promise) });
       const response = await server.handle(invoke());
-      const reader = must(response.body).getReader();
+      assert.exists(response.body);
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
       expect(decoder.decode((await reader.read()).value)).toBe('data: first\n\n');
@@ -625,7 +637,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({
         handler: () =>
           new Response(
@@ -640,7 +652,8 @@ describe('SSE keep-alive', () => {
           ),
       });
       const response = await server.handle(invoke());
-      const reader = must(response.body).getReader();
+      assert.exists(response.body);
+      const reader = response.body.getReader();
 
       await reader.read();
       const next = reader.read();
@@ -658,7 +671,7 @@ describe('SSE keep-alive', () => {
     vi.stubEnv('SSE_KEEPALIVE_INTERVAL', '1');
     vi.useFakeTimers();
     try {
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       const server = makeServer({
         handler: () =>
           new Response(
@@ -674,7 +687,8 @@ describe('SSE keep-alive', () => {
           ),
       });
       const response = await server.handle(invoke());
-      const reader = must(response.body).getReader();
+      assert.exists(response.body);
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
       expect(decoder.decode((await reader.read()).value)).toBe('{"part":1}\n');
@@ -688,18 +702,3 @@ describe('SSE keep-alive', () => {
     }
   });
 });
-
-/** A promise with its `resolve` in hand. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-/** Narrows away null/undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}

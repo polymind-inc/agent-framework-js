@@ -250,9 +250,9 @@ function update(init: {
  * `auth-required`) is waiting for the *caller*, not for the agent: that is continued by sending
  * the next message, not by resuming the run.
  */
-function tokenFor(task: { id: string; state: TaskState | undefined }): { taskId: string } | undefined {
-  return task.state === TaskState.TASK_STATE_SUBMITTED || task.state === TaskState.TASK_STATE_WORKING
-    ? a2aContinuationToken(task.id)
+function tokenFor(taskId: string, state: TaskState | undefined): { taskId: string } | undefined {
+  return state === TaskState.TASK_STATE_SUBMITTED || state === TaskState.TASK_STATE_WORKING
+    ? a2aContinuationToken(taskId)
     : undefined;
 }
 
@@ -294,14 +294,15 @@ function isTerminalState(state: TaskState | undefined): boolean {
 function updatesFromTask(task: Task, observed: ObservedTaskState): AgentResponseUpdate[] {
   const state = task.status?.state;
   const alreadyStreamed = observed.streamedArtifacts;
-  const updates: AgentResponseUpdate[] = (task.artifacts ?? [])
+  const artifacts = task.artifacts ?? [];
+  const updates: AgentResponseUpdate[] = artifacts
     .filter((artifact) => !alreadyStreamed?.has(artifactKey(task.id, artifact.artifactId)))
     .map((artifact) =>
       artifactUpdate(artifact, task.id, mergeMetadata(artifact.metadata, task.metadata), task),
     );
 
   const statusMessage = task.status?.message;
-  if (isTerminalState(state) && (task.artifacts ?? []).length === 0) {
+  if (isTerminalState(state) && artifacts.length === 0) {
     // A finished task that produced no artifacts at all may still have answered as a plain
     // message, kept in its history. Only that case falls back to the history: an unfinished
     // task's history would be replayed by every poll, a task whose artifacts were merely
@@ -353,7 +354,7 @@ function updatesFromTask(task: Task, observed: ObservedTaskState): AgentResponse
   if (finishReason !== undefined) {
     last.finishReason = finishReason;
   }
-  const token = tokenFor({ id: task.id, state });
+  const token = tokenFor(task.id, state);
   if (token !== undefined) {
     last.continuationToken = token;
   }

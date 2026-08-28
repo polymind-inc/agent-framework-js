@@ -1,7 +1,7 @@
 import { ConfigurationError } from '../errors.js';
 import type { Message } from '../types/message.js';
-import type { AgentResponseUpdate, ContinuationToken } from '../types/response.js';
-import { agentResponseUpdate } from '../types/response.js';
+import type { AgentResponseUpdate, AgentResponseUpdateInit, ContinuationToken } from '../types/response.js';
+import { agentResponseUpdate, copyDefined } from '../types/response.js';
 import type { SerializedMessage } from '../types/serialization.js';
 import { deserializeMessages, serializeMessages } from '../types/serialization.js';
 
@@ -54,37 +54,58 @@ export function isAgentContinuationToken(
   return token?.type === AGENT_TOKEN_TYPE && token.innerToken !== undefined;
 }
 
+/**
+ * The update fields a token carries, keyed exhaustively so the compiler rejects both a stray entry
+ * and a missing one whenever {@link AgentResponseUpdate} changes.
+ *
+ * Three fields are deliberately excluded rather than listed. `contents` is the payload, serialized
+ * separately through the message serializer so nested unknown content round-trips.
+ * `rawRepresentation` is the provider's own object, which is never serialized anywhere in the
+ * framework and can be circular. `continuationToken` is the token this update is being packed
+ * *into*: carrying it would nest a token inside itself and grow the payload on every resume.
+ * (`text` never appears here at all — the init type already omits it, and it is recomputed from
+ * the contents on the way back.)
+ *
+ * **Adding a field to `ResponseUpdateBase`? It has to be listed here, or added to the key list's
+ * `Exclude` with the reason why.** Otherwise a resumed run replays its updates with the new field
+ * silently dropped — a data loss no test of the field itself would catch.
+ */
+const CARRIED_UPDATE_KEYS = {
+  role: true,
+  authorName: true,
+  responseId: true,
+  messageId: true,
+  createdAt: true,
+  finishReason: true,
+  agentId: true,
+  additionalProperties: true,
+} as const satisfies Record<
+  Exclude<keyof AgentResponseUpdateInit, 'contents' | 'continuationToken' | 'rawRepresentation'>,
+  true
+>;
+
+/**
+ * The same keys as a list, in declaration order.
+ *
+ * One list drives both directions, so the two halves of the round trip cannot disagree about
+ * which fields survive it.
+ */
+const CARRIED_UPDATE_KEY_LIST = Object.keys(CARRIED_UPDATE_KEYS) as ReadonlyArray<
+  keyof typeof CARRIED_UPDATE_KEYS
+>;
+
 function serializeUpdate(update: AgentResponseUpdate): SerializedUpdate {
   const [serialized] = serializeMessages([{ role: update.role ?? 'assistant', contents: update.contents }]);
   const out: SerializedUpdate = { contents: serialized?.contents ?? [] };
-  if (update.role !== undefined) out.role = update.role;
-  if (update.authorName !== undefined) out.authorName = update.authorName;
-  if (update.responseId !== undefined) out.responseId = update.responseId;
-  if (update.messageId !== undefined) out.messageId = update.messageId;
-  if (update.createdAt !== undefined) out.createdAt = update.createdAt;
-  if (update.finishReason !== undefined) out.finishReason = update.finishReason;
-  if (update.agentId !== undefined) out.agentId = update.agentId;
-  if (update.additionalProperties !== undefined) out.additionalProperties = update.additionalProperties;
-  return out;
+  return copyDefined(out, update, CARRIED_UPDATE_KEY_LIST);
 }
 
 function deserializeUpdate(serialized: SerializedUpdate): AgentResponseUpdate {
   const [message] = deserializeMessages([
     { role: serialized.role ?? 'assistant', contents: serialized.contents },
   ]);
-  return agentResponseUpdate({
-    contents: message?.contents ?? [],
-    ...(serialized.role === undefined ? {} : { role: serialized.role }),
-    ...(serialized.authorName === undefined ? {} : { authorName: serialized.authorName }),
-    ...(serialized.responseId === undefined ? {} : { responseId: serialized.responseId }),
-    ...(serialized.messageId === undefined ? {} : { messageId: serialized.messageId }),
-    ...(serialized.createdAt === undefined ? {} : { createdAt: serialized.createdAt }),
-    ...(serialized.finishReason === undefined ? {} : { finishReason: serialized.finishReason }),
-    ...(serialized.agentId === undefined ? {} : { agentId: serialized.agentId }),
-    ...(serialized.additionalProperties === undefined
-      ? {}
-      : { additionalProperties: serialized.additionalProperties }),
-  });
+  const init: AgentResponseUpdateInit = { contents: message?.contents ?? [] };
+  return agentResponseUpdate(copyDefined(init, serialized, CARRIED_UPDATE_KEY_LIST));
 }
 
 /**

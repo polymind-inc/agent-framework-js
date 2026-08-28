@@ -11,6 +11,7 @@ import type {
   SkillsSourceContext,
 } from '@polymind-inc/agent-framework-core';
 import { AgentFrameworkError, dataContent, skillFrontmatter } from '@polymind-inc/agent-framework-core';
+import { errorMessageOf, isRecord } from '@polymind-inc/agent-framework-core/internal';
 
 /**
  * The one capability skill discovery needs from a connection.
@@ -140,19 +141,15 @@ async function readIndex(
     ctx.reportSkillError({ origin: indexUri, error });
     return [];
   }
-  if (typeof parsed !== 'object' || parsed === null) {
+  if (!isRecord(parsed)) {
     ctx.reportSkillError({
       origin: indexUri,
       error: new AgentFrameworkError(`${indexUri} must contain a JSON object.`),
     });
     return [];
   }
-  const skills = (parsed as { skills?: unknown }).skills;
+  const skills = parsed.skills;
   return Array.isArray(skills) ? (skills.filter(isRecord) as SkillIndexEntry[]) : [];
-}
-
-function isRecord(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Builds one skill, or reports why the entry was skipped and returns `undefined`. */
@@ -189,9 +186,7 @@ function buildSkill(
       description: typeof entry.description === 'string' ? entry.description : '',
     });
   } catch (error) {
-    return skip(
-      `Skipping skill index entry '${named ?? '(unnamed)'}': ${error instanceof Error ? error.message : String(error)}`,
-    );
+    return skip(`Skipping skill index entry '${named ?? '(unnamed)'}': ${errorMessageOf(error)}`);
   }
 
   return mcpSkill(connection, frontmatter, entry.url);

@@ -138,17 +138,12 @@ export function validateSafeInteger(name: string, value: number, minimum: number
   return value;
 }
 
-/**
- * Throws the abort reason when `signal` is already aborted.
- *
- * The thrown value is whatever the caller's {@link AbortController} carries — by default a
- * `DOMException` named `AbortError`, per the web standard.
- */
-export function throwIfAborted(signal?: AbortSignal): void {
-  signal?.throwIfAborted();
-}
-
 /** The human-readable summary of a thrown value: `error.message` for an `Error`, `String(error)` otherwise. */
 export function errorMessageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The classification of a thrown value for telemetry: `error.name` for an `Error`, `typeof` otherwise. */
+export function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }

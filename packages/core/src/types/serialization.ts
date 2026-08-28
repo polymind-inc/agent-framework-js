@@ -1,4 +1,5 @@
 import type { Annotation, Content, ContentType } from './content.js';
+import { isRecord } from './content.js';
 import type { Message } from './message.js';
 
 /** A {@link Content} item in its wire form. */
@@ -82,10 +83,6 @@ const NESTED_CONTENT_KEYS = ['functionCall', 'inputs', 'output', 'outputs', 'ite
  * `outputs` and `items`, never under `result`.
  */
 const SERIALIZED_NESTED_CONTENT_KEYS = [...NESTED_CONTENT_KEYS, 'result'] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Whether `value` is shaped like a content item, as opposed to arbitrary JSON.

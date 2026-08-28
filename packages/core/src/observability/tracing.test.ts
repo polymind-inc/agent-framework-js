@@ -6,7 +6,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, assert, beforeAll, describe, expect, it } from 'vitest';
 import { Agent } from '../agent/agent.js';
 import { withChatTelemetry } from '../client/telemetry.js';
 import { MockChatClient } from '../client/test-support.js';
@@ -62,12 +62,6 @@ function byName(name: string): ReadableSpan | undefined {
   return spans().find((span) => span.name === name);
 }
 
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
-
 /** The name of `span`'s parent, or undefined at the root. */
 function parentOf(span: ReadableSpan): string | undefined {
   const parentId = span.parentSpanContext?.spanId;
@@ -94,11 +88,13 @@ describe('GenAI tracing', () => {
 
     await agent.run('weather?');
 
-    const invoke = must(byName('invoke_agent weather-bot'));
-    expect(invoke).toBeDefined();
+    const invoke = byName('invoke_agent weather-bot');
+    assert.exists(invoke);
     // Two model rounds, one tool execution, all under the agent span.
     expect(spans().filter((s) => s.name === 'chat mock-model')).toHaveLength(2);
-    expect(parentOf(must(byName('execute_tool get_weather')))).toBe('invoke_agent weather-bot');
+    const execute = byName('execute_tool get_weather');
+    assert.exists(execute);
+    expect(parentOf(execute)).toBe('invoke_agent weather-bot');
     expect(
       spans()
         .filter((s) => s.name === 'chat mock-model')
@@ -118,7 +114,9 @@ describe('GenAI tracing', () => {
     await expect(agent.run(poisoned)).rejects.toThrow(/BigInt/);
 
     expect(startedSpanNames).toContain('invoke_agent leaky-bot');
-    expect(must(byName('invoke_agent leaky-bot')).status.code).toBe(SpanStatusCode.ERROR);
+    const invoke = byName('invoke_agent leaky-bot');
+    assert.exists(invoke);
+    expect(invoke.status.code).toBe(SpanStatusCode.ERROR);
   });
 
   it('nests the same way when the caller streams', async () => {
@@ -134,7 +132,9 @@ describe('GenAI tracing', () => {
       // drain
     }
 
-    expect(parentOf(must(byName('execute_tool get_weather')))).toBe('invoke_agent weather-bot');
+    const execute = byName('execute_tool get_weather');
+    assert.exists(execute);
+    expect(parentOf(execute)).toBe('invoke_agent weather-bot');
     expect(
       spans()
         .filter((s) => s.name === 'chat mock-model')
@@ -174,7 +174,8 @@ describe('GenAI tracing', () => {
 
     await agent.run('hello');
 
-    const invoke = must(byName('invoke_agent bot'));
+    const invoke = byName('invoke_agent bot');
+    assert.exists(invoke);
     expect(invoke.attributes[GEN_AI.operation]).toBe('invoke_agent');
     expect(invoke.attributes[GEN_AI.agentName]).toBe('bot');
     expect(invoke.attributes[GEN_AI.agentDescription]).toBe('a bot');
@@ -182,7 +183,8 @@ describe('GenAI tracing', () => {
     expect(invoke.attributes[GEN_AI.providerName]).toBe('mock');
     expect(invoke.attributes[GEN_AI.finishReasons]).toEqual(['stop']);
 
-    const chat = must(byName('chat mock-model'));
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
     expect(chat.attributes[GEN_AI.operation]).toBe('chat');
     expect(chat.attributes[GEN_AI.providerName]).toBe('mock');
     expect(chat.attributes[GEN_AI.requestModel]).toBe('mock-model');
@@ -202,7 +204,8 @@ describe('GenAI tracing', () => {
 
     await new Agent({ client: mock, tools: [getWeather] }).run('weather?');
 
-    const execute = must(byName('execute_tool get_weather'));
+    const execute = byName('execute_tool get_weather');
+    assert.exists(execute);
     expect(execute.attributes[GEN_AI.toolName]).toBe('get_weather');
     expect(execute.attributes[GEN_AI.toolCallId]).toBe('call_42');
     expect(execute.attributes[GEN_AI.toolType]).toBe('function');
@@ -228,7 +231,8 @@ describe('GenAI tracing', () => {
     const mock = new MockChatClient([{ contents: [textContent('secret answer')], finishReason: 'stop' }]);
     await new Agent({ client: mock, name: 'bot' }).run('secret question');
 
-    const invoke = must(byName('invoke_agent bot'));
+    const invoke = byName('invoke_agent bot');
+    assert.exists(invoke);
     expect(invoke.attributes[GEN_AI.inputMessages]).toBeUndefined();
     expect(invoke.attributes[GEN_AI.outputMessages]).toBeUndefined();
   });
@@ -240,7 +244,8 @@ describe('GenAI tracing', () => {
     const mock = new MockChatClient([{ contents: [textContent('x')], finishReason: 'stop' }]);
     await new Agent({ client: mock, name: 'bot', instructions: 'You are terse.' }).run('q');
 
-    const chat = must(byName('chat mock-model'));
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
     expect(chat.attributes[GEN_AI.systemInstructions]).toBeUndefined();
   });
 
@@ -249,7 +254,8 @@ describe('GenAI tracing', () => {
     const mock = new MockChatClient([{ contents: [textContent('x')], finishReason: 'stop' }]);
     await new Agent({ client: mock, name: 'bot', instructions: 'You are terse.' }).run('q');
 
-    const chat = must(byName('chat mock-model'));
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
     expect(chat.attributes[GEN_AI.systemInstructions]).toBe(
       JSON.stringify([{ type: 'text', content: 'You are terse.' }]),
     );
@@ -261,7 +267,8 @@ describe('GenAI tracing', () => {
 
     await new Agent({ client: mock, name: 'bot' }).run('the question');
 
-    const invoke = must(byName('invoke_agent bot'));
+    const invoke = byName('invoke_agent bot');
+    assert.exists(invoke);
     expect(String(invoke.attributes[GEN_AI.inputMessages])).toContain('the question');
     expect(String(invoke.attributes[GEN_AI.outputMessages])).toContain('the answer');
   });
@@ -289,7 +296,8 @@ describe('GenAI tracing', () => {
     configureObservability({ captureMessageContent: true });
     await new Agent({ client: new MockChatClient(turns), tools: [getWeather] }).run('x');
 
-    const execute = must(byName('execute_tool get_weather'));
+    const execute = byName('execute_tool get_weather');
+    assert.exists(execute);
     expect(execute.attributes[GEN_AI.toolArguments]).toBe('{"city":"Tokyo"}');
     expect(execute.attributes[GEN_AI.toolResult]).toBe('sunny');
   });
@@ -304,7 +312,8 @@ describe('GenAI tracing', () => {
 
     await expect(new Agent({ client: failing as never, name: 'bot' }).run('x')).rejects.toThrow('boom');
 
-    const invoke = must(byName('invoke_agent bot'));
+    const invoke = byName('invoke_agent bot');
+    assert.exists(invoke);
     expect(invoke.attributes[GEN_AI.errorType]).toBe('Error');
     expect(invoke.status.code).toBe(2);
   });
@@ -336,7 +345,8 @@ describe('GenAI tracing', () => {
     controller.abort(new Error('stop now'));
     await expect(iterator.next()).rejects.toThrow('stop now');
 
-    const invoke = must(byName('invoke_agent bot'));
+    const invoke = byName('invoke_agent bot');
+    assert.exists(invoke);
     expect(invoke.status.code).toBe(2);
     expect(byName('chat mock-model')).toBeDefined();
   });
@@ -351,7 +361,8 @@ describe('GenAI tracing', () => {
     await iterator.next();
     await expect(iterator.throw?.(new Error('consumer bailed'))).rejects.toThrow('consumer bailed');
 
-    const chat = must(byName('chat mock-model'));
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
     expect(chat.status.code).toBe(2);
   });
 });
@@ -389,7 +400,8 @@ describe('startAgentRunSpan', () => {
     );
     span.end();
 
-    const run = must(byName('invoke_agent remote-bot'));
+    const run = byName('invoke_agent remote-bot');
+    assert.exists(run);
     expect(run.attributes[GEN_AI.operation]).toBe('invoke_agent');
     expect(run.attributes[GEN_AI.agentId]).toBe('a1');
     expect(run.attributes[GEN_AI.agentName]).toBe('remote-bot');
@@ -397,7 +409,9 @@ describe('startAgentRunSpan', () => {
     expect(run.attributes[GEN_AI.conversationId]).toBe('ctx-1');
     expect(run.attributes[GEN_AI.responseId]).toBe('resp-1');
     expect(run.attributes[GEN_AI.finishReasons]).toEqual(['stop']);
-    expect(parentOf(must(byName('http POST')))).toBe('invoke_agent remote-bot');
+    const http = byName('http POST');
+    assert.exists(http);
+    expect(parentOf(http)).toBe('invoke_agent remote-bot');
   });
 
   it('records a failure and ends only once', () => {
@@ -407,7 +421,8 @@ describe('startAgentRunSpan', () => {
     span.end();
     span.end();
 
-    const run = must(byName('invoke_agent a1'));
+    const run = byName('invoke_agent a1');
+    assert.exists(run);
     expect(run.status.code).toBe(2);
     expect(run.attributes[GEN_AI.errorType]).toBe('TypeError');
     expect(spans().filter((candidate) => candidate.name === 'invoke_agent a1')).toHaveLength(1);
@@ -418,13 +433,33 @@ describe('startAgentRunSpan', () => {
     const span = startAgentRunSpan({ id: 'a1' }, [{ role: 'user', contents: [textContent('secret')] }]);
     span.end();
 
-    expect(must(byName('invoke_agent a1')).attributes[GEN_AI.inputMessages]).toContain('secret');
+    const captured = byName('invoke_agent a1');
+    assert.exists(captured);
+    expect(captured.attributes[GEN_AI.inputMessages]).toContain('secret');
 
     configureObservability({ captureMessageContent: false });
     const quiet = startAgentRunSpan({ id: 'a2' }, [{ role: 'user', contents: [textContent('secret')] }]);
     quiet.end();
 
-    expect(must(byName('invoke_agent a2')).attributes[GEN_AI.inputMessages]).toBeUndefined();
+    const quietSpan = byName('invoke_agent a2');
+    assert.exists(quietSpan);
+    expect(quietSpan.attributes[GEN_AI.inputMessages]).toBeUndefined();
+  });
+
+  it('ends the span itself when recording the input messages throws', () => {
+    configureObservability({ captureMessageContent: true });
+    // `JSON.stringify` throws on a BigInt, standing in for any caller-supplied content the
+    // serializer cannot encode.
+    const poisoned = [{ role: 'user', contents: [{ type: 'text', text: 1n as unknown as string }] }];
+
+    expect(() => startAgentRunSpan({ id: 'a1' }, poisoned as never)).toThrow(TypeError);
+
+    // The factory never handed the span out, so nobody else could have closed it: an unclosed
+    // span here is a leak that outlives the failed run.
+    const run = byName('invoke_agent a1');
+    assert.exists(run);
+    expect(run.status.code).toBe(2);
+    expect(startedSpanNames).toContain('invoke_agent a1');
   });
 
   it('awaits a non-streaming call inside the span', async () => {
@@ -435,7 +470,9 @@ describe('startAgentRunSpan', () => {
     });
     span.end();
 
-    expect(parentOf(must(byName('http POST')))).toBe('invoke_agent a1');
+    const http = byName('http POST');
+    assert.exists(http);
+    expect(parentOf(http)).toBe('invoke_agent a1');
   });
 });
 
@@ -470,7 +507,8 @@ describe('v1.36.0 message events', () => {
       'weather?',
     );
 
-    const invoke = must(byName('invoke_agent bot'));
+    const invoke = byName('invoke_agent bot');
+    assert.exists(invoke);
     // The reference implementations emit message events only for the model invocation; the agent
     // span reports content as span attributes alone.
     expect(invoke.events).toEqual([]);
@@ -489,9 +527,12 @@ describe('v1.36.0 message events', () => {
 
     const chats = spans().filter((span) => span.name === 'chat mock-model');
     expect(chats).toHaveLength(2);
+    const [firstChat, secondChat] = chats;
+    assert.exists(firstChat);
+    assert.exists(secondChat);
 
     // First round: instructions, the user turn, then the model's tool-calling choice.
-    expect(eventBodies(must(chats[0]))).toEqual([
+    expect(eventBodies(firstChat)).toEqual([
       { name: 'gen_ai.system.message', body: { content: 'Be terse.' } },
       { name: 'gen_ai.user.message', body: { content: 'weather?' } },
       {
@@ -513,7 +554,7 @@ describe('v1.36.0 message events', () => {
     ]);
 
     // Second round replays the whole exchange: the assistant's call, the tool result, the answer.
-    expect(eventBodies(must(chats[1]))).toEqual([
+    expect(eventBodies(secondChat)).toEqual([
       { name: 'gen_ai.system.message', body: { content: 'Be terse.' } },
       { name: 'gen_ai.user.message', body: { content: 'weather?' } },
       {
@@ -542,7 +583,8 @@ describe('v1.36.0 message events', () => {
       'weather?',
     );
 
-    const chat = must(spans().find((span) => span.name === 'chat mock-model'));
+    const chat = spans().find((span) => span.name === 'chat mock-model');
+    assert.exists(chat);
     expect(chat.events.length).toBeGreaterThan(1);
     for (const event of chat.events) {
       expect(event.attributes?.['gen_ai.system']).toBe('mock');
@@ -551,8 +593,12 @@ describe('v1.36.0 message events', () => {
     // Compared as [seconds, nanos] tuples: collapsing an epoch hrtime into one number exceeds
     // float64 integer precision and would erase the 1μs steps this asserts.
     for (let i = 1; i < chat.events.length; i++) {
-      const [prevSec, prevNs] = must(chat.events[i - 1]).time;
-      const [sec, ns] = must(chat.events[i]).time;
+      const previousEvent: ReadableSpan['events'][number] | undefined = chat.events[i - 1];
+      const event: ReadableSpan['events'][number] | undefined = chat.events[i];
+      assert.exists(previousEvent);
+      assert.exists(event);
+      const [prevSec, prevNs] = previousEvent.time;
+      const [sec, ns] = event.time;
       expect(sec > prevSec || (sec === prevSec && ns > prevNs)).toBe(true);
     }
   });
@@ -578,7 +624,9 @@ describe('v1.36.0 message events', () => {
 
     // A bigint or a cycle inside caller-built arguments must not cost the event its text and
     // call name; only the offending values degrade.
-    const body = JSON.parse(String(must(byName('chat test')).events[0]?.attributes?.body));
+    const chat = byName('chat test');
+    assert.exists(chat);
+    const body = JSON.parse(String(chat.events[0]?.attributes?.body));
     expect(body.content).toBe('calling');
     expect(body.tool_calls[0].id).toBe('c1');
     expect(body.tool_calls[0].function.name).toBe('f');
@@ -604,7 +652,8 @@ describe('v1.36.0 message events', () => {
     const mock = new MockChatClient([{ contents: [textContent('hi')] }]);
     await new Agent({ client: mock, name: 'bot' }).run('hello');
 
-    const chat = must(spans().find((span) => span.name === 'chat mock-model'));
+    const chat = spans().find((span) => span.name === 'chat mock-model');
+    assert.exists(chat);
     expect(chat.events.map((event) => event.name)).toEqual(['gen_ai.user.message']);
   });
 });

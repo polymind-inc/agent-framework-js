@@ -1,6 +1,6 @@
 import type { ChatResponseUpdate, Content, Message, TextContent } from '@polymind-inc/agent-framework-core';
 import { deserializeMessage, mergeChatUpdates, serializeMessage } from '@polymind-inc/agent-framework-core';
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import type { ParseContext } from './from-openai.js';
 import { createStreamParseState, parseResponse, parseStreamEvent } from './from-openai.js';
 import { toResponsesInput } from './to-openai.js';
@@ -8,12 +8,6 @@ import { toResponsesInput } from './to-openai.js';
 /** All contents of a parsed response, flattened. */
 function contentsOf(response: { messages: Message[] }): Content[] {
   return response.messages.flatMap((msg) => msg.contents);
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 /** The wire shape of a replayed assistant message, as far as these assertions read it. */
@@ -73,7 +67,8 @@ describe('response envelope parity', () => {
 
     const awaited = parseResponse(wireResponse, ctx);
     const terminalEvent = { type: eventType, response: wireResponse, logprobs: [{ token: 'done' }] };
-    const terminalUpdate = must(parseStreamEvent(terminalEvent, createStreamParseState(), ctx));
+    const terminalUpdate = parseStreamEvent(terminalEvent, createStreamParseState(), ctx);
+    assert.exists(terminalUpdate);
     const streamed = mergeChatUpdates([terminalUpdate]);
     const metadataOf = (response: typeof awaited): Record<string, unknown> => ({
       responseId: response.responseId,
@@ -124,12 +119,14 @@ describe('reasoning text vs reasoning summary', () => {
   ];
 
   // Python pairs each private reasoning fragment with the summary that sits at the
-  // same index, on *both* paths (`_chat_client.py:2648-2651` awaited, `:3138-3144` streamed).
+  // same index, on *both* the awaited and streamed paths (`_chat_client.py`).
   // Both paths here must carry that pairing, or a streamed transcript would carry metadata an
   // awaited one does not.
   it('pairs each private reasoning fragment with its summary in an awaited response', () => {
     const response = parseResponse(awaitedResponse);
-    const [privateThought] = must(response.messages[0]).contents;
+    const [message] = response.messages;
+    assert.exists(message);
+    const [privateThought] = message.contents;
     expect(privateThought?.additionalProperties).toEqual({
       reasoning_text: true,
       summary: { type: 'summary_text', text: 'public summary' },
@@ -152,7 +149,9 @@ describe('reasoning text vs reasoning summary', () => {
 
   it('keeps them as separate items in an awaited response', () => {
     const response = parseResponse(awaitedResponse);
-    expect(reasoningShape(must(response.messages[0]).contents)).toEqual([
+    const [message] = response.messages;
+    assert.exists(message);
+    expect(reasoningShape(message.contents)).toEqual([
       { id: 'rs_1', text: 'private thought', protectedData: undefined, reasoningText: true },
       { id: 'rs_1', text: 'public summary', protectedData: undefined, reasoningText: undefined },
     ]);
@@ -161,9 +160,11 @@ describe('reasoning text vs reasoning summary', () => {
   it('produces the same transcript when streamed as when awaited', () => {
     const streamed = mergeChatUpdates(fold(streamedEvents));
     const awaited = parseResponse(awaitedResponse);
-    expect(reasoningShape(must(streamed.messages[0]).contents)).toEqual(
-      reasoningShape(must(awaited.messages[0]).contents),
-    );
+    const [streamedMessage] = streamed.messages;
+    const [awaitedMessage] = awaited.messages;
+    assert.exists(streamedMessage);
+    assert.exists(awaitedMessage);
+    expect(reasoningShape(streamedMessage.contents)).toEqual(reasoningShape(awaitedMessage.contents));
   });
 
   it('replays a streamed turn with the summary as summary_text, not as private reasoning text', () => {
@@ -195,9 +196,8 @@ describe('reasoning text vs reasoning summary', () => {
 });
 
 // Python surfaces log probabilities as response metadata rather than as transcript
-// content (`_get_metadata_from_response`, `_chat_client.py:3414-3420`), merged into
-// `additional_properties` on both the awaited response (`:2813`) and every streamed update
-// (`:3388`).
+// content (`_get_metadata_from_response` in `_chat_client.py`), merged into
+// `additional_properties` on both the awaited response and every streamed update.
 describe('logprobs', () => {
   const LOGPROBS = [{ token: 'hi', logprob: -0.25, top_logprobs: [] }];
 
@@ -333,7 +333,7 @@ describe('failed responses surface their error', () => {
 
 // Python maps `response.image_generation_call.partial_image` to the same
 // call/result pair the finished item produces, with the preview marked so a consumer can tell the
-// two apart (`_chat_client.py:3196-3222`). The event only exists when the caller asked for it via
+// two apart (`_chat_client.py`). The event only exists when the caller asked for it via
 // `partial_images` on the image generation tool.
 describe('streamed partial images', () => {
   // A PNG header, so the media type is detected rather than defaulted.
@@ -381,7 +381,7 @@ describe('streamed partial images', () => {
 });
 
 // Python seeds every streamed update with the configured model and lets the
-// terminal event overwrite it with the one the response reports (`_chat_client.py:3331`, `:3032`).
+// terminal event overwrite it with the one the response reports (`_chat_client.py`).
 describe('model on streamed updates', () => {
   it('carries the configured model on non-terminal updates', () => {
     const updates = fold(
@@ -433,7 +433,9 @@ describe('unmodelled output items round-trip through serialization', () => {
   it('keeps every unmodelled field of an awaited output item', () => {
     const response = parseResponse({ id: 'resp_1', status: 'completed', output: [futureItem] });
 
-    expect(serializeMessage(must(response.messages[0])).contents).toEqual([futureItem]);
+    const [message] = response.messages;
+    assert.exists(message);
+    expect(serializeMessage(message).contents).toEqual([futureItem]);
   });
 
   it('keeps every unmodelled field of a streamed output item', () => {
@@ -444,7 +446,9 @@ describe('unmodelled output items round-trip through serialization', () => {
     ]);
 
     const merged = mergeChatUpdates(updates);
-    expect(serializeMessage(must(merged.messages[0])).contents).toEqual([futureItem]);
+    const [message] = merged.messages;
+    assert.exists(message);
+    expect(serializeMessage(message).contents).toEqual([futureItem]);
   });
 
   it('keeps an unmodelled part inside an awaited message item', () => {
@@ -455,19 +459,26 @@ describe('unmodelled output items round-trip through serialization', () => {
       output: [{ type: 'message', role: 'assistant', content: [part] }],
     });
 
-    expect(serializeMessage(must(response.messages[0])).contents).toEqual([part]);
+    const [message] = response.messages;
+    assert.exists(message);
+    expect(serializeMessage(message).contents).toEqual([part]);
   });
 
   it('keeps an unmodelled streamed content part', () => {
     const part = { type: 'future_output', id: 'part_1', payload: { value: 42 } };
     const updates = fold([{ type: 'response.content_part.added', output_index: 0, part }]);
 
-    expect(serializeMessage(must(mergeChatUpdates(updates).messages[0])).contents).toEqual([part]);
+    const merged = mergeChatUpdates(updates);
+    const [message] = merged.messages;
+    assert.exists(message);
+    expect(serializeMessage(message).contents).toEqual([part]);
   });
 
   it('restores the same content after a full JSON session round trip', () => {
     const response = parseResponse({ id: 'resp_1', status: 'completed', output: [futureItem] });
-    const persisted = JSON.parse(JSON.stringify(serializeMessage(must(response.messages[0]))));
+    const [message] = response.messages;
+    assert.exists(message);
+    const persisted = JSON.parse(JSON.stringify(serializeMessage(message)));
 
     const restored = deserializeMessage(persisted);
     expect(restored.contents[0]).toMatchObject({
@@ -731,7 +742,9 @@ describe('annotation round trips', () => {
 
     // A session round trip drops rawRepresentation; the rebuild must keep the citation form
     // instead of degrading it to a plain file_citation.
-    delete must(text.annotations?.[0]).rawRepresentation;
+    const annotation = text.annotations?.[0];
+    assert.exists(annotation);
+    delete annotation.rawRepresentation;
     const [message] = toResponsesInput([{ role: 'assistant', contents: [text] }]) as [WireMessage];
     expect(message.content[0]?.annotations).toEqual([
       {
@@ -766,7 +779,9 @@ describe('annotation round trips', () => {
     const [text] = contentsOf(parsed) as [TextContent];
     expect(text.annotations?.[0]?.additionalProperties).toEqual({ index: 2 });
 
-    delete must(text.annotations?.[0]).rawRepresentation;
+    const annotation = text.annotations?.[0];
+    assert.exists(annotation);
+    delete annotation.rawRepresentation;
     const [message] = toResponsesInput([{ role: 'assistant', contents: [text] }]) as [WireMessage];
     expect(message.content[0]?.annotations).toEqual([
       { type: 'file_citation', file_id: 'f_1', filename: 'a.pdf', index: 2 },

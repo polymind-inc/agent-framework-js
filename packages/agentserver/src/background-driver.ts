@@ -1,16 +1,16 @@
 import type { IdClaim } from './background-run.js';
 import { BackgroundRun } from './background-run.js';
-import { sseKeepAliveSeconds } from './config.js';
+import { sseKeepAliveMs } from './config.js';
 import { HEADERS } from './context.js';
 import { ProtocolError } from './errors.js';
-import { jsonResponse } from './http.js';
+import { jsonResponse, sseResponse } from './http.js';
 import type { ResponseTracker } from './lifecycle.js';
-import { applyCancelledTerminal } from './lifecycle.js';
+import { applyCancelledTerminal, failedTerminal, messageOf } from './lifecycle.js';
 import { flushTelemetry } from './observability/flush.js';
-import { SequenceNumberWriter, SSE_HEADERS, toSseStream } from './sse.js';
+import { SequenceNumberWriter } from './sse.js';
 import type { ResponseOwner, ResponseProvider } from './store/provider.js';
 import { TerminalPersister } from './terminal.js';
-import type { OutputItem, ResponseEvent, ResponseObject } from './wire.js';
+import type { OutputItem, ResponseEvent, ResponseLifecycleEvent, ResponseObject } from './wire.js';
 import { isTerminalEventType } from './wire.js';
 
 /**
@@ -24,7 +24,7 @@ import { isTerminalEventType } from './wire.js';
  * The event keeps the type `response.failed`, as the reference's override does: the protocol has
  * no `response.cancelled` event, so the status on the carried resource is what says what happened.
  */
-function cancelledTerminal(tracker: ResponseTracker): ResponseEvent {
+function cancelledTerminal(tracker: ResponseTracker): ResponseLifecycleEvent {
   const response = applyCancelledTerminal(tracker.response);
   tracker.replace(response);
   return { type: 'response.failed', response };
@@ -91,11 +91,7 @@ export async function startBackground(args: {
   args.claim.settle(run.done);
 
   if (args.streamed) {
-    const keepAliveMs = sseKeepAliveSeconds() * 1000;
-    return new Response(toSseStream(run.follow(-1), { keepAliveMs }), {
-      status: 200,
-      headers: { ...SSE_HEADERS, [HEADERS.sessionId]: args.sessionId },
-    });
+    return sseResponse(run.follow(-1), { keepAliveMs: sseKeepAliveMs(), sessionId: args.sessionId });
   }
   await run.firstEvent;
   return jsonResponse(run.tracker.response, 200, { [HEADERS.sessionId]: args.sessionId });
@@ -123,7 +119,7 @@ async function runBackground(args: {
     try {
       for await (const raw of events) {
         let event = raw;
-        if (isTerminalEventType(String(event.type))) {
+        if (isTerminalEventType(event.type)) {
           if (run.cancelRequested) {
             // The caller was already promised `cancelled`; whatever terminal the handler
             // reached does not get to overrule that (Python `_maybe_override_to_cancelled`).
@@ -145,16 +141,12 @@ async function runBackground(args: {
       // `response.failed`, this terminal state is the only place left
       // for the caller to learn why the turn failed.
       const cause = error instanceof ProtocolError && error.cause !== undefined ? error.cause : error;
-      const message =
-        cause instanceof Error ? (cause.message === '' ? cause.name : cause.message) : String(cause);
       const event = run.cancelRequested
         ? // Same override as the loop above: a handler that throws *after* the cancel route
           // answered still ends as `cancelled`, not as `failed` (the reference applies
           // `_maybe_override_to_cancelled` on the resolved terminal whatever produced it).
           cancelledTerminal(run.tracker)
-        : run.tracker.lifecycleEvent('response.failed', 'failed', {
-            error: { code: 'server_error', message, type: 'server_error' },
-          });
+        : failedTerminal(run.tracker, messageOf(cause));
       run.deliver(sequence.stamp(await persister.onTerminal(event)));
     }
     // Unreachable while `enforceLifecycle` guarantees a terminal event; kept so a future

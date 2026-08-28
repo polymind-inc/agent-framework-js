@@ -1,5 +1,4 @@
 import type { AccessToken, TokenCredential } from '@azure/identity';
-import { FOUNDRY_SCOPE } from './target.js';
 
 /** Refresh this long before expiry so a request never carries an about-to-expire token. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
@@ -16,10 +15,7 @@ const REFRESH_MARGIN_MS = 5 * 60 * 1000;
  * Point a Foundry client at a host you do not control and you hand that host a token for your
  * project.
  */
-export function tokenProvider(
-  credential: TokenCredential,
-  scope: string = FOUNDRY_SCOPE,
-): () => Promise<string> {
+export function tokenProvider(credential: TokenCredential, scope: string): () => Promise<string> {
   let cached: AccessToken | undefined;
   let inFlight: Promise<AccessToken> | undefined;
 

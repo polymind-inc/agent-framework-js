@@ -326,7 +326,7 @@ function byName<T extends { readonly name: string }>(items: readonly T[], name: 
  * An empty collection still produces an element — `<available_resources />` — because a model shown
  * nothing at all invents resource names, while a model shown an explicitly empty list does not.
  */
-export function resourcesBlock(resources: readonly SkillResource[]): string {
+function resourcesBlock(resources: readonly SkillResource[]): string {
   if (resources.length === 0) {
     return '<available_resources />';
   }
@@ -335,7 +335,7 @@ export function resourcesBlock(resources: readonly SkillResource[]): string {
 }
 
 /** Renders the scripts a skill offers, with each script's parameter schema when it declares one. */
-export function scriptsBlock(scripts: readonly SkillScript[]): string {
+function scriptsBlock(scripts: readonly SkillScript[]): string {
   if (scripts.length === 0) {
     return '<available_scripts />';
   }

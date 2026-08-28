@@ -1,6 +1,7 @@
 import type { AgentSession } from '../agent/session.js';
 import { MiddlewareTerminated } from '../errors.js';
 import type { ResponseStream } from '../streaming/response-stream.js';
+import { applyHooks } from '../streaming/response-stream.js';
 import type { Tool } from '../tools/tool.js';
 import type { Message } from '../types/message.js';
 import type { AgentResponse, AgentResponseUpdate } from '../types/response.js';
@@ -105,16 +106,8 @@ export async function runAgentPipeline<TFinal extends AgentResponse<unknown>>(
     }
   }
 
-  const applyResultHooks = async (response: AgentResponse<unknown>): Promise<TFinal> => {
-    let current = response;
-    for (const hook of resultHooks) {
-      const hooked = await hook(current);
-      if (hooked !== undefined && hooked !== null) {
-        current = hooked;
-      }
-    }
-    return current as TFinal;
-  };
+  const applyResultHooks = async (response: AgentResponse<unknown>): Promise<TFinal> =>
+    (await applyHooks(response, resultHooks)) as TFinal;
 
   if (ctx.response !== undefined) {
     const response = ctx.response;
@@ -172,12 +165,7 @@ async function* transform(
 
       let current = result.value;
       try {
-        for (const hook of hooks) {
-          const hooked = await hook(current);
-          if (hooked !== undefined && hooked !== null) {
-            current = hooked;
-          }
-        }
+        current = await applyHooks(current, hooks);
       } catch (error) {
         // A hook failure is a failure of the run, not an early consumer `break`. Forward it into
         // the ResponseStream so its cleanup observes the error and history does not persist a

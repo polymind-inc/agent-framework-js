@@ -6,6 +6,7 @@ import type {
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
 import { ConfigurationError, hostedTool, withoutUndefined } from '@polymind-inc/agent-framework-core';
+import { normalizeServerLabel } from '@polymind-inc/agent-framework-core/internal';
 
 /** Declares the provider-hosted web search tool. */
 export function webSearchTool(options: WebSearchToolOptions = {}): HostedTool {
@@ -66,11 +67,7 @@ export function codeInterpreterTool(options: CodeInterpreterToolOptions = {}): H
  * reach. `headers` is sent to that server on every call, so anything in it is disclosed to it.
  */
 export function mcpTool(options: McpToolOptions): HostedTool {
-  if (options.serverLabel.trim() === '') {
-    throw new ConfigurationError('mcpTool requires a non-empty serverLabel.');
-  }
-  // The API rejects labels with spaces; Python's `get_mcp_tool` applies the same substitution.
-  const serverLabel = options.serverLabel.replaceAll(' ', '_');
+  const serverLabel = normalizeServerLabel(options.serverLabel);
   // The object form of `require_approval` is a per-side tool filter: each side is an object with
   // a `tool_names` list, not a bare array (openai SDK `Mcp.McpToolApprovalFilter`, Python
   // `get_mcp_tool`).

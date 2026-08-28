@@ -5,6 +5,7 @@ import type {
   FunctionApprovalRequestContent,
   TextReasoningContent,
 } from '@polymind-inc/agent-framework-core';
+import { isRecord } from '@polymind-inc/agent-framework-core/internal';
 import { reasoningEncryptedContent, stringifyMcpOutput } from '@polymind-inc/agent-framework-openai/internal';
 import type { ToolboxConsentRequest } from './consent.js';
 import { AGENT_FRAMEWORK_SERVER_LABEL, encodeFunctionOutput } from './converters.js';
@@ -145,8 +146,8 @@ function argumentsRecord(args: Record<string, unknown> | string | undefined): Re
   if (typeof args === 'string' && args !== '') {
     try {
       const parsed: unknown = JSON.parse(args);
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
+      if (isRecord(parsed)) {
+        return parsed;
       }
     } catch {
       // Fall through to the empty object.

@@ -161,6 +161,47 @@ describe('MemoryStoreClient', () => {
     });
   });
 
+  it('treats a success body whose text() throws synchronously as unreadable, not as a failure', async () => {
+    // The client accepts a custom fetch, so a Response-like transport can throw from `text()`
+    // itself rather than rejecting; the unreadable-success-body contract (an empty object,
+    // nothing to carry forward) applies the same way, and no raw error escapes the operation.
+    const throwing = {
+      ok: true,
+      status: 200,
+      text(): Promise<string> {
+        throw new Error('no body access');
+      },
+    } as unknown as Response;
+    const fetchStub = (async (): Promise<Response> => throwing) as typeof globalThis.fetch;
+    const subject = new MemoryStoreClient({
+      project: new FoundryProject(PROJECT, credential),
+      fetch: fetchStub,
+    });
+
+    expect(await subject.searchMemories({ name: 'store', scope: 'user-1' })).toEqual({});
+  });
+
+  it('reports a deleted scope even when discarding the body throws synchronously', async () => {
+    // Draining the unread body is best-effort hygiene; a transport whose cancel() throws must
+    // not turn the succeeded delete into a failure.
+    const hostile = {
+      ok: true,
+      status: 200,
+      body: {
+        cancel(): Promise<void> {
+          throw new Error('locked');
+        },
+      },
+    } as unknown as Response;
+    const fetchStub = (async (): Promise<Response> => hostile) as typeof globalThis.fetch;
+    const subject = new MemoryStoreClient({
+      project: new FoundryProject(PROJECT, credential),
+      fetch: fetchStub,
+    });
+
+    expect(await subject.deleteScope('store', 'user-1')).toBe(true);
+  });
+
   it('raises a typed error naming the operation, the status and the service message', async () => {
     const { client: memory } = client([{ status: 500, body: { error: { message: 'boom' } } }]);
 

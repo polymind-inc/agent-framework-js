@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import type { ChatClient, ChatOptions } from '../client/chat-client.js';
 import { MockChatClient } from '../client/test-support.js';
 import type { ContextProvider, HistoryProvider } from '../context/context-provider.js';
@@ -17,12 +17,6 @@ import { AgentSession } from './session.js';
 
 function client(...texts: string[]): MockChatClient {
   return new MockChatClient(texts.map((text) => ({ contents: [textContent(text)], finishReason: 'stop' })));
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 describe('Agent.run', () => {
@@ -61,10 +55,13 @@ describe('Agent.run', () => {
     await agent.run('two', { session });
 
     // Turn two sees: user(one), assistant(first), user(two).
-    const secondCall = must(mock.calls[1]);
+    const secondCall = mock.calls[1];
+    assert.exists(secondCall);
     expect(secondCall.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
     expect(secondCall.messages[0]?.contents).toEqual([{ type: 'text', text: 'one' }]);
-    expect(getMessageSource(must(secondCall.messages[0]))?.sourceType).toBe('ChatHistory');
+    const firstMessage = secondCall.messages[0];
+    assert.exists(firstMessage);
+    expect(getMessageSource(firstMessage)?.sourceType).toBe('ChatHistory');
   });
 
   it('does not grow history geometrically across turns', async () => {
@@ -190,7 +187,8 @@ describe('Agent.run', () => {
     const options = mock.calls[0]?.options as ChatOptions;
     expect(options.instructions).toBe('Base.\nRemember: the user likes tea.');
     expect(options.tools?.map((t) => t.name)).toEqual(['recall']);
-    const injected = must(mock.calls[0]?.messages[0]);
+    const injected = mock.calls[0]?.messages[0];
+    assert.exists(injected);
     expect(getMessageSource(injected)).toEqual({ sourceType: 'AIContextProvider', sourceId: 'memories' });
   });
 
@@ -311,7 +309,9 @@ describe('Agent.run', () => {
 
     const response = await new Agent({ client: mock }).run('Taro is 30', { responseFormat: schema as never });
     expect(response.value).toEqual({ name: 'Taro', age: 30 });
-    expect(must(mock.calls[0]?.options).responseFormat).toBe(schema);
+    const options = mock.calls[0]?.options;
+    assert.exists(options);
+    expect(options.responseFormat).toBe(schema);
   });
 
   it('fills value for every responseFormat path', async () => {
@@ -361,7 +361,9 @@ describe('Agent.run', () => {
     }).run('x', { responseFormat: explicit as never });
 
     expect(response.value).toEqual({ a: 1 });
-    expect(must(mock.calls[0]?.options).responseFormat).toBe(explicit);
+    const options = mock.calls[0]?.options;
+    assert.exists(options);
+    expect(options.responseFormat).toBe(explicit);
   });
 
   it('fills value when the run is streamed', async () => {
@@ -671,7 +673,9 @@ describe('service-managed sessions', () => {
 
     await agent.run('hi', { session });
 
-    expect(must(mock.calls[0]?.options).conversationId).toBe('conv_1');
+    const options = mock.calls[0]?.options;
+    assert.exists(options);
+    expect(options.conversationId).toBe('conv_1');
     expect(session.state).toEqual({});
   });
 });

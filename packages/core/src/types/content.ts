@@ -293,6 +293,17 @@ export function isUserInputRequest(content: Content): content is UserInputReques
 }
 
 /**
+ * Whether `value` is a JSON object, as opposed to `null`, an array or a primitive.
+ *
+ * Arrays are excluded so the predicate means the same thing everywhere it is spelled this way: a
+ * guard whose name promises "a record" and quietly admits arrays is one refactor away from being
+ * read as a guarantee.
+ */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
  * A content item whose wire `type` this version of the framework does not know.
  *
  * Deserialization never drops data: the original wire `type` is kept in
@@ -376,10 +387,7 @@ export function textContent(text: string, options?: Omit<TextContent, 'type' | '
  * ```
  */
 export function unknownContent(wire: unknown): UnknownContent {
-  const record =
-    typeof wire === 'object' && wire !== null && !Array.isArray(wire)
-      ? (wire as Record<string, unknown>)
-      : {};
+  const record = isRecord(wire) ? wire : {};
   const { type, ...rest } = record;
   return {
     ...rest,

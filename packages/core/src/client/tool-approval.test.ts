@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { Agent } from '../agent/agent.js';
 import { AgentSession } from '../agent/session.js';
 import {
@@ -35,12 +35,6 @@ const readOnly = tool({
 
 function call(callId: string, name: string): FunctionCallContent {
   return { type: 'function_call', callId, name, arguments: '{}' };
-}
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
 }
 
 /** Every `function_result` in a transcript, as `[callId, result]`. */
@@ -84,7 +78,9 @@ describe('tool approval', () => {
     const session = agent.createSession();
 
     const first = await agent.run('delete everything', { session });
-    const resumed = await agent.run(approvalResponse(must(approvals(first)[0]), true), { session });
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const resumed = await agent.run(approvalResponse(request, true), { session });
 
     expect(results(resumed.messages)).toEqual([['c1', 'deleted']]);
     expect(resumed.text).toBe('all gone');
@@ -105,12 +101,11 @@ describe('tool approval', () => {
     const session = agent.createSession();
 
     const first = await agent.run('delete everything', { session });
-    const resumed = await agent.run(
-      approvalResponse(must(approvals(first)[0]), false, { reason: 'too risky' }),
-      {
-        session,
-      },
-    );
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const resumed = await agent.run(approvalResponse(request, false, { reason: 'too risky' }), {
+      session,
+    });
 
     expect(results(resumed.messages)).toEqual([
       ['c1', 'Error: Tool call invocation was rejected by user. too risky'],
@@ -146,13 +141,15 @@ describe('tool approval', () => {
 
     const first = await agent.run('do both', { session });
     const [firstRequest, secondRequest] = approvals(first);
-    const partial = await agent.run(approvalResponse(must(firstRequest), true), { session });
+    assert.exists(firstRequest);
+    const partial = await agent.run(approvalResponse(firstRequest, true), { session });
 
     expect(executed).toEqual(['first']);
     expect(mock.callCount).toBe(1);
     expect(approvals(partial).map((request) => request.functionCall.callId)).toEqual(['c2']);
 
-    const resumed = await agent.run(approvalResponse(must(secondRequest), true), { session });
+    assert.exists(secondRequest);
+    const resumed = await agent.run(approvalResponse(secondRequest, true), { session });
     expect(executed).toEqual(['first', 'second']);
     expect(resumed.text).toBe('done');
     expect(session.state._toolApproval).toBeUndefined();
@@ -219,7 +216,9 @@ describe('tool approval', () => {
     const session = agent.createSession();
 
     const first = await agent.run('delete', { session });
-    const decision = approvalResponse(must(approvals(first)[0]), true);
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const decision = approvalResponse(request, true);
     // The caller escalates the approved call before sending it back.
     const tampered: FunctionApprovalResponseContent = {
       ...decision,
@@ -262,7 +261,8 @@ describe('tool approval', () => {
     const session = agent.createSession();
 
     const first = await agent.run('delete', { session });
-    const request = must(approvals(first)[0]);
+    const request = approvals(first)[0];
+    assert.exists(request);
     const decision = approvalResponse(structuredClone(request), true);
     const args = request.functionCall.arguments as { scope: { target: string } };
     args.scope.target = 'everything';
@@ -384,7 +384,8 @@ describe('tool approval', () => {
     const session = agent.createSession();
 
     const first = await agent.run('delete', { session });
-    const request = must(approvals(first)[0]);
+    const request = approvals(first)[0];
+    assert.exists(request);
     // A caller that replays the whole transcript can send the request back too — with different
     // arguments. The session's own record of what the human saw has to outrank it.
     const replayed: Content = {
@@ -405,7 +406,8 @@ describe('tool approval', () => {
     const agent = new Agent({ client: mock, tools: [deleteAll] });
 
     const session = agent.createSession();
-    const request = must(approvals(await agent.run('delete', { session }))[0]);
+    const request = approvals(await agent.run('delete', { session }))[0];
+    assert.exists(request);
     // The human answers in another process, so only the serialized session bridges the turns.
     const roundTripped = AgentSession.fromJSON(JSON.parse(JSON.stringify(session)) as unknown);
 
@@ -429,7 +431,9 @@ describe('tool approval', () => {
     // Only the approval-required call reaches the caller.
     expect(approvals(first).map((r) => r.functionCall.name)).toEqual(['delete_all']);
 
-    const resumed = await agent.run(approvalResponse(must(approvals(first)[0]), true), { session });
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const resumed = await agent.run(approvalResponse(request, true), { session });
 
     // Both calls run once the human answers: the model needs a result for every call it made.
     expect(results(resumed.messages).sort()).toEqual([
@@ -464,13 +468,17 @@ describe('tool approval', () => {
     expect(first.userInputRequests).toHaveLength(1);
     expect(approvals(first)[0]?.id).toBe('mcpr_1');
 
-    const resumed = await agent.run(approvalResponse(must(approvals(first)[0]), true), { session });
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const resumed = await agent.run(approvalResponse(request, true), { session });
 
     // No local execution, and above all no fabricated "not found" result: the tool is not ours.
     expect(results(resumed.messages)).toEqual([]);
     // The decision reaches the provider as approval content, which is what becomes the wire
     // `mcp_approval_response`. Stripping it here is what left the approval pending forever.
-    const sent = must(mock.calls[1]).messages.flatMap((msg) => msg.contents);
+    const secondCall = mock.calls[1];
+    assert.exists(secondCall);
+    const sent = secondCall.messages.flatMap((msg) => msg.contents);
     const decision = sent.find((content) => content.type === 'function_approval_response');
     expect(decision).toMatchObject({ id: 'mcpr_1', approved: true });
     expect(resumed.text).toBe('found three');
@@ -514,7 +522,9 @@ describe('tool approval', () => {
     expect(first.userInputRequests).toHaveLength(1);
     expect(approvals(first)[0]?.functionCall.arguments).toBe('{"scope":"all"}');
 
-    const resumed = await agent.run(approvalResponse(must(approvals(first)[0]), true), { session });
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const resumed = await agent.run(approvalResponse(request, true), { session });
     expect(executed).toEqual([{ scope: 'all' }]);
     expect(resumed.text).toBe('all gone');
   });
@@ -572,7 +582,9 @@ describe('tool approval', () => {
     const first = await stream.finalResponse();
     expect(first.userInputRequests).toHaveLength(1);
 
-    const resumeStream = agent.run(approvalResponse(must(approvals(first)[0]), true), { session });
+    const request = approvals(first)[0];
+    assert.exists(request);
+    const resumeStream = agent.run(approvalResponse(request, true), { session });
     for await (const _ of resumeStream) {
       // drain
     }
@@ -618,9 +630,9 @@ describe('tool approval', () => {
     const first = await agent.run('go', { session });
     expect(approvals(first)).toHaveLength(1);
 
-    await expect(agent.run(approvalResponse(must(approvals(first)[0]), true), { session })).rejects.toThrow(
-      'kaboom2',
-    );
+    const request = approvals(first)[0];
+    assert.exists(request);
+    await expect(agent.run(approvalResponse(request, true), { session })).rejects.toThrow('kaboom2');
   });
 
   it('reads a legacy additionalProperties reason when no first-class reason is present', async () => {
@@ -634,7 +646,8 @@ describe('tool approval', () => {
     const session = agent.createSession();
 
     const first = await agent.run('delete everything', { session });
-    const request = must(approvals(first)[0]);
+    const request = approvals(first)[0];
+    assert.exists(request);
     const legacy: FunctionApprovalResponseContent = {
       type: 'function_approval_response',
       id: request.id,

@@ -1,27 +1,12 @@
-import type { HandlerContext } from '@polymind-inc/agent-framework-agentserver';
-import { createRequestContext } from '@polymind-inc/agent-framework-agentserver';
 import { ConfigurationError } from '@polymind-inc/agent-framework-core';
 import { describe, expect, it } from 'vitest';
+import { testHandlerContext } from '../test-helpers.js';
 import { hostedAgentContextOf, withHostedAgentContext } from './hosted-context.js';
 import { hostedUserScope } from './memory-scope.js';
 
-function handlerContext(headers: Record<string, string>): HandlerContext {
-  const responseId = 'caresp_test';
-  return {
-    responseId,
-    conversationId: undefined,
-    request: createRequestContext(new Headers(headers)),
-    agentReference: { type: 'agent_reference', name: 'test-agent' },
-    agentSessionId: 'session-test',
-    history: [],
-    signal: new AbortController().signal,
-    response: { id: responseId, object: 'response', created_at: 0, status: 'queued', output: [] },
-  };
-}
-
 /** Reads `scope` from inside a hosted turn built on `headers`. */
 async function insideTurn(headers: Record<string, string>, scope: () => string): Promise<unknown> {
-  const context = hostedAgentContextOf(handlerContext(headers));
+  const context = hostedAgentContextOf(testHandlerContext(headers));
   async function* source(): AsyncGenerator<unknown> {
     try {
       yield scope();

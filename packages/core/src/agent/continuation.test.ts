@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import type { ChatClient, ChatOptions, ChatResponseStream } from '../client/chat-client.js';
 import type { ContextProvider } from '../context/context-provider.js';
 import { InMemoryHistoryProvider } from '../context/in-memory-history-provider.js';
@@ -15,12 +15,6 @@ import {
 } from '../types/response.js';
 import { Agent } from './agent.js';
 import { isAgentContinuationToken, parseContinuationToken, wrapContinuationToken } from './continuation.js';
-
-/** Narrows away undefined; a missing value fails the test with a clear error. */
-function must<T>(value: T | null | undefined): T {
-  if (value == null) throw new Error('expected a value');
-  return value;
-}
 
 /** One scripted turn: some text, and optionally a token meaning "not finished yet". */
 interface Turn {
@@ -40,7 +34,8 @@ class BackgroundClient implements ChatClient<ChatOptions> {
   }
 
   getResponse(messages: Message[], options?: ChatOptions & { signal?: AbortSignal }): ChatResponseStream {
-    const turn = must(this.#turns[Math.min(this.#index, this.#turns.length - 1)]);
+    const turn = this.#turns[Math.min(this.#index, this.#turns.length - 1)];
+    assert.exists(turn);
     this.#index++;
     this.seen.push({ messages, token: options?.continuationToken });
 
@@ -99,7 +94,8 @@ describe('token payload round trip', () => {
     expect(state.inputMessages).toEqual([
       expect.objectContaining({ role: 'user', contents: [expect.objectContaining({ text: 'question' })] }),
     ]);
-    const restored = must(state.updates[0]);
+    const restored = state.updates[0];
+    assert.exists(restored);
     expect(restored.text).toBe('partial');
     expect(restored.role).toBe('assistant');
     expect(restored.authorName).toBe('writer');
@@ -119,7 +115,8 @@ describe('token payload round trip', () => {
     );
     expect(token.inputMessages).toBeUndefined();
 
-    const restored = must(parseContinuationToken(token).updates[0]);
+    const restored = parseContinuationToken(token).updates[0];
+    assert.exists(restored);
     expect(restored.contents).toEqual([]);
     expect(restored.authorName).toBeUndefined();
     expect(restored.responseId).toBeUndefined();
@@ -179,9 +176,11 @@ describe('continuation tokens', () => {
     const session = agent.createSession();
 
     const suspended = await agent.run('long job', { session, allowBackgroundResponses: true });
+    const continuationToken = suspended.continuationToken;
+    assert.exists(continuationToken);
     const resumed = await agent.run(undefined, {
       session,
-      continuationToken: must(suspended.continuationToken),
+      continuationToken,
     });
 
     expect(client.seen[1]?.token).toEqual({ responseId: 'resp_1' });
@@ -203,7 +202,9 @@ describe('continuation tokens', () => {
     }
     const suspended = await first.finalResponse();
 
-    const resumed = agent.run(undefined, { session, continuationToken: must(suspended.continuationToken) });
+    const continuationToken = suspended.continuationToken;
+    assert.exists(continuationToken);
+    const resumed = agent.run(undefined, { session, continuationToken });
     const texts: string[] = [];
     for await (const update of resumed) {
       texts.push(update.text);
@@ -224,9 +225,11 @@ describe('continuation tokens', () => {
     const suspended = await agent.run('long job', { session, allowBackgroundResponses: true });
     expect(suspended.continuationToken?.responseUpdates).toBeUndefined();
 
+    const continuationToken = suspended.continuationToken;
+    assert.exists(continuationToken);
     const resumed = await agent.run(undefined, {
       session,
-      continuationToken: must(suspended.continuationToken),
+      continuationToken,
     });
     expect(resumed.text).toBe('part two');
   });
@@ -269,9 +272,11 @@ describe('continuation tokens', () => {
     expect(suspended.continuationToken).toBeDefined();
     expect(suspended.value).toBeUndefined();
 
+    const continuationToken = suspended.continuationToken;
+    assert.exists(continuationToken);
     const resumed = await agent.run(undefined, {
       session,
-      continuationToken: must(suspended.continuationToken),
+      continuationToken,
       responseFormat: format as never,
     });
     expect(resumed.value).toEqual({ ok: true });
@@ -290,7 +295,8 @@ describe('continuation tokens', () => {
     for await (const update of agent.run('long job', { session, allowBackgroundResponses: true })) {
       token = update.continuationToken ?? token;
     }
-    const resumed = await agent.run(undefined, { session, continuationToken: must(token) });
+    assert.exists(token);
+    const resumed = await agent.run(undefined, { session, continuationToken: token });
     expect(resumed.continuationToken).toBeUndefined();
     expect(resumed.text).toContain('part one');
     expect(resumed.text).toContain('part two');
@@ -299,7 +305,9 @@ describe('continuation tokens', () => {
     // run stores the whole exchange; the suspended run storing its half too would make the next
     // turn replay the question and the partial answer twice.
     await agent.run('and now?', { session });
-    const replayed = must(client.seen[2]).messages.flatMap((msg) =>
+    const thirdCall = client.seen[2];
+    assert.exists(thirdCall);
+    const replayed = thirdCall.messages.flatMap((msg) =>
       msg.contents.flatMap((c) => (c.type === 'text' ? [c.text] : [])),
     );
     expect(replayed.filter((text) => text === 'long job')).toHaveLength(1);
@@ -324,14 +332,18 @@ describe('continuation tokens', () => {
     // The second run resumes as a stream and suspends again; its token carries the whole
     // exchange so far, so only the run that finally completes appends to history.
     let token2: ContinuationToken | undefined;
-    for await (const update of agent.run(undefined, { session, continuationToken: must(token1) })) {
+    assert.exists(token1);
+    for await (const update of agent.run(undefined, { session, continuationToken: token1 })) {
       token2 = update.continuationToken ?? token2;
     }
-    const resumed = await agent.run(undefined, { session, continuationToken: must(token2) });
+    assert.exists(token2);
+    const resumed = await agent.run(undefined, { session, continuationToken: token2 });
     expect(resumed.continuationToken).toBeUndefined();
 
     await agent.run('and now?', { session });
-    const replayed = must(client.seen[3]).messages.flatMap((msg) =>
+    const fourthCall = client.seen[3];
+    assert.exists(fourthCall);
+    const replayed = fourthCall.messages.flatMap((msg) =>
       msg.contents.flatMap((c) => (c.type === 'text' ? [c.text] : [])),
     );
     expect(replayed.filter((text) => text === 'long job')).toHaveLength(1);
@@ -369,12 +381,15 @@ describe('continuation tokens', () => {
     for await (const update of agent.run('long job', { session, allowBackgroundResponses: true })) {
       token = update.continuationToken ?? token;
     }
-    await agent.run(undefined, { session, continuationToken: must(token) });
+    assert.exists(token);
+    await agent.run(undefined, { session, continuationToken: token });
 
     // The suspended run defers persistence to the completing run, so the injected context has to
     // ride the continuation token alongside the input — otherwise it would never be stored.
     await agent.run('and now?', { session });
-    const replayed = must(client.seen[2]).messages.flatMap((msg) =>
+    const thirdCall = client.seen[2];
+    assert.exists(thirdCall);
+    const replayed = thirdCall.messages.flatMap((msg) =>
       msg.contents.flatMap((c) => (c.type === 'text' ? [c.text] : [])),
     );
     expect(replayed.filter((text) => text === 'retrieved doc')).toHaveLength(1);
@@ -391,14 +406,18 @@ describe('continuation tokens', () => {
     const session = agent.createSession();
 
     const suspended = await agent.run('long job', { session, allowBackgroundResponses: true });
-    await agent.run(undefined, { session, continuationToken: must(suspended.continuationToken) });
+    const continuationToken = suspended.continuationToken;
+    assert.exists(continuationToken);
+    await agent.run(undefined, { session, continuationToken });
 
     // The resumed call sends nothing: the operation is already running service-side.
     expect(client.seen[1]?.messages).toEqual([]);
 
     // History still records the original input and the completed answer, so the next turn has it.
     await agent.run('and now?', { session });
-    const replayed = must(client.seen[2]).messages.flatMap((msg) =>
+    const thirdCall = client.seen[2];
+    assert.exists(thirdCall);
+    const replayed = thirdCall.messages.flatMap((msg) =>
       msg.contents.flatMap((c) => (c.type === 'text' ? [c.text] : [])),
     );
     expect(replayed).toContain('long job');
