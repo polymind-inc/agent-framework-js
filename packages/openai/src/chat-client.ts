@@ -18,7 +18,6 @@ import type {
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
 import {
-  arrayToStream,
   ChatClientError,
   ConfigurationError,
   ContentFilterError,
@@ -28,8 +27,8 @@ import {
   guardClientStream,
   mergeChatUpdates,
   NotImplementedError,
-  setIfDefined,
 } from '@polymind-inc/agent-framework-core';
+import { arrayToStream, setIfDefined } from '@polymind-inc/agent-framework-core/internal';
 import OpenAI, { AzureOpenAI } from 'openai';
 import type { ParseContext } from './from-openai.js';
 import {

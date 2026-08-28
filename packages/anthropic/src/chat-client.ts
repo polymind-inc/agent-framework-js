@@ -14,7 +14,6 @@ import type {
   WebSearchToolOptions,
 } from '@polymind-inc/agent-framework-core';
 import {
-  arrayToStream,
   ChatClientError,
   ConfigurationError,
   chatResponseToUpdates,
@@ -22,8 +21,8 @@ import {
   createResponseStream,
   guardClientStream,
   mergeChatUpdates,
-  setIfDefined,
 } from '@polymind-inc/agent-framework-core';
+import { arrayToStream, setIfDefined } from '@polymind-inc/agent-framework-core/internal';
 import { createStreamParseState, parseMessage, parseStreamEvent } from './from-anthropic.js';
 import { mcpTool, webSearchTool } from './hosted-tools.js';
 import type { AnthropicChatOptions } from './options.js';

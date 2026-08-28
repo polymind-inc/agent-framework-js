@@ -15,9 +15,12 @@ import {
   isHostedApproval,
   MESSAGE_SOURCE_KEY,
   resolveResponseFormat,
-  topLevelMediaType,
 } from '@polymind-inc/agent-framework-core';
-import { answeredCallIds, safeStringify } from '@polymind-inc/agent-framework-core/internal';
+import {
+  answeredCallIds,
+  safeStringify,
+  topLevelMediaType,
+} from '@polymind-inc/agent-framework-core/internal';
 
 /** A Responses API input item, kept loose so unmodelled item types pass through. */
 export type ResponsesInputItem = Record<string, unknown>;

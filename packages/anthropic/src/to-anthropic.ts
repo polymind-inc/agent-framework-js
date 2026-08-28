@@ -12,9 +12,8 @@ import {
   resolveResponseFormat,
   serializeContent,
   textOfContents,
-  topLevelMediaType,
 } from '@polymind-inc/agent-framework-core';
-import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
+import { isRecord, safeStringify, topLevelMediaType } from '@polymind-inc/agent-framework-core/internal';
 import { MCP_SERVER_SPEC_TYPE } from './hosted-tools.js';
 
 /** A Messages API content block, kept loose so unmodelled block types pass through. */

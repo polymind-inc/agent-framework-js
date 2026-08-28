@@ -2,7 +2,6 @@ import type { Message } from '@polymind-inc/agent-framework-core';
 import {
   Agent,
   approvalResponse,
-  arrayToStream,
   ChatClientError,
   ConfigurationError,
   ContentFilterError,
@@ -11,6 +10,7 @@ import {
   textContent,
   tool,
 } from '@polymind-inc/agent-framework-core';
+import { arrayToStream } from '@polymind-inc/agent-framework-core/internal';
 import OpenAI, { AzureOpenAI } from 'openai';
 import { assert, describe, expect, it, vi } from 'vitest';
 import { OpenAIChatClient } from './chat-client.js';
