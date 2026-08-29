@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Framework — Anthropic example</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <nav>
+          <a href="/">Chat</a>
+          <a href="/canvas.html">Canvas</a>
+          <a href="/structured.html">Structured output</a>
+          <a href="/anthropic.html" aria-current="page">Anthropic</a>
+        </nav>
+        <h1>Same page, different provider</h1>
+        <p class="warning">
+          This page is the chat example with <code>AnthropicChatClient</code> swapped in — the
+          agent, tools and streaming code are unchanged. Keys pasted here stay in memory — in
+          production, run agents server-side.
+        </p>
+        <div class="settings">
+          <label>
+            API key
+            <input id="api-key" type="password" placeholder="sk-ant-..." autocomplete="off" />
+          </label>
+          <label>
+            Base URL
+            <input id="base-url" type="text" placeholder="https://proxy.example.com (optional)" />
+          </label>
+          <label>
+            Model
+            <input id="model" type="text" value="claude-sonnet-4-5" />
+          </label>
+        </div>
+      </header>
+      <section id="log" role="log" aria-live="polite" aria-relevant="additions"></section>
+      <form id="composer">
+        <input
+          id="prompt"
+          type="text"
+          aria-label="Chat message"
+          placeholder="Try: switch the page to dark mode, then tell me my time zone"
+          autocomplete="off"
+        />
+        <button id="send" type="submit">Send</button>
+      </form>
+    </main>
+    <script type="module" src="/src/anthropic.ts"></script>
+  </body>
+</html>

@@ -73,3 +73,17 @@ pnpm --filter example-04-a2a server
 | Multi-turn | A question from the agent, task linking, and session persistence | `pnpm --filter example-04-a2a multi-turn` |
 | Background | Continuation tokens: resuming a task, and re-subscribing to a live one | `pnpm --filter example-04-a2a background` |
 | Authentication | A static token, and one that expires and is refreshed on a 401 | Start the agent with `A2A_TOKEN=invoice-secret`, then run `A2A_TOKEN=invoice-secret pnpm --filter example-04-a2a authentication` |
+
+## Browser
+
+One Vite app, four pages, each running the agent loop entirely in the browser. API keys are
+pasted into the page and kept in memory — see [`05-browser/README.md`](05-browser/README.md) for
+why production agents belong server-side. Start with `pnpm --filter example-05-browser dev`, then
+open the page:
+
+| Page | What it demonstrates |
+| --- | --- |
+| `/` | Chat: streaming into the DOM, client-side tools, session persistence in `localStorage` |
+| `/canvas.html` | An agent that paints — every drawing primitive is a tool executing against a canvas |
+| `/structured.html` | Typed extraction: the schema-validated `response.value` fills the page's fields |
+| `/anthropic.html` | The chat page with `AnthropicChatClient` swapped in; the agent, tools and streaming code are unchanged |
