@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Framework — browser example</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Agent in the browser</h1>
+        <p class="warning">
+          The whole agent loop runs in this page. The key below stays in memory, but anything shipped to
+          a browser is readable by its user — in production, run agents server-side and keep provider
+          credentials there.
+        </p>
+        <div class="settings">
+          <label>
+            API key
+            <input id="api-key" type="password" placeholder="sk-..." autocomplete="off" />
+          </label>
+          <label>
+            Base URL
+            <input id="base-url" type="text" placeholder="https://proxy.example.com/v1 (optional)" />
+          </label>
+          <label>
+            Model
+            <input id="model" type="text" value="gpt-4o-mini" />
+          </label>
+        </div>
+      </header>
+      <section id="log" aria-live="polite"></section>
+      <form id="composer">
+        <input
+          id="prompt"
+          type="text"
+          placeholder="Try: switch the page to dark mode, then tell me my time zone"
+          autocomplete="off"
+        />
+        <button id="send" type="submit">Send</button>
+        <button id="clear" type="button">Clear</button>
+      </form>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

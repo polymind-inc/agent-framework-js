@@ -73,3 +73,14 @@ pnpm --filter example-04-a2a server
 | Multi-turn | A question from the agent, task linking, and session persistence | `pnpm --filter example-04-a2a multi-turn` |
 | Background | Continuation tokens: resuming a task, and re-subscribing to a live one | `pnpm --filter example-04-a2a background` |
 | Authentication | A static token, and one that expires and is refreshed on a 401 | Start the agent with `A2A_TOKEN=invoice-secret`, then run `A2A_TOKEN=invoice-secret pnpm --filter example-04-a2a authentication` |
+
+## Browser
+
+A chat page that runs the agent loop entirely in the browser: streaming into the DOM, client-side
+tools that reach browser APIs, and session persistence in `localStorage`. The OpenAI API key is
+pasted into the page and kept in memory — see [`05-browser/README.md`](05-browser/README.md) for
+why production agents belong server-side.
+
+| Example | What it demonstrates | Command |
+| --- | --- | --- |
+| Browser chat | The agent loop, streaming, tools, and sessions running in a web page | `pnpm --filter example-05-browser dev` |

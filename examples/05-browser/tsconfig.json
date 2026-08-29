@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.neutral.json",
+  "compilerOptions": {
+    "isolatedDeclarations": false,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

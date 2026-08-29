@@ -1,0 +1,24 @@
+{
+  "name": "example-05-browser",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@polymind-inc/agent-framework": "workspace:^",
+    "openai": "catalog:",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "^8.2.2"
+  }
+}
