@@ -14,7 +14,7 @@ Open the printed URL, paste an API key into the page, and try the pages — they
 | [`/`](index.html) — Chat | Streaming into the DOM, client-side tools (`set_theme`, `get_local_time`), and session persistence in `localStorage`: the session is plain JSON, so persisting it is `JSON.stringify(session)` and resuming after a reload is `agent.deserializeSession(...)` |
 | [`/canvas.html`](canvas.html) — Canvas | An agent that paints: every drawing primitive is a `tool()` executing against a 2D canvas context, so one instruction becomes a series of tool calls rendered as they run |
 | [`/structured.html`](structured.html) — Structured output | A schema passed as `responseFormat`; the typed, validated `response.value` fills the page's fields directly |
-| [`/anthropic.html`](anthropic.html) — Anthropic | The chat page with `AnthropicChatClient` swapped in — the rest of the code is identical, which is the point |
+| [`/anthropic.html`](anthropic.html) — Anthropic | The chat page with `AnthropicChatClient` swapped in — the agent, tools and streaming code carry over unchanged, which is the point (it skips the chat page's persistence to stay small) |
 
 Suggested first prompts:
 

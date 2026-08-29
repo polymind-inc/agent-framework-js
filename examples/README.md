@@ -86,4 +86,4 @@ open the page:
 | `/` | Chat: streaming into the DOM, client-side tools, session persistence in `localStorage` |
 | `/canvas.html` | An agent that paints — every drawing primitive is a tool executing against a canvas |
 | `/structured.html` | Typed extraction: the schema-validated `response.value` fills the page's fields |
-| `/anthropic.html` | The chat page with `AnthropicChatClient` swapped in; the page code is otherwise identical |
+| `/anthropic.html` | The chat page with `AnthropicChatClient` swapped in; the agent, tools and streaming code are unchanged |

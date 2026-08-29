@@ -1,9 +1,11 @@
 /**
  * Anthropic — the same browser chat, different provider.
  *
- * `AnthropicChatClient` is a `ChatClient` like any other, so the page code is identical to the
- * OpenAI chat — only the client construction differs. The Anthropic SDK has the same explicit
- * browser opt-in as OpenAI's, and CORS on the Anthropic API allows direct calls from a page.
+ * `AnthropicChatClient` is a `ChatClient` like any other, so the agent, tools and streaming code
+ * carry over from the OpenAI chat page unchanged — only the client construction differs. (The
+ * chat page's localStorage persistence is left out to keep the comparison small.) The Anthropic
+ * SDK has the same explicit browser opt-in as OpenAI's, and CORS on the Anthropic API allows
+ * direct calls from a page.
  *
  * Run: `pnpm --filter example-05-browser dev`, then open /anthropic.html
  */
