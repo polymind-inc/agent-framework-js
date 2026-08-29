@@ -145,7 +145,7 @@ async function send(): Promise<void> {
       }
       if (update.text !== '') {
         reply ??= bubble(log, 'assistant');
-        reply.textContent += update.text;
+        reply.append(update.text);
         reply.scrollIntoView({ block: 'end' });
       }
     }

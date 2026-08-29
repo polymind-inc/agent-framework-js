@@ -24,6 +24,7 @@ export function chip(log: HTMLElement, text: string): void {
   el.className = 'chip';
   el.textContent = text;
   log.append(el);
+  el.scrollIntoView({ block: 'end' });
 }
 
 export function loadJson<T>(key: string): T | undefined {
