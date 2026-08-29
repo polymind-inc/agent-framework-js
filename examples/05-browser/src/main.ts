@@ -48,8 +48,29 @@ const clearButton = element<HTMLButtonElement>('#clear');
 
 type TranscriptEntry = { role: 'user' | 'assistant'; text: string };
 
+function isTranscriptEntry(value: unknown): value is TranscriptEntry {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  return (entry.role === 'user' || entry.role === 'assistant') && typeof entry.text === 'string';
+}
+
+function restoreTranscript(): TranscriptEntry[] {
+  const stored = loadJson<unknown>(TRANSCRIPT_KEY);
+  if (stored === undefined) {
+    return [];
+  }
+  if (Array.isArray(stored) && stored.every(isTranscriptEntry)) {
+    return stored;
+  }
+  // Anything else parses but is not what this page wrote; drop it rather than render garbage.
+  removeStored(TRANSCRIPT_KEY);
+  return [];
+}
+
 // The session is the source of truth the model sees; the transcript only redraws past bubbles.
-const transcript: TranscriptEntry[] = loadJson<TranscriptEntry[]>(TRANSCRIPT_KEY) ?? [];
+const transcript: TranscriptEntry[] = restoreTranscript();
 for (const entry of transcript) {
   bubble(log, entry.role, entry.text);
 }
@@ -118,6 +139,8 @@ async function send(): Promise<void> {
   }
   promptInput.value = '';
   sendButton.disabled = true;
+  // Clearing mid-run would race the in-flight loop, which repopulates the log and storage.
+  clearButton.disabled = true;
   bubble(log, 'user', text);
   transcript.push({ role: 'user', text });
   let reply: HTMLElement | undefined;
@@ -146,6 +169,7 @@ async function send(): Promise<void> {
     bubble(log, 'error', errorText(error));
   } finally {
     sendButton.disabled = false;
+    clearButton.disabled = false;
     promptInput.focus();
   }
 }
