@@ -12,7 +12,7 @@ import { Agent, type AgentSession, tool } from '@polymind-inc/agent-framework';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import OpenAI from 'openai';
 import { z } from 'zod';
-import { bubble, chip, element, errorText, readSettings } from './ui.js';
+import { bubble, chip, element, errorText, readSettings, streamingBubble } from './ui.js';
 
 const canvas = element<HTMLCanvasElement>('#canvas');
 const context = canvas.getContext('2d');
@@ -133,7 +133,7 @@ async function send(): Promise<void> {
   promptInput.value = '';
   sendButton.disabled = true;
   bubble(log, 'user', text);
-  let reply: HTMLElement | undefined;
+  const reply = streamingBubble(log);
   try {
     session ??= active.createSession();
     const stream = active.run(text, { session });
@@ -144,13 +144,11 @@ async function send(): Promise<void> {
         }
       }
       if (update.text !== '') {
-        reply ??= bubble(log, 'assistant');
         reply.append(update.text);
-        reply.scrollIntoView({ block: 'end' });
       }
     }
   } catch (error) {
-    reply?.remove();
+    reply.remove();
     bubble(log, 'error', errorText(error));
   } finally {
     sendButton.disabled = false;

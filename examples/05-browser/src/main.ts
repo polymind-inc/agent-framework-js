@@ -14,7 +14,17 @@ import { Agent, type AgentSession, tool } from '@polymind-inc/agent-framework';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
 import OpenAI from 'openai';
 import { z } from 'zod';
-import { bubble, chip, element, errorText, loadJson, readSettings, removeStored, saveJson } from './ui.js';
+import {
+  bubble,
+  chip,
+  element,
+  errorText,
+  loadJson,
+  readSettings,
+  removeStored,
+  saveJson,
+  streamingBubble,
+} from './ui.js';
 
 const SESSION_KEY = 'agent-framework-example.session';
 const TRANSCRIPT_KEY = 'agent-framework-example.transcript';
@@ -143,7 +153,7 @@ async function send(): Promise<void> {
   clearButton.disabled = true;
   bubble(log, 'user', text);
   transcript.push({ role: 'user', text });
-  let reply: HTMLElement | undefined;
+  const reply = streamingBubble(log);
   try {
     const stream = active.run(text, { session: currentSession(active) });
     for await (const update of stream) {
@@ -153,19 +163,17 @@ async function send(): Promise<void> {
         }
       }
       if (update.text !== '') {
-        reply ??= bubble(log, 'assistant');
         reply.append(update.text);
-        reply.scrollIntoView({ block: 'end' });
       }
     }
-    const replyText = reply?.textContent ?? '';
+    const replyText = reply.text();
     if (replyText !== '') {
       transcript.push({ role: 'assistant', text: replyText });
     }
     saveJson(SESSION_KEY, session);
     saveJson(TRANSCRIPT_KEY, transcript);
   } catch (error) {
-    reply?.remove();
+    reply.remove();
     bubble(log, 'error', errorText(error));
   } finally {
     sendButton.disabled = false;

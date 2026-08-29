@@ -13,7 +13,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Agent, type AgentSession, tool } from '@polymind-inc/agent-framework';
 import { AnthropicChatClient } from '@polymind-inc/agent-framework/anthropic';
 import { z } from 'zod';
-import { bubble, chip, element, errorText, readSettings } from './ui.js';
+import { bubble, chip, element, errorText, readSettings, streamingBubble } from './ui.js';
 
 const setTheme = tool({
   name: 'set_theme',
@@ -83,7 +83,7 @@ async function send(): Promise<void> {
   promptInput.value = '';
   sendButton.disabled = true;
   bubble(log, 'user', text);
-  let reply: HTMLElement | undefined;
+  const reply = streamingBubble(log);
   try {
     session ??= active.createSession();
     const stream = active.run(text, { session });
@@ -94,13 +94,11 @@ async function send(): Promise<void> {
         }
       }
       if (update.text !== '') {
-        reply ??= bubble(log, 'assistant');
         reply.append(update.text);
-        reply.scrollIntoView({ block: 'end' });
       }
     }
   } catch (error) {
-    reply?.remove();
+    reply.remove();
     bubble(log, 'error', errorText(error));
   } finally {
     sendButton.disabled = false;

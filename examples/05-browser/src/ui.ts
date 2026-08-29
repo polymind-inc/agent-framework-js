@@ -19,6 +19,32 @@ export function bubble(log: HTMLElement, kind: BubbleKind, text = ''): HTMLEleme
   return el;
 }
 
+/**
+ * An assistant bubble that appears on the first streamed chunk and grows by mutating a single
+ * text node, so a long response stays one DOM node instead of one per chunk.
+ */
+export function streamingBubble(log: HTMLElement): {
+  append(chunk: string): void;
+  text(): string;
+  remove(): void;
+} {
+  let el: HTMLElement | undefined;
+  let node: Text | undefined;
+  return {
+    append(chunk: string): void {
+      if (el === undefined || node === undefined) {
+        el = bubble(log, 'assistant');
+        node = document.createTextNode('');
+        el.append(node);
+      }
+      node.appendData(chunk);
+      el.scrollIntoView({ block: 'end' });
+    },
+    text: (): string => node?.data ?? '',
+    remove: (): void => el?.remove(),
+  };
+}
+
 export function chip(log: HTMLElement, text: string): void {
   const el = document.createElement('div');
   el.className = 'chip';
