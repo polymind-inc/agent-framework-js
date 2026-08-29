@@ -90,7 +90,16 @@ function currentAgent(): Agent {
 function currentSession(active: Agent): AgentSession {
   if (session === undefined) {
     const saved = loadJson<unknown>(SESSION_KEY);
-    session = saved === undefined ? active.createSession() : active.deserializeSession(saved);
+    if (saved !== undefined) {
+      try {
+        session = active.deserializeSession(saved);
+      } catch {
+        // Corrupted or incompatible saved state would fail every send; drop it and start over.
+        removeStored(SESSION_KEY);
+        chip(log, 'saved session could not be restored; starting fresh');
+      }
+    }
+    session ??= active.createSession();
   }
   return session;
 }
@@ -126,7 +135,10 @@ async function send(): Promise<void> {
         reply.scrollIntoView({ block: 'end' });
       }
     }
-    transcript.push({ role: 'assistant', text: reply?.textContent ?? '' });
+    const replyText = reply?.textContent ?? '';
+    if (replyText !== '') {
+      transcript.push({ role: 'assistant', text: replyText });
+    }
     saveJson(SESSION_KEY, session);
     saveJson(TRANSCRIPT_KEY, transcript);
   } catch (error) {
