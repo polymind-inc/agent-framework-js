@@ -1,25 +1,18 @@
 /**
- * Chat — the agent loop running in the browser.
+ * Anthropic — the same browser chat, different provider.
  *
- * The whole loop — model calls, function calling, streaming — runs in the page. Tools can
- * therefore touch browser APIs directly: one restyles the page, another reads the visitor's
- * clock. The session is plain JSON, persisted to `localStorage` across reloads.
+ * `AnthropicChatClient` is a `ChatClient` like any other, so the page code is identical to the
+ * OpenAI chat — only the client construction differs. The Anthropic SDK has the same explicit
+ * browser opt-in as OpenAI's, and CORS on the Anthropic API allows direct calls from a page.
  *
- * The API key entered in the page stays in this tab's memory, but anything shipped to a browser
- * is readable by its user — in production, run agents server-side and keep credentials there.
- *
- * Run: `pnpm --filter example-05-browser dev`
+ * Run: `pnpm --filter example-05-browser dev`, then open /anthropic.html
  */
+import Anthropic from '@anthropic-ai/sdk';
 import { Agent, type AgentSession, tool } from '@polymind-inc/agent-framework';
-import { OpenAIChatClient } from '@polymind-inc/agent-framework/openai';
-import OpenAI from 'openai';
+import { AnthropicChatClient } from '@polymind-inc/agent-framework/anthropic';
 import { z } from 'zod';
-import { bubble, chip, element, errorText, loadJson, readSettings, removeStored, saveJson } from './ui.js';
+import { bubble, chip, element, errorText, readSettings } from './ui.js';
 
-const SESSION_KEY = 'agent-framework-example.session';
-const TRANSCRIPT_KEY = 'agent-framework-example.transcript';
-
-// These tools run inside the page, so they can reach browser APIs the model cannot.
 const setTheme = tool({
   name: 'set_theme',
   description: 'Switch the page between the light and dark theme',
@@ -44,33 +37,19 @@ const log = element<HTMLElement>('#log');
 const composer = element<HTMLFormElement>('#composer');
 const promptInput = element<HTMLInputElement>('#prompt');
 const sendButton = element<HTMLButtonElement>('#send');
-const clearButton = element<HTMLButtonElement>('#clear');
-
-type TranscriptEntry = { role: 'user' | 'assistant'; text: string };
-
-// The session is the source of truth the model sees; the transcript only redraws past bubbles.
-const transcript: TranscriptEntry[] = loadJson<TranscriptEntry[]>(TRANSCRIPT_KEY) ?? [];
-for (const entry of transcript) {
-  bubble(log, entry.role, entry.text);
-}
-if (transcript.length > 0) {
-  chip(log, 'conversation restored from localStorage');
-}
 
 let agent: Agent | undefined;
 let session: AgentSession | undefined;
 let agentSettings = '';
 
 function currentAgent(): Agent {
-  const settings = readSettings('gpt-4o-mini');
+  const settings = readSettings('claude-sonnet-4-5');
   const fingerprint = JSON.stringify(settings);
   if (agent === undefined || fingerprint !== agentSettings) {
     agent = new Agent({
-      client: new OpenAIChatClient({
+      client: new AnthropicChatClient({
         model: settings.model,
-        // The OpenAI SDK refuses to run in a browser unless the risk of exposing the key is
-        // acknowledged explicitly. Here the key is typed into the page and kept in memory only.
-        client: new OpenAI({
+        client: new Anthropic({
           apiKey: settings.apiKey,
           dangerouslyAllowBrowser: true,
           ...(settings.baseURL === '' ? {} : { baseURL: settings.baseURL }),
@@ -85,14 +64,6 @@ function currentAgent(): Agent {
     agentSettings = fingerprint;
   }
   return agent;
-}
-
-function currentSession(active: Agent): AgentSession {
-  if (session === undefined) {
-    const saved = loadJson<unknown>(SESSION_KEY);
-    session = saved === undefined ? active.createSession() : active.deserializeSession(saved);
-  }
-  return session;
 }
 
 async function send(): Promise<void> {
@@ -110,10 +81,10 @@ async function send(): Promise<void> {
   promptInput.value = '';
   sendButton.disabled = true;
   bubble(log, 'user', text);
-  transcript.push({ role: 'user', text });
   let reply: HTMLElement | undefined;
   try {
-    const stream = active.run(text, { session: currentSession(active) });
+    session ??= active.createSession();
+    const stream = active.run(text, { session });
     for await (const update of stream) {
       for (const content of update.contents) {
         if (content.type === 'function_call') {
@@ -126,9 +97,6 @@ async function send(): Promise<void> {
         reply.scrollIntoView({ block: 'end' });
       }
     }
-    transcript.push({ role: 'assistant', text: reply?.textContent ?? '' });
-    saveJson(SESSION_KEY, session);
-    saveJson(TRANSCRIPT_KEY, transcript);
   } catch (error) {
     reply?.remove();
     bubble(log, 'error', errorText(error));
@@ -141,12 +109,4 @@ async function send(): Promise<void> {
 composer.addEventListener('submit', (event) => {
   event.preventDefault();
   void send();
-});
-
-clearButton.addEventListener('click', () => {
-  session = undefined;
-  transcript.length = 0;
-  log.replaceChildren();
-  removeStored(SESSION_KEY);
-  removeStored(TRANSCRIPT_KEY);
 });

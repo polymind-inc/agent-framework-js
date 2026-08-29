@@ -3,23 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Agent Framework — browser example</title>
+    <title>Agent Framework — structured output example</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <main>
       <header>
         <nav>
-          <a href="/" aria-current="page">Chat</a>
+          <a href="/">Chat</a>
           <a href="/canvas.html">Canvas</a>
-          <a href="/structured.html">Structured output</a>
+          <a href="/structured.html" aria-current="page">Structured output</a>
           <a href="/anthropic.html">Anthropic</a>
         </nav>
-        <h1>Agent in the browser</h1>
+        <h1>Typed extraction into the page</h1>
         <p class="warning">
-          The whole agent loop runs in this page. The key below stays in memory, but anything shipped to
-          a browser is readable by its user — in production, run agents server-side and keep provider
-          credentials there.
+          The schema-validated <code>response.value</code> fills the fields below directly — no
+          JSON.parse in sight. Keys pasted here stay in memory — in production, run agents server-side.
         </p>
         <div class="settings">
           <label>
@@ -36,18 +35,15 @@
           </label>
         </div>
       </header>
-      <section id="log" aria-live="polite"></section>
       <form id="composer">
-        <input
-          id="prompt"
-          type="text"
-          placeholder="Try: switch the page to dark mode, then tell me my time zone"
-          autocomplete="off"
-        />
-        <button id="send" type="submit">Send</button>
-        <button id="clear" type="button">Clear</button>
+        <textarea id="source" rows="5">
+Hi both! Quarterly planning is confirmed for March 12 at the Sapporo office, 10am sharp.
+Naomi and Kenji are in; I still need an answer from Aoi. — Mika</textarea>
+        <button id="extract" type="submit">Extract event</button>
       </form>
+      <section id="result" aria-live="polite"></section>
+      <section id="log" aria-live="polite"></section>
     </main>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/structured.ts"></script>
   </body>
 </html>

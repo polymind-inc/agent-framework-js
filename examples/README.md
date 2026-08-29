@@ -76,11 +76,14 @@ pnpm --filter example-04-a2a server
 
 ## Browser
 
-A chat page that runs the agent loop entirely in the browser: streaming into the DOM, client-side
-tools that reach browser APIs, and session persistence in `localStorage`. The OpenAI API key is
+One Vite app, four pages, each running the agent loop entirely in the browser. API keys are
 pasted into the page and kept in memory — see [`05-browser/README.md`](05-browser/README.md) for
-why production agents belong server-side.
+why production agents belong server-side. Start with `pnpm --filter example-05-browser dev`, then
+open the page:
 
-| Example | What it demonstrates | Command |
-| --- | --- | --- |
-| Browser chat | The agent loop, streaming, tools, and sessions running in a web page | `pnpm --filter example-05-browser dev` |
+| Page | What it demonstrates |
+| --- | --- |
+| `/` | Chat: streaming into the DOM, client-side tools, session persistence in `localStorage` |
+| `/canvas.html` | An agent that paints — every drawing primitive is a tool executing against a canvas |
+| `/structured.html` | Typed extraction: the schema-validated `response.value` fills the page's fields |
+| `/anthropic.html` | The chat page with `AnthropicChatClient` swapped in; the page code is otherwise identical |

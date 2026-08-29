@@ -3,23 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Agent Framework — browser example</title>
+    <title>Agent Framework — canvas example</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <main>
       <header>
         <nav>
-          <a href="/" aria-current="page">Chat</a>
-          <a href="/canvas.html">Canvas</a>
+          <a href="/">Chat</a>
+          <a href="/canvas.html" aria-current="page">Canvas</a>
           <a href="/structured.html">Structured output</a>
           <a href="/anthropic.html">Anthropic</a>
         </nav>
-        <h1>Agent in the browser</h1>
+        <h1>An agent that paints</h1>
         <p class="warning">
-          The whole agent loop runs in this page. The key below stays in memory, but anything shipped to
-          a browser is readable by its user — in production, run agents server-side and keep provider
-          credentials there.
+          Each drawing primitive is a client-side tool, so the function-calling loop renders on the
+          canvas as it runs. Keys pasted here stay in memory — in production, run agents server-side.
         </p>
         <div class="settings">
           <label>
@@ -36,18 +35,18 @@
           </label>
         </div>
       </header>
+      <canvas id="canvas" width="480" height="360"></canvas>
       <section id="log" aria-live="polite"></section>
       <form id="composer">
         <input
           id="prompt"
           type="text"
-          placeholder="Try: switch the page to dark mode, then tell me my time zone"
+          placeholder="Try: draw a snowman on a blue background"
           autocomplete="off"
         />
         <button id="send" type="submit">Send</button>
-        <button id="clear" type="button">Clear</button>
       </form>
     </main>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/canvas.ts"></script>
   </body>
 </html>

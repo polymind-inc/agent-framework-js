@@ -44,6 +44,27 @@ h1 {
   font-size: 1.4rem;
 }
 
+nav {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+nav a[aria-current="page"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+nav a:hover {
+  color: var(--accent);
+}
+
 .warning {
   margin: 0 0 0.75rem;
   padding: 0.5rem 0.75rem;
@@ -129,21 +150,66 @@ input:focus {
   font-size: 0.75rem;
 }
 
+#canvas {
+  align-self: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  max-width: 100%;
+}
+
+textarea {
+  font: inherit;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  resize: vertical;
+}
+
+#result dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+#result dt {
+  color: var(--muted);
+}
+
+#result dd {
+  margin: 0;
+}
+
 #composer {
   display: flex;
   gap: 0.5rem;
+}
+
+#composer:has(textarea) {
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 #prompt {
   flex: 1;
 }
 
-#send {
+#send,
+#extract {
   background: var(--accent);
   border-color: var(--accent);
   color: #ffffff;
 }
 
-#send:disabled {
+#send:disabled,
+#extract:disabled {
   opacity: 0.6;
 }

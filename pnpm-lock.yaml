@@ -141,6 +141,9 @@ importers:
 
   examples/05-browser:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.120.0
+        version: 0.120.0(zod@4.4.3)
       '@polymind-inc/agent-framework':
         specifier: workspace:^
         version: link:../../packages/meta
