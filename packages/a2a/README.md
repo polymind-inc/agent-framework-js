@@ -111,6 +111,24 @@ context providers of its own — the shared run-option fields it does not declar
 `middleware`, `responseFormat`, `options`) are ignored, as they are in the .NET, Python and Go
 implementations of this client.
 
+### What becomes a response message
+
+A task's **artifacts are its answer**: each one becomes a single message, and an artifact already
+delivered by a streamed `TaskArtifactUpdateEvent` is not repeated when the closing task snapshot
+carries it again.
+
+A task's **status message becomes a message only when the task is waiting for input**
+(`input-required`), because that message is the question addressed to you. In every other state it
+describes the run rather than answering it — the progress notes of a `working` task, the closing
+remark of a `completed` one, the reason a `failed`, `canceled` or `rejected` one stopped, the
+challenge of an `auth-required` one — and none of those reach the transcript, which would otherwise
+put "working on it" or "done" where the answer belongs. A task's `history` is never a source of
+messages either: it is the conversation so far, not this turn's output.
+
+Nothing is lost by this: the task or event each update came from is on `rawRepresentation`, and the
+task's state is on the session. The rule is the same whichever way you consume the run, so a task
+that answers with a closing remark and no artifacts folds to an empty response either way.
+
 ## Sessions
 
 A session holds the remote conversation's identity, and is plain JSON:
@@ -180,8 +198,11 @@ original part is always on `rawRepresentation`.
   needs to continue one conversation across calls.
 - **No push notifications, task listing or cancellation.** The client covers send, stream, get and
   re-subscribe. Use the SDK client directly for the rest.
-- **Progress messages are not transcript.** A status message is turned into content only when the
-  task is waiting for input; commentary attached to `working` is dropped.
+- **Status messages are not transcript.** Only an `input-required` status message becomes content;
+  see [What becomes a response message](#what-becomes-a-response-message). An agent that answers
+  with a closing status message and no artifact therefore folds to an empty response — read
+  `rawRepresentation` for the task itself. This matches .NET, which materializes status content for
+  `input-required` alone; Python and Go each surface a wider set.
 - **Server hosting is not part of this package.** Exposing a framework agent *as* an A2A agent is a
   separate concern; use `@a2a-js/sdk/server` directly.
 

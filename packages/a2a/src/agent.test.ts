@@ -1,6 +1,15 @@
 import { UnsupportedOperationError } from '@a2a-js/sdk/errors';
-import type { AgentResponseUpdate, ContinuationToken } from '@polymind-inc/agent-framework-core';
-import { AgentSession, ConfigurationError, isAbortError } from '@polymind-inc/agent-framework-core';
+import type {
+  AgentResponse,
+  AgentResponseUpdate,
+  ContinuationToken,
+} from '@polymind-inc/agent-framework-core';
+import {
+  AgentSession,
+  ConfigurationError,
+  isAbortError,
+  textOfContents,
+} from '@polymind-inc/agent-framework-core';
 import { assert, describe, expect, it } from 'vitest';
 import { A2AAgent } from './agent.js';
 import { A2AAgentError } from './errors.js';
@@ -336,6 +345,145 @@ describe('a streamed turn', () => {
     // never observed.
     expect(session.serviceSessionId).toBeUndefined();
     expect(readA2ASessionState(session)).toEqual({});
+  });
+});
+
+/**
+ * Folds one remote task both ways.
+ *
+ * Awaiting a run reads a whole task snapshot; iterating it reads the status and artifact events
+ * that describe the same task. Both are handed the same wire JSON, so any difference in the folded
+ * transcript is this package's, not the agent's.
+ */
+async function foldBothWays(
+  snapshot: Record<string, unknown>,
+  events: Array<Record<string, unknown>>,
+): Promise<{ awaited: AgentResponse<unknown>; streamed: AgentResponse<unknown> }> {
+  const blocking = fakeClient({ sendMessage: task(snapshot) });
+  const streaming = fakeClient({ sendMessageStream: events.map((event) => streamEvent(event)) });
+
+  const awaited = await new A2AAgent({ client: blocking.client, id: 'a1' }).run('q');
+  const stream = new A2AAgent({ client: streaming.client, id: 'a1' }).run('q');
+  for await (const _ of stream) {
+    // Drain: the folded transcript, not the individual updates, is what is being compared.
+  }
+  return { awaited, streamed: await stream.finalResponse() };
+}
+
+/** The whole folded transcript, as what a caller of either path actually reads. */
+function transcript(response: AgentResponse<unknown>): Array<{ role: string; text: string }> {
+  return response.messages.map((item) => ({ role: item.role, text: textOfContents(item.contents) }));
+}
+
+describe('one task consumed both ways', () => {
+  it('keeps a terminal status message out of the transcript on both paths', async () => {
+    const status = {
+      state: 'TASK_STATE_COMPLETED',
+      message: { messageId: 's1', role: 'ROLE_AGENT', parts: [{ text: 'Finished the lookup.' }] },
+    };
+
+    const { awaited, streamed } = await foldBothWays({ id: 'task-1', contextId: 'ctx-1', status }, [
+      { statusUpdate: { taskId: 'task-1', contextId: 'ctx-1', status } },
+    ]);
+
+    expect(transcript(awaited)).toEqual(transcript(streamed));
+    // The closing commentary of a finished task is not its answer, so neither path speaks it.
+    expect(awaited.text).toBe('');
+    expect(streamed.text).toBe('');
+  });
+
+  it.each(['TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED', 'TASK_STATE_AUTH_REQUIRED'])(
+    'keeps a %s status message out of the transcript on both paths',
+    async (state) => {
+      const status = {
+        state,
+        message: { messageId: 's1', role: 'ROLE_AGENT', parts: [{ text: 'the reason' }] },
+      };
+
+      const { awaited, streamed } = await foldBothWays({ id: 'task-1', contextId: 'ctx-1', status }, [
+        { statusUpdate: { taskId: 'task-1', contextId: 'ctx-1', status } },
+      ]);
+
+      expect(transcript(awaited)).toEqual(transcript(streamed));
+      expect(awaited.text).toBe('');
+      expect(streamed.text).toBe('');
+    },
+  );
+
+  it('materializes an input-required status message identically on both paths', async () => {
+    const status = {
+      state: 'TASK_STATE_INPUT_REQUIRED',
+      message: { messageId: 'q1', role: 'ROLE_AGENT', parts: [{ text: 'Which invoice?' }] },
+    };
+
+    const { awaited, streamed } = await foldBothWays({ id: 'task-1', contextId: 'ctx-1', status }, [
+      { statusUpdate: { taskId: 'task-1', contextId: 'ctx-1', status } },
+    ]);
+
+    expect(transcript(awaited)).toEqual(transcript(streamed));
+    // A question is addressed to the caller, so it is the one status message that is an answer.
+    expect(awaited.text).toBe('Which invoice?');
+    expect(streamed.text).toBe('Which invoice?');
+  });
+
+  it('names no message for an input-required status that carries no parts', async () => {
+    const status = {
+      state: 'TASK_STATE_INPUT_REQUIRED',
+      message: { messageId: 'q1', role: 'ROLE_AGENT', parts: [] },
+    };
+
+    const { awaited, streamed } = await foldBothWays({ id: 'task-1', contextId: 'ctx-1', status }, [
+      { statusUpdate: { taskId: 'task-1', contextId: 'ctx-1', status } },
+    ]);
+
+    // A question with nothing in it asks nothing. Identifying the message anyway would start an
+    // empty one during folding and split whatever surrounds it.
+    expect(transcript(awaited)).toEqual(transcript(streamed));
+    expect(awaited.messages.map((item) => item.messageId)).toEqual(
+      streamed.messages.map((item) => item.messageId),
+    );
+  });
+
+  it('does not synthesize an answer from the history of a terminal task without artifacts', async () => {
+    const history = [
+      { messageId: 'u1', contextId: 'ctx-1', role: 'ROLE_USER', parts: [{ text: 'question' }] },
+      { messageId: 'a1', contextId: 'ctx-1', role: 'ROLE_AGENT', parts: [{ text: 'answer from history' }] },
+    ];
+    const status = { state: 'TASK_STATE_COMPLETED' };
+
+    const { awaited, streamed } = await foldBothWays({ id: 'task-1', contextId: 'ctx-1', status, history }, [
+      { statusUpdate: { taskId: 'task-1', contextId: 'ctx-1', status } },
+    ]);
+
+    // The history is the conversation so far, not new output: replaying it would answer with a
+    // message the caller already has, and only the awaited path could ever see it.
+    expect(transcript(awaited)).toEqual(transcript(streamed));
+    expect(awaited.text).toBe('');
+    expect(streamed.text).toBe('');
+  });
+
+  it('emits one message per artifact and never twice for a streamed one', async () => {
+    const artifacts = [
+      { artifactId: 'a1', parts: [{ text: 'Invoice 42 ' }] },
+      { artifactId: 'a2', parts: [{ text: 'is paid.' }] },
+    ];
+    const status = { state: 'TASK_STATE_COMPLETED' };
+    const snapshot = { id: 'task-1', contextId: 'ctx-1', status, artifacts };
+
+    const { awaited, streamed } = await foldBothWays(snapshot, [
+      { artifactUpdate: { taskId: 'task-1', contextId: 'ctx-1', artifact: artifacts[0] } },
+      { artifactUpdate: { taskId: 'task-1', contextId: 'ctx-1', artifact: artifacts[1] } },
+      // Agents that close a stream by repeating the whole task must not double the answer.
+      { task: snapshot },
+    ]);
+
+    // One message per artifact, in order, and the repeated snapshot adds none.
+    const expected = [
+      { role: 'assistant', text: 'Invoice 42 ' },
+      { role: 'assistant', text: 'is paid.' },
+    ];
+    expect(transcript(awaited)).toEqual(expected);
+    expect(transcript(streamed)).toEqual(expected);
   });
 });
 
