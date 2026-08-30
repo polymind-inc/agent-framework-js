@@ -4,6 +4,21 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
+## Unreleased
+
+- **`@polymind-inc/agent-framework-agentserver`** — `POST /responses` now accepts an input item
+  that omits its `type`, the shape a plain OpenAI Responses `EasyInputMessage`
+  (`{ "role": "user", "content": "hello" }`) has and both reference servers accept. The absent
+  discriminator resolves to `message` — .NET's item validator supplies that default from its custom
+  discriminator resolver, Python's `_request_validators.py` reads `value.get("type", "message")` —
+  and the resolved `type` is written onto a copy of the item, so the handler, the minted item id
+  and the stored transcript all see `message` instead of quietly dropping an untyped item out of
+  persistence. The default applies only when the property is absent: `type: null` and any other
+  non-string `type` are still a 400. Defaulting does not waive the message rules, so an item with
+  no `type` must carry `role` and `content` — `{ "id": "x" }` is still rejected, now naming
+  `$.input[i].role` and `$.input[i].content` rather than only `$.input[i]`, and referencing a
+  stored item still needs the explicit `item_reference` discriminator.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

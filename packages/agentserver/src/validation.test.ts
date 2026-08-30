@@ -31,7 +31,8 @@ describe('schema validation paths', () => {
     [{ text: 'plain' }, '$.text'],
     [{ input: 42 }, '$.input'],
     [{ input: [42] }, '$.input[0]'],
-    [{ input: [{ role: 'user' }] }, '$.input[0]'],
+    // No `type` means the item is held to the message shape, so the missing field is named.
+    [{ input: [{ role: 'user' }] }, '$.input[0].content'],
     [{ conversation: 42 }, '$.conversation'],
     [{ conversation: { id: 42 } }, '$.conversation.id'],
     [{ metadata: [] }, '$.metadata'],
@@ -51,7 +52,8 @@ describe('schema validation paths', () => {
     expect(detailParams({ stream: 'yes', model: 42, input: [{}] })).toEqual([
       '$.stream',
       '$.model',
-      '$.input[0]',
+      '$.input[0].role',
+      '$.input[0].content',
     ]);
   });
 
@@ -69,6 +71,88 @@ describe('schema validation paths', () => {
       agent_reference: { name: 'assistant', version: '1' },
     });
     expect(request.model).toBe('gpt-4o');
+  });
+});
+
+describe('input items without an explicit type', () => {
+  it('defaults a missing discriminator to message and normalizes the item', () => {
+    const request = parseCreateRequest({ input: [{ role: 'user', content: 'hello' }] });
+
+    expect(request.input).toEqual([{ type: 'message', role: 'user', content: 'hello' }]);
+  });
+
+  it('keeps every caller-supplied field on the normalized item', () => {
+    const request = parseCreateRequest({
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'hi' }], id: 'msg_x', phase: 'commentary' },
+      ],
+    });
+
+    expect(request.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hi' }],
+        id: 'msg_x',
+        phase: 'commentary',
+      },
+    ]);
+  });
+
+  it('leaves the caller-owned request and item objects untouched', () => {
+    const item = { role: 'user', content: 'hello' };
+    const body = { input: [item] };
+
+    const request = parseCreateRequest(body);
+
+    expect(Object.hasOwn(item, 'type')).toBe(false);
+    expect(item).toEqual({ role: 'user', content: 'hello' });
+    expect(body.input[0]).toBe(item);
+    expect(request.input).not.toBe(body.input);
+  });
+
+  it('preserves an explicit valid discriminator', () => {
+    // `item_reference` is how a caller points at a stored item; it must survive untouched, and an
+    // explicit `message` must not be rewritten either.
+    const request = parseCreateRequest({
+      input: [
+        { type: 'item_reference', id: 'x' },
+        { type: 'message', role: 'user', content: 'hi' },
+      ],
+    });
+
+    expect(request.input).toEqual([
+      { type: 'item_reference', id: 'x' },
+      { type: 'message', role: 'user', content: 'hi' },
+    ]);
+  });
+
+  it('returns the very same request when no item needed the default', () => {
+    const body = { input: [{ type: 'item_reference', id: 'x' }] };
+
+    expect(parseCreateRequest(body).input).toBe(body.input);
+  });
+
+  it.each<[string, unknown]>([
+    ['null', null],
+    ['a number', 42],
+    ['an object', {}],
+    ['an array', ['message']],
+  ])('rejects a type of %s rather than taking the default for it', (_label, type) => {
+    expect(detailParams({ input: [{ type, role: 'user', content: 'hi' }] })).toEqual(['$.input[0]']);
+  });
+
+  it('still refuses an id-only object, which needs an explicit item_reference', () => {
+    expect(detailParams({ input: [{ id: 'x' }] })).toEqual(['$.input[0].role', '$.input[0].content']);
+  });
+
+  it.each([
+    [{ content: 'hi' }, ['$.input[0].role']],
+    [{ role: 42, content: 'hi' }, ['$.input[0].role']],
+    [{ role: 'user' }, ['$.input[0].content']],
+    [{ role: 'user', content: 42 }, ['$.input[0].content']],
+  ])('reports field-level paths for the defaulted message %j', (item, params) => {
+    expect(detailParams({ input: [item] })).toEqual(params);
   });
 });
 
