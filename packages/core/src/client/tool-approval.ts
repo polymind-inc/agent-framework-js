@@ -9,7 +9,12 @@ import {
 } from '../tools/approval.js';
 import type { AnyFunctionTool, Tool } from '../tools/tool.js';
 import { isFunctionTool } from '../tools/tool.js';
-import type { Content, FunctionApprovalRequestContent, FunctionCallContent } from '../types/content.js';
+import type {
+  Content,
+  FunctionApprovalRequestContent,
+  FunctionApprovalResponseContent,
+  FunctionCallContent,
+} from '../types/content.js';
 import { isRecord } from '../types/content.js';
 import type { Message } from '../types/message.js';
 import type { ChatResponseUpdate } from '../types/response.js';
@@ -134,57 +139,173 @@ function sameCall(a: FunctionCallContent, b: FunctionCallContent): boolean {
 }
 
 /**
- * Binds each inbound approval decision to the request the framework actually issued.
+ * One logical approval: a request that was issued, and everything that has settled it since.
+ *
+ * A request id cannot stand in for this. Local ids are derived from the call id, so a provider
+ * that reuses a call id issues a second request under the *same* id — two occurrences that a
+ * decision names identically.
+ */
+interface ApprovalOccurrence {
+  /** The id a decision names. Repeats across occurrences of a reused call id. */
+  readonly id: string;
+  /** The call this occurrence gates. A `function_result` naming it closes the occurrence. */
+  readonly callId: string;
+  /** The record a decision binds against — the stored snapshot whenever there is one. */
+  request: FunctionApprovalRequestContent;
+  /** A `function_result` for {@link callId} arrived after the request. */
+  closed: boolean;
+  /** A decision has already been bound here; one decision settles one occurrence. */
+  answered: boolean;
+}
+
+/** What one pass over the input transcript says about the approvals it describes. */
+interface ApprovalScan {
+  /** Every occurrence the transcript opened, in the order it opened them. */
+  readonly occurrences: ApprovalOccurrence[];
+  /** The occurrence each decision settles, keyed by the decision object itself. */
+  readonly bound: Map<FunctionApprovalResponseContent, ApprovalOccurrence>;
+  /** Decisions naming an id the transcript has no open occurrence for, in transcript order. */
+  readonly unbound: FunctionApprovalResponseContent[];
+  /** Whether the turn carries any decision of ours at all. */
+  hasDecision: boolean;
+}
+
+/**
+ * Derives the approval occurrences of the current input transcript, in transcript order.
+ *
+ * A request opens an occurrence; a `function_result` naming its call closes every occurrence for
+ * that call; a decision settles the one still open under its id. So a request that appears after
+ * the latest result for its call is a *new* occurrence, and neither an older result nor the
+ * decision that closed the older occurrence reaches it.
+ *
+ * Nothing derived here is persisted. The boundaries are recomputed from the messages of every
+ * run, which is what keeps a serialized session free of transcript positions.
+ */
+function scanOccurrences(messages: readonly Message[]): ApprovalScan {
+  const scan: ApprovalScan = { occurrences: [], bound: new Map(), unbound: [], hasDecision: false };
+  /** The occurrence a decision would currently settle, per id. */
+  const open = new Map<string, ApprovalOccurrence>();
+
+  for (const msg of messages) {
+    for (const content of msg.contents) {
+      if (content.type === 'function_result') {
+        // An empty call id names nothing — wire items that lost theirs must not close an
+        // unrelated occurrence.
+        if (content.callId !== '') {
+          for (const [id, occurrence] of open) {
+            if (occurrence.callId === content.callId) {
+              occurrence.closed = true;
+              open.delete(id);
+            }
+          }
+        }
+        continue;
+      }
+      if (isHostedApproval(content)) {
+        // Not ours to bind: the provider issued it and the provider settles it.
+        continue;
+      }
+      if (isApprovalRequest(content)) {
+        const current = open.get(content.id);
+        if (current !== undefined && !current.answered && current.callId === content.functionCall.callId) {
+          // A replayed copy of an occurrence that is still open. The first copy stays canonical,
+          // so a doctored replay neither displaces it nor asks the human a second time.
+          continue;
+        }
+        const occurrence: ApprovalOccurrence = {
+          id: content.id,
+          callId: content.functionCall.callId,
+          request: content,
+          closed: false,
+          answered: false,
+        };
+        scan.occurrences.push(occurrence);
+        open.set(content.id, occurrence);
+      } else if (isApprovalResponse(content)) {
+        scan.hasDecision = true;
+        const current = open.get(content.id);
+        if (current === undefined || current.answered) {
+          scan.unbound.push(content);
+        } else {
+          current.answered = true;
+          scan.bound.set(content, current);
+        }
+      }
+    }
+  }
+  return scan;
+}
+
+/**
+ * Folds the requests the store surfaced on an earlier turn into the scanned occurrences.
+ *
+ * A stored request records what a human was actually shown, so it outranks any copy the caller
+ * replayed — but only for the occurrence it was surfaced for, which is the newest one still open
+ * under its id. A store entry the transcript does not mention at all (a caller that echoes only
+ * the decision, or a service-managed transcript that never replays history) becomes an occurrence
+ * of its own, and the decision that arrived with nothing to bind against settles it.
+ */
+function mergeStoredRequests(scan: ApprovalScan, stored: readonly FunctionApprovalRequestContent[]): void {
+  for (const request of stored) {
+    let target: ApprovalOccurrence | undefined;
+    for (const occurrence of scan.occurrences) {
+      if (occurrence.id === request.id && !occurrence.closed) {
+        target = occurrence;
+      }
+    }
+    if (target !== undefined) {
+      target.request = request;
+      continue;
+    }
+    const occurrence: ApprovalOccurrence = {
+      id: request.id,
+      callId: request.functionCall.callId,
+      request,
+      closed: false,
+      answered: false,
+    };
+    scan.occurrences.push(occurrence);
+    const index = scan.unbound.findIndex((response) => response.id === request.id);
+    const response = index < 0 ? undefined : scan.unbound.splice(index, 1)[0];
+    if (response !== undefined) {
+      occurrence.answered = true;
+      scan.bound.set(response, occurrence);
+    }
+  }
+}
+
+/**
+ * Binds each inbound approval decision to the request occurrence the framework actually issued.
  *
  * Mirrors .NET `ApprovalResponseBindingChatClient`. Requests are known from two places: the store
  * (for callers that echo only the decision) and the message history itself (for callers that
- * replay the whole transcript). A decision whose id is not known is dropped, and one whose
- * `functionCall` differs from the recorded call is rebound to the recorded one.
+ * replay the whole transcript). A decision that settles no open occurrence is dropped, and one
+ * whose `functionCall` differs from the recorded call is rebound to the recorded one.
+ *
+ * Correlation is per occurrence rather than per call id: a completed call cannot retire the
+ * request a provider raised afterwards under the same id, and the decision that authorized the
+ * completed one cannot authorize the new one, because it settled an occurrence the result closed.
+ * This matches how the invocation loop underneath decides which decisions are actionable.
  *
  * ## Security considerations
  *
  * **The store wins.** A request that came out of the store is the record of what a human was
  * actually shown; one read out of the message history is whatever the caller sent this turn. When
- * both claim the same id the stored one is kept, so replaying a doctored copy of a request cannot
- * change the arguments an already-granted decision authorizes.
+ * both describe the same occurrence the stored one is kept, so replaying a doctored copy of a
+ * request cannot change the arguments an already-granted decision authorizes.
  */
 function bindInboundDecisions(messages: readonly Message[], store: ApprovalStateStore): Message[] {
-  const known = new Map<string, FunctionApprovalRequestContent>();
-  const fromStore = new Set<string>();
-  const answeredCallIds = new Set<string>();
-  for (const request of store.takePending()) {
-    known.set(request.id, request);
-    fromStore.add(request.id);
-  }
+  const scan = scanOccurrences(messages);
+  mergeStoredRequests(scan, store.takePending());
+  const stillPending = (): FunctionApprovalRequestContent[] =>
+    scan.occurrences
+      .filter((occurrence) => !occurrence.closed && !occurrence.answered)
+      .map((occurrence) => occurrence.request);
 
-  let hasDecision = false;
-  for (const msg of messages) {
-    for (const content of msg.contents) {
-      if (content.type === 'function_result') {
-        answeredCallIds.add(content.callId);
-      }
-      if (isHostedApproval(content)) {
-        // Not ours to bind: the provider issued it and the provider checks it.
-        continue;
-      }
-      if (isApprovalRequest(content)) {
-        if (!fromStore.has(content.id)) {
-          known.set(content.id, content);
-        }
-      } else if (isApprovalResponse(content)) {
-        hasDecision = true;
-      }
-    }
-  }
-  for (const [id, request] of known) {
-    if (answeredCallIds.has(request.functionCall.callId)) {
-      known.delete(id);
-    }
-  }
-  if (!hasDecision) {
+  if (!scan.hasDecision) {
     // `takePending` is destructive, but an unrelated turn must not consume approvals that the
     // caller has not answered yet.
-    store.addPending([...known.values()]);
+    store.addPending(stillPending());
     return [...messages];
   }
 
@@ -197,20 +318,19 @@ function bindInboundDecisions(messages: readonly Message[], store: ApprovalState
         kept.push(content);
         continue;
       }
-      const matched = known.get(content.id);
+      const matched = scan.bound.get(content);
       if (matched === undefined) {
-        // A decision for a request this session never issued cannot authorize anything.
+        // A decision for a request this session never issued — or a replayed duplicate that finds
+        // its occurrence already settled — cannot authorize anything.
         changed = true;
         continue;
       }
-      // One decision per request: a replayed duplicate finds nothing left to bind against.
-      known.delete(content.id);
-      if (sameCall(content.functionCall, matched.functionCall)) {
+      if (sameCall(content.functionCall, matched.request.functionCall)) {
         kept.push(content);
         continue;
       }
       changed = true;
-      kept.push({ ...content, functionCall: matched.functionCall });
+      kept.push({ ...content, functionCall: matched.request.functionCall });
     }
     if (!changed) {
       out.push(msg);
@@ -222,7 +342,7 @@ function bindInboundDecisions(messages: readonly Message[], store: ApprovalState
   // A caller may answer only part of a batch. Keep the remaining requests durable and inject
   // them into this turn so the invocation loop can surface them again instead of silently
   // consuming them when `takePending` cleared the store.
-  const pending = [...known.values()];
+  const pending = stillPending();
   store.addPending(pending);
   if (pending.length > 0) {
     out.push({ role: 'assistant', contents: pending, messageId: crypto.randomUUID() });

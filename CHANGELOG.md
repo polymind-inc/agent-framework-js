@@ -4,6 +4,19 @@ The umbrella `@polymind-inc/agent-framework` package and all `@polymind-inc/agen
 packages are versioned in lockstep; one entry here covers the set. During 0.x, **minor releases may
 contain breaking changes**; patch releases are fixes only.
 
+## Unreleased
+
+- **`@polymind-inc/agent-framework-core`** — an approval granted for a call id that an earlier
+  completed call had already used is no longer discarded. The approval layer correlated decisions
+  against a transcript-wide set of answered call ids, so a provider that reused a call id produced
+  a permanent approve → re-ask loop, or lost the decision outright, and a turn carrying no decision
+  deleted the stored request for the same reason. Decisions now bind per call occurrence, derived
+  from the order of the run's own messages: a result closes only the occurrence before it, and a
+  request after the latest result for its call opens a new one — the rule the function-calling loop
+  already applied underneath. Replayed copies of one still-open request coalesce with the first copy
+  canonical, so a doctored replay cannot displace the request a decision binds against. Nothing
+  positional is persisted; serialized sessions are unchanged in shape.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

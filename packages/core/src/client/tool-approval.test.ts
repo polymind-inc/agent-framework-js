@@ -3,6 +3,7 @@ import { Agent } from '../agent/agent.js';
 import { AgentSession } from '../agent/session.js';
 import {
   approvalResponse,
+  functionApprovalRequestContent,
   isApprovalRequest,
   isApprovalResponse,
   isHostedApproval,
@@ -16,7 +17,11 @@ import type {
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
+import type { ChatClient, ChatOptions } from './chat-client.js';
+import { withFunctionInvocation } from './function-invocation.js';
 import { MockChatClient } from './test-support.js';
+import type { ApprovalStateStore } from './tool-approval.js';
+import { sessionApprovalStore, withToolApproval } from './tool-approval.js';
 
 const deleteAll = tool({
   name: 'delete_all',
@@ -660,5 +665,339 @@ describe('tool approval', () => {
     expect(results(resumed.messages)).toEqual([
       ['c1', 'Error: Tool call invocation was rejected by user. legacy veto'],
     ]);
+  });
+});
+
+describe('approval occurrences of a reused call id', () => {
+  /** A gated tool that records the `value` argument of every call it actually runs. */
+  function recordingGate(executed: string[], name = 'gated') {
+    return tool({
+      name,
+      description: 'Needs a human',
+      parameters: { type: 'object', properties: { value: { type: 'string' } } },
+      approvalMode: 'always_require',
+      execute: async (input) => {
+        const value = String(input.value);
+        executed.push(value);
+        return `ran ${value}`;
+      },
+    });
+  }
+
+  /** `call()` with the arguments a gated tool records. */
+  function valued(callId: string, name: string, value: string): FunctionCallContent {
+    return { type: 'function_call', callId, name, arguments: `{"value":"${value}"}` };
+  }
+
+  /** The production composition, driven with an explicit transcript instead of through `Agent`. */
+  function composed(mock: MockChatClient, store: ApprovalStateStore): ChatClient<ChatOptions> {
+    return withToolApproval(withFunctionInvocation(mock), store);
+  }
+
+  /** A model that gates the same call id twice, then finishes. */
+  function reusingModel(): MockChatClient {
+    return new MockChatClient([
+      { contents: [valued('reused', 'gated', 'first')], finishReason: 'tool_calls' },
+      { contents: [valued('reused', 'gated', 'second')], finishReason: 'tool_calls' },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+  }
+
+  it('executes a later approval whose call id an earlier completed call already used', async () => {
+    const executed: string[] = [];
+    const agent = new Agent({ client: reusingModel(), tools: [recordingGate(executed)] });
+    const session = agent.createSession();
+
+    const first = await agent.run('go', { session });
+    const firstRequest = approvals(first)[0];
+    assert.exists(firstRequest);
+
+    const second = await agent.run(approvalResponse(firstRequest, true), { session });
+    const secondRequest = approvals(second)[0];
+    assert.exists(secondRequest);
+    // Same id, because a local request id is derived from the call id.
+    expect(secondRequest.id).toBe(firstRequest.id);
+    expect(secondRequest.functionCall.arguments).toBe('{"value":"second"}');
+
+    const third = await agent.run(approvalResponse(secondRequest, true), { session });
+    expect(executed).toEqual(['first', 'second']);
+    expect(third.text).toBe('done');
+  });
+
+  it('executes a reused call id whose later occurrence names a different tool', async () => {
+    const executed: string[] = [];
+    const mock = new MockChatClient([
+      { contents: [valued('reused', 'gated', 'first')], finishReason: 'tool_calls' },
+      { contents: [valued('reused', 'other_gate', 'second')], finishReason: 'tool_calls' },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const agent = new Agent({
+      client: mock,
+      tools: [recordingGate(executed), recordingGate(executed, 'other_gate')],
+    });
+    const session = agent.createSession();
+
+    const first = await agent.run('go', { session });
+    const firstRequest = approvals(first)[0];
+    assert.exists(firstRequest);
+    const second = await agent.run(approvalResponse(firstRequest, true), { session });
+    const secondRequest = approvals(second)[0];
+    assert.exists(secondRequest);
+    expect(secondRequest.functionCall.name).toBe('other_gate');
+
+    await agent.run(approvalResponse(secondRequest, true), { session });
+    expect(executed).toEqual(['first', 'second']);
+  });
+
+  it('does not let the completed occurrence decision authorize the reused call id', async () => {
+    const executed: string[] = [];
+    const agent = new Agent({ client: reusingModel(), tools: [recordingGate(executed)] });
+    const session = agent.createSession();
+
+    const first = await agent.run('go', { session });
+    const firstRequest = approvals(first)[0];
+    assert.exists(firstRequest);
+    await agent.run(approvalResponse(firstRequest, true), { session });
+
+    // No new decision. The transcript still replays the one that authorized the completed
+    // occurrence, and it names the same request id as the occurrence now waiting for a human.
+    const third = await agent.run('anything else?', { session });
+    expect(executed).toEqual(['first']);
+    expect(approvals(third).map((request) => request.functionCall.arguments)).toEqual(['{"value":"second"}']);
+
+    const resurfaced = approvals(third)[0];
+    assert.exists(resurfaced);
+    await agent.run(approvalResponse(resurfaced, true), { session });
+    expect(executed).toEqual(['first', 'second']);
+  });
+
+  it('keeps an unanswered stored request through a turn that carries no decision', async () => {
+    const executed: string[] = [];
+    const session = new AgentSession();
+    const store = sessionApprovalStore(session);
+    const request = functionApprovalRequestContent(valued('reused', 'gated', 'second'));
+    store.addPending([request]);
+    const mock = new MockChatClient([{ contents: [textContent('nothing to do')], finishReason: 'stop' }]);
+
+    await composed(mock, store).getResponse(
+      [
+        { role: 'assistant', contents: [valued('reused', 'gated', 'first')] },
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'reused', result: 'ran first' }] },
+        { role: 'user', contents: [textContent('anything else?')] },
+      ],
+      { tools: [recordingGate(executed)] },
+    );
+
+    expect(executed).toEqual([]);
+    expect(session.state._toolApproval).toEqual({ pending: [request] });
+  });
+
+  it('writes every unanswered request back into a destructively read store', async () => {
+    const executed: string[] = [];
+    const reads: number[] = [];
+    let pending: FunctionApprovalRequestContent[] = [];
+    let autoApproved: FunctionApprovalRequestContent[] = [];
+    const store: ApprovalStateStore = {
+      takePending(): FunctionApprovalRequestContent[] {
+        reads.push(pending.length);
+        const taken = pending;
+        pending = [];
+        return taken;
+      },
+      addPending(requests: readonly FunctionApprovalRequestContent[]): void {
+        for (const request of requests) {
+          if (!pending.some((known) => known.id === request.id)) {
+            pending.push(request);
+          }
+        }
+      },
+      takeAutoApproved(): FunctionApprovalRequestContent[] {
+        const taken = autoApproved;
+        autoApproved = [];
+        return taken;
+      },
+      setAutoApproved(requests: readonly FunctionApprovalRequestContent[]): void {
+        autoApproved = [...requests];
+      },
+    };
+    const answered = functionApprovalRequestContent(valued('c1', 'gated', 'one'));
+    const unanswered = functionApprovalRequestContent(valued('c2', 'gated', 'two'));
+    store.addPending([answered, unanswered]);
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    await composed(mock, store).getResponse(
+      [
+        // `c2` was used by an older call that already completed, so the transcript carries a
+        // result for it while the request the human still owes an answer to is only in the store.
+        { role: 'assistant', contents: [valued('c2', 'gated', 'older')] },
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'c2', result: 'ran older' }] },
+        { role: 'user', contents: [approvalResponse(answered, true)] },
+      ],
+      { tools: [recordingGate(executed)] },
+    );
+
+    expect(reads.length).toBeGreaterThan(0);
+    expect(executed).toEqual(['one']);
+    expect(pending.map((request) => request.id)).toEqual([unanswered.id]);
+  });
+
+  it('coalesces replayed copies of one still-open request into a single execution', async () => {
+    const executed: string[] = [];
+    const session = new AgentSession();
+    const store = sessionApprovalStore(session);
+    const request = functionApprovalRequestContent(valued('c1', 'gated', 'only'));
+    store.addPending([request]);
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    await composed(mock, store).getResponse(
+      [
+        { role: 'assistant', contents: [request] },
+        { role: 'assistant', contents: [request] },
+        { role: 'user', contents: [approvalResponse(request, true)] },
+      ],
+      { tools: [recordingGate(executed)] },
+    );
+
+    expect(executed).toEqual(['only']);
+    expect(session.state._toolApproval).toBeUndefined();
+  });
+
+  it('keeps the first copy canonical when a replay doctors a still-open request', async () => {
+    const executed: string[] = [];
+    // Nothing in the store: the transcript is the only record, so the copy the caller replays
+    // first is the one the decision has to bind against.
+    const store = sessionApprovalStore(new AgentSession());
+    const request = functionApprovalRequestContent(valued('c1', 'gated', 'safe'));
+    const doctored: FunctionApprovalRequestContent = {
+      ...request,
+      functionCall: valued('c1', 'gated', 'everything'),
+    };
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    await composed(mock, store).getResponse(
+      [
+        { role: 'assistant', contents: [request] },
+        { role: 'assistant', contents: [doctored] },
+        { role: 'user', contents: [approvalResponse(doctored, true)] },
+      ],
+      { tools: [recordingGate(executed)] },
+    );
+
+    expect(executed).toEqual(['safe']);
+  });
+
+  it('resumes a reused call id in a service-managed session', async () => {
+    // The service owns the transcript, so history is never replayed: every occurrence is known
+    // only from the store, and the decision arrives with nothing beside it.
+    const executed: string[] = [];
+    const agent = new Agent({ client: reusingModel(), tools: [recordingGate(executed)] });
+    const session = agent.createSession({ serviceSessionId: 'conv_1' });
+
+    const first = await agent.run('go', { session });
+    const firstRequest = approvals(first)[0];
+    assert.exists(firstRequest);
+    const second = await agent.run(approvalResponse(firstRequest, true), { session });
+    const secondRequest = approvals(second)[0];
+    assert.exists(secondRequest);
+
+    const third = await agent.run(approvalResponse(secondRequest, true), { session });
+    expect(executed).toEqual(['first', 'second']);
+    expect(third.text).toBe('done');
+  });
+
+  it('binds a batch of decisions whatever order they arrive in', async () => {
+    const executed: string[] = [];
+    const mock = new MockChatClient([
+      {
+        contents: [valued('c1', 'gated', 'first'), valued('c2', 'gated', 'second')],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const agent = new Agent({ client: mock, tools: [recordingGate(executed)] });
+    const session = agent.createSession();
+
+    const first = await agent.run('do both', { session });
+    const [one, two] = approvals(first);
+    assert.exists(one);
+    assert.exists(two);
+
+    const resumed = await agent.run([approvalResponse(two, true), approvalResponse(one, true)], {
+      session,
+    });
+    expect([...executed].sort()).toEqual(['first', 'second']);
+    expect(resumed.text).toBe('done');
+  });
+
+  it('re-surfaces only the unanswered remainder when an older result reuses a batch call id', async () => {
+    const executed: string[] = [];
+    const mock = new MockChatClient([
+      {
+        contents: [valued('c1', 'gated', 'first'), valued('c2', 'gated', 'second')],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const agent = new Agent({ client: mock, tools: [recordingGate(executed)] });
+    const session = agent.createSession();
+
+    // An older, completed call already used `c2`, so the transcript carries a result for it
+    // before the batch that is waiting for a human.
+    const first = await agent.run(
+      [
+        { role: 'assistant', contents: [valued('c2', 'gated', 'older')] },
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'c2', result: 'ran older' }] },
+        { role: 'user', contents: [textContent('do both')] },
+      ],
+      { session },
+    );
+    const [one, two] = approvals(first);
+    assert.exists(one);
+    assert.exists(two);
+
+    const partial = await agent.run(approvalResponse(one, true), { session });
+    expect(executed).toEqual(['first']);
+    expect(approvals(partial).map((request) => request.functionCall.callId)).toEqual(['c2']);
+
+    const resumed = await agent.run(approvalResponse(two, true), { session });
+    expect(executed).toEqual(['first', 'second']);
+    expect(resumed.text).toBe('done');
+  });
+
+  it('resumes a reused call id across a serialized session', async () => {
+    const executed: string[] = [];
+    const agent = new Agent({ client: reusingModel(), tools: [recordingGate(executed)] });
+    const session = agent.createSession();
+
+    const first = await agent.run('go', { session });
+    const firstRequest = approvals(first)[0];
+    assert.exists(firstRequest);
+    const second = await agent.run(approvalResponse(firstRequest, true), { session });
+    const secondRequest = approvals(second)[0];
+    assert.exists(secondRequest);
+
+    const serialized = JSON.parse(JSON.stringify(session)) as { state: Record<string, unknown> };
+    // Deep equality, so a transcript index, message position or turn number added to the record
+    // would fail here: occurrence boundaries are re-derived from the input transcript instead.
+    expect(serialized.state._toolApproval).toEqual({
+      pending: [
+        {
+          type: 'function_approval_request',
+          id: 'ficc_reused',
+          userInputRequest: true,
+          functionCall: {
+            type: 'function_call',
+            callId: 'reused',
+            name: 'gated',
+            arguments: '{"value":"second"}',
+          },
+        },
+      ],
+    });
+
+    const restored = AgentSession.fromJSON(serialized);
+    const third = await agent.run(approvalResponse(secondRequest, true), { session: restored });
+    expect(executed).toEqual(['first', 'second']);
+    expect(third.text).toBe('done');
   });
 });
