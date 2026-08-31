@@ -601,9 +601,11 @@ export function startAgentRunSpan(
 /**
  * Records the outcome of a chat call on its span.
  *
- * `finishReason` is the value {@link responseFinishReason} resolved for this response; the caller
- * passes it in so the output messages, the message events and `gen_ai.response.finish_reasons` all
- * report one reading of one response.
+ * `finishReason` stamps the last output message, and nothing else here: the attribute is set from
+ * {@link setResponseAttributes}, which resolves the reason itself, and the message events are the
+ * caller's to add. Pass {@link responseFinishReason} of the same response — the caller resolves it
+ * once for the events too — so the message and the events read the response the same way the
+ * attribute does.
  */
 export function finishChatSpan(span: Span, response: ChatResponse<unknown>, finishReason?: string): void {
   setResponseAttributes(span, response);
