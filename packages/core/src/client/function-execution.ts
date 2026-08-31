@@ -29,6 +29,14 @@ import type {
  * `Content.from_function_result(result=…, exception="UserInputRequiredException")`.
  */
 const USER_INPUT_UNAVAILABLE_RESULT_TEXT = 'Tool requires user input but no request details were provided.';
+/**
+ * The `exception` marker that same result carries.
+ *
+ * Wire-visible, and therefore a fixed literal rather than the thrown error's `name`, so a consumer
+ * that branches on `function_result.exception` reads the same string here as from Python. The
+ * thrown error's own `name` — which a subclass or a rename can change — is never consulted.
+ */
+const USER_INPUT_REQUIRED_EXCEPTION = 'UserInputRequiredException';
 /** What a rejected call reports back to the model. Matches Python's `_tools.py` wording. */
 const REJECTED_RESULT_TEXT = 'Error: Tool call invocation was rejected by user.';
 
@@ -223,9 +231,9 @@ async function invokeOne(
             error,
             errorReport: {
               result: USER_INPUT_UNAVAILABLE_RESULT_TEXT,
-              // Python writes the exception *type* here rather than its message; the message is
+              // The marker names the exception *type*, not the thrown message; the message is
               // still reachable through `includeDetailedErrors`, as for every other failure.
-              exception: error.name,
+              exception: USER_INPUT_REQUIRED_EXCEPTION,
             },
           };
         } else {
