@@ -332,6 +332,42 @@ describe('stateless replay validation', () => {
   });
 });
 
+describe('unanswered function calls', () => {
+  const call = {
+    type: 'function_call',
+    callId: 'call_1',
+    name: 'book_flight',
+    arguments: '{"to":"Tokyo"}',
+  } as const;
+
+  it('omits a lone unanswered call instead of failing the conversion', () => {
+    // A transcript can legitimately end on a call nothing answered: an approval the user never
+    // decided, a run that stopped on its iteration budget, an abandoned stream. Replaying such a
+    // transcript is a normal thing to ask for, so the unanswerable item is dropped here rather
+    // than raising the way the reasoning-group check above does. The split is deliberate: the
+    // transcript keeps the call, and the request built from it leaves the call out.
+    const messages: Message[] = [{ role: 'assistant', contents: [call] }];
+
+    expect(() => toResponsesInput(messages)).not.toThrow();
+    expect(toResponsesInput(messages)).toEqual([]);
+  });
+
+  it('keeps the user turns around an unanswered call and removes only the call', () => {
+    const items = toResponsesInput([
+      { role: 'user', contents: [{ type: 'text', text: 'book me a flight' }] },
+      { role: 'assistant', contents: [call] },
+      { role: 'user', contents: [{ type: 'text', text: 'never mind' }] },
+    ]);
+
+    // The conversation the model reads back is the whole transcript minus the one unanswerable
+    // item; the user's own words on either side of it are not collateral.
+    expect(items).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'book me a flight' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'never mind' }] },
+    ]);
+  });
+});
+
 describe('approval serialization boundaries', () => {
   const localCall = {
     type: 'function_call',
