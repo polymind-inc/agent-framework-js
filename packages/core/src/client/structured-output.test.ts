@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ChatClientError } from '../errors.js';
 import { textContent } from '../types/content.js';
 import { chatResponse } from '../types/response.js';
-import { applyStructuredOutput, withStructuredOutput } from './structured-output.js';
+import { applyStructuredOutput, resolveResponseFormat, withStructuredOutput } from './structured-output.js';
 import { MockChatClient } from './test-support.js';
 
 /** A minimal responseFormat with a Standard Schema validator. */
@@ -209,5 +209,38 @@ describe('withStructuredOutput', () => {
     const response = await client.getResponse([{ role: 'user', contents: [textContent('hi')] }]);
     expect(response.text).toBe('plain');
     expect(response.value).toBeUndefined();
+  });
+});
+
+describe('resolveResponseFormat', () => {
+  it('defaults to strict for every accepted form', () => {
+    expect(resolveResponseFormat(schema as never).strict).toBe(true);
+    expect(resolveResponseFormat(rawFormat as never).strict).toBe(true);
+    expect(resolveResponseFormat({ name: 'person', schema: { type: 'object', properties: {} } }).strict).toBe(
+      true,
+    );
+    expect(resolveResponseFormat({ name: 'person', schema: { type: 'object' }, strict: false }).strict).toBe(
+      false,
+    );
+  });
+
+  it('names an unnamed format after the schema root title', () => {
+    const titled = { type: 'object', title: 'Person', properties: { name: { type: 'string' } } };
+    expect(resolveResponseFormat(titled).name).toBe('Person');
+    expect(resolveResponseFormat({ schema: titled }).name).toBe('Person');
+    expect(resolveResponseFormat({ name: 'explicit', schema: titled }).name).toBe('explicit');
+  });
+
+  it('falls back to "response" when there is no usable title', () => {
+    expect(resolveResponseFormat({ type: 'object', properties: {} }).name).toBe('response');
+    expect(resolveResponseFormat({ type: 'object', title: '', properties: {} }).name).toBe('response');
+    expect(resolveResponseFormat({ type: 'object', title: 7, properties: {} }).name).toBe('response');
+  });
+
+  it('keeps the schema object it was handed', () => {
+    // Providers own whatever rewriting their wire format needs; resolution itself copies nothing.
+    const raw = { type: 'object', properties: { name: { type: 'string' } } };
+    expect(resolveResponseFormat(raw).schema).toBe(raw);
+    expect(resolveResponseFormat({ name: 'person', schema: raw }).schema).toBe(raw);
   });
 });

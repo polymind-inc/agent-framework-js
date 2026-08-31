@@ -412,7 +412,11 @@ describe('tool declarations and choices', () => {
 
   it('carries a response-format description onto the wire', () => {
     expect(
-      toResponsesTextFormat({ name: 'answer', description: 'the shape', schema: { type: 'object' } }),
+      toResponsesTextFormat({
+        name: 'answer',
+        description: 'the shape',
+        schema: { type: 'object', properties: { a: { type: 'string' } } },
+      }),
     ).toMatchObject({ type: 'json_schema', name: 'answer', description: 'the shape' });
   });
 });
