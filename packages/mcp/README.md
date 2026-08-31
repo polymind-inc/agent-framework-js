@@ -56,6 +56,43 @@ A tool result's `_meta` envelope is preserved: it is copied onto every content i
 that result under `additionalProperties._meta`, matching the reference implementation, so a layer
 above can read per-item labels a server attached.
 
+## Tool names and schemas
+
+MCP puts no restriction on what a server calls a tool or on how it declares one; providers do. Two
+things are therefore normalized on the way out, and only on the way out:
+
+- **The exposed name.** Every character outside `[A-Za-z0-9_.-]` becomes `-`, so a server's
+  `search docs!` reaches the model as `search-docs-`. This is the reference implementations' rule
+  (Python's `_normalize_mcp_name`, Go's `normalizeMCPName`), so the same remote tool surfaces under
+  the same name across the SDKs.
+- **The input schema.** A tool that takes no arguments is commonly declared as a bare
+  `{ "type": "object" }`, which OpenAI rejects with a 400; it gains `properties: {}`. A missing
+  schema becomes `{ "type": "object", "properties": {} }`. Any other schema is passed through, and
+  the change is made on a copy — the server's own declaration is never modified.
+
+The server's own name is what still goes out on `tools/call`, and it is the name `allowedTools`
+matches, the name the `approvalMode` callback receives, and the name error messages use. Only what
+the model sees changes.
+
+`toolNamePrefix` namespaces the exposed names as `<prefix>_<name>`, which is how two servers that
+both advertise `search` are told apart:
+
+```ts
+const github = new McpClient({ url: githubUrl, toolNamePrefix: 'github' }); // github_search
+const jira = new McpClient({ url: jiraUrl, toolNamePrefix: 'jira' }); // jira_search
+```
+
+The prefix is normalized the same way, then loses any trailing `_`, `.` or `-`; one that
+normalizes away to nothing is ignored, as are leading separators on the tool name where the two
+join. Prefixes are the *only* way clients are separated: no client guesses at another's names, so
+two servers with a colliding tool name and no prefix stay colliding.
+
+If two of **one** server's tools would be exposed under the same name — `a b` and `a-b` both
+normalize to `a-b` — `getTools()` rejects and names both remote tools and the name they collide on.
+Keeping one silently would make the other unreachable, and which one survived would depend on the
+order the server happened to list them in. Narrow `allowedTools` to one of them, or ask the server
+to rename.
+
 ## Connection sources
 
 `McpClient` accepts exactly one connection source:

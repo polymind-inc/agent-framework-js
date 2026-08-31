@@ -7,6 +7,7 @@ import type {
   ToolContext,
 } from '@polymind-inc/agent-framework-core';
 import {
+  AgentFrameworkError,
   ConfigurationError,
   ToolInvocationError,
   textOfContents,
@@ -82,6 +83,80 @@ export interface McpClientConfig {
   headers?: Record<string, string> | McpHeaderProvider;
   /** Replaces the transport's `fetch`, for proxies and tests. */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Namespaces the tool names this client exposes to the model, as `<prefix>_<name>`.
+   *
+   * Two servers that both advertise `search` collide the moment their tools reach one agent, and
+   * nothing in MCP tells them apart — a client cannot know what another client called its tools.
+   * A prefix is how the caller separates them: `toolNamePrefix: 'github'` and
+   * `toolNamePrefix: 'jira'` expose `github_search` and `jira_search`, each still calling its own
+   * server's `search`.
+   *
+   * The prefix goes through the same normalization as a tool name, then loses any trailing `_`,
+   * `.` or `-`; a prefix that normalizes away to nothing is ignored. Leading separators are
+   * trimmed off the tool name where the two are joined, and a name that trims away entirely leaves
+   * the prefix standing alone.
+   *
+   * Only the exposed name changes. `tools/call`, {@link McpClientConfig.allowedTools},
+   * {@link McpClientConfig.approvalMode} and error messages all keep using the server's own name.
+   */
+  toolNamePrefix?: string;
+}
+
+/** Characters a provider accepts in a function name; everything else normalizes to `-`. */
+const DISALLOWED_NAME_CHARACTERS = /[^A-Za-z0-9_.-]/g;
+/** The separators trimmed off each side of the `<prefix>_<name>` join. */
+const LEADING_SEPARATORS = /^[_.-]+/;
+const TRAILING_SEPARATORS = /[_.-]+$/;
+
+/**
+ * Rewrites a server-chosen name into the identifier pattern providers accept.
+ *
+ * MCP puts no restriction on a tool name, while OpenAI and the other providers only accept
+ * `[A-Za-z0-9_.-]` in a function name — so a server offering `search docs!` would otherwise turn
+ * into a request the provider rejects. The rule is the reference implementations': Python's
+ * `_normalize_mcp_name` and Go's `normalizeMCPName` both replace every other character with `-`,
+ * so the same remote tool surfaces under the same name across the SDKs.
+ */
+function normalizeToolName(name: string): string {
+  return name.replace(DISALLOWED_NAME_CHARACTERS, '-');
+}
+
+/** The name a tool is exposed to the model under, given the configured prefix. */
+function localToolName(remoteName: string, toolNamePrefix: string | undefined): string {
+  const normalized = normalizeToolName(remoteName);
+  if (toolNamePrefix === undefined) {
+    return normalized;
+  }
+  const prefix = normalizeToolName(toolNamePrefix).replace(TRAILING_SEPARATORS, '');
+  if (prefix === '') {
+    return normalized;
+  }
+  const trimmed = normalized.replace(LEADING_SEPARATORS, '');
+  return trimmed === '' ? prefix : `${prefix}_${trimmed}`;
+}
+
+/**
+ * Copies a declared input schema into one every provider accepts.
+ *
+ * A tool that takes no arguments is commonly declared as a bare `{ "type": "object" }`, which
+ * OpenAI answers with a 400 because the object form requires `properties`. Adding the empty map is
+ * what Python's MCP loader does, and it says exactly what the server meant. A schema that is
+ * absent altogether is treated as that same zero-argument declaration; Python leaves it as an
+ * empty schema, which says nothing about the arguments at all. Any other schema is passed through.
+ *
+ * The copy is shallow — only the top-level `properties` key is ever written — so the schema the
+ * server owns is left as it was; nothing nested is modified.
+ */
+function normalizeInputSchema(schema: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (schema === undefined || schema === null) {
+    return { type: 'object', properties: {} };
+  }
+  const normalized = { ...schema };
+  if (normalized.type === 'object' && !Object.hasOwn(normalized, 'properties')) {
+    normalized.properties = {};
+  }
+  return normalized;
 }
 
 function approvalModeFor(policy: ApprovalPolicy | undefined, toolName: string): ApprovalMode {
@@ -91,11 +166,17 @@ function approvalModeFor(policy: ApprovalPolicy | undefined, toolName: string): 
   return typeof policy === 'function' ? policy(toolName) : policy;
 }
 
-/** A declared MCP tool, as `tools/list` reports it. */
+/**
+ * A declared MCP tool, as `tools/list` reports it.
+ *
+ * `inputSchema` is required by the protocol and by the SDK's own response validation, so the
+ * absent and null forms only arise for a non-conforming server reached some other way; they are
+ * accepted here rather than turned into a crash, as Python's loader does.
+ */
 interface DeclaredTool {
   name: string;
   description?: string;
-  inputSchema?: Record<string, unknown>;
+  inputSchema?: Record<string, unknown> | null;
 }
 
 /**
@@ -122,6 +203,17 @@ interface DeclaredTool {
  * framework has no home for yet (Python guards it with a deny-by-default callback and per-session
  * caps; .NET has none); elicitation is supported by *no* reference implementation; prompts are
  * message templates rather than callables. See the package README for the full table.
+ *
+ * ## Names and schemas
+ *
+ * MCP lets a server name a tool anything and declare a zero-argument tool as a bare
+ * `{ "type": "object" }`; providers accept neither. So the exposed name replaces every character
+ * outside `[A-Za-z0-9_.-]` with `-`, an object schema gains `properties: {}` when it has none, and
+ * a copy of the schema is what carries the change. The server's own name is what still goes out on
+ * `tools/call`, and what {@link McpClientConfig.allowedTools},
+ * {@link McpClientConfig.approvalMode} and error messages speak in.
+ * {@link McpClientConfig.toolNamePrefix} adds a namespace when several servers advertise the same
+ * tool; without it, one client never guesses at another's names.
  *
  * ## Security considerations
  *
@@ -183,14 +275,42 @@ export class McpClient {
    *
    * Called on demand rather than at startup, so a server that is briefly unreachable fails the one
    * run that needed it instead of the whole process.
+   *
+   * Each tool is exposed under a provider-safe name (see {@link McpClientConfig.toolNamePrefix}).
+   *
+   * @throws {AgentFrameworkError} When two of the server's tools would be exposed under the same
+   *   name. Silently keeping one of them would make the other unreachable, and which one survived
+   *   would depend on the order the server happened to list them in.
    */
   async getTools(): Promise<Array<FunctionTool<Record<string, unknown>, unknown>>> {
     const { tools } = await this.#connection.listTools();
     const declared = tools as unknown as DeclaredTool[];
 
-    return declared
-      .filter((entry) => this.#allowedTools?.has(entry.name) ?? true)
-      .map((entry) => this.#toFunctionTool(entry));
+    const remoteByLocalName = new Map<string, string>();
+    const exposed: Array<FunctionTool<Record<string, unknown>, unknown>> = [];
+    for (const entry of declared) {
+      if (!(this.#allowedTools?.has(entry.name) ?? true)) {
+        continue;
+      }
+      const localName = localToolName(entry.name, this.#config.toolNamePrefix);
+      const claimedBy = remoteByLocalName.get(localName);
+      if (claimedBy !== undefined) {
+        if (claimedBy !== entry.name) {
+          throw new AgentFrameworkError(
+            `MCP server ${this.#target} advertises two tools whose exposed name is the same ` +
+              `"${localName}": "${claimedBy}" and "${entry.name}". Both cannot be offered to the ` +
+              'model, so neither is: restrict `allowedTools` to one of them, or have the server ' +
+              'rename one.',
+          );
+        }
+        // The same tool listed twice names the same target, so the first entry stands. Offering it
+        // twice would be the duplicate-name rejection this normalization exists to avoid.
+        continue;
+      }
+      remoteByLocalName.set(localName, entry.name);
+      exposed.push(this.#toFunctionTool(entry, localName));
+    }
+    return exposed;
   }
 
   /**
@@ -207,14 +327,17 @@ export class McpClient {
     return mcpSkillsSource(this.#connection, config);
   }
 
-  #toFunctionTool(declared: DeclaredTool): FunctionTool<Record<string, unknown>, unknown> {
+  #toFunctionTool(declared: DeclaredTool, localName: string): FunctionTool<Record<string, unknown>, unknown> {
     return tool({
-      name: declared.name,
+      // The provider-facing name. Everything else below — the call, the approval decision, the
+      // error text — stays on the server's own name, which is what identifies the tool remotely.
+      name: localName,
       // Python parity (`_mcp.py`: `tool.description or ""`): a missing description stays empty
       // rather than the name doubling as prose.
       description: declared.description ?? '',
-      // The server's JSON Schema is the contract; the framework does not re-derive it.
-      parameters: declared.inputSchema ?? { type: 'object' },
+      // The server's JSON Schema is the contract; the framework does not re-derive it, it only
+      // fills in what a provider requires but the server left implicit.
+      parameters: normalizeInputSchema(declared.inputSchema),
       approvalMode: approvalModeFor(this.#config.approvalMode, declared.name),
       execute: async (input: unknown, ctx: ToolContext): Promise<Content[]> => {
         try {
