@@ -310,7 +310,35 @@ describe('payloads to response updates', () => {
     expect(question.continuationToken).toBeUndefined();
   });
 
-  it('surfaces a terminal status message, including a failure reason', () => {
+  it.each(['TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED'])(
+    'keeps the status message of a %s task out of the transcript',
+    (state) => {
+      const taskValue = task({
+        id: 'task-1',
+        contextId: 'ctx-1',
+        status: {
+          state,
+          message: {
+            messageId: 'status-1',
+            role: 'ROLE_AGENT',
+            parts: [{ text: 'invoice service failed' }],
+          },
+        },
+      });
+
+      const updates = updatesFromPayload({ $case: 'task', value: taskValue }, {});
+
+      expect(updates.flatMap((update) => update.contents)).toEqual([]);
+      // Dropped from the transcript, not from the response: the whole task is still reachable.
+      const [update] = updates;
+      assert.exists(update);
+      expect(update.rawRepresentation).toBe(taskValue);
+    },
+  );
+
+  it('keeps the status message of an auth-required task out of the transcript', () => {
+    // Not terminal — the task waits for the caller to authenticate — but the challenge describes
+    // the run rather than answering it, so it is commentary like any other non-question status.
     const updates = updatesFromPayload(
       {
         $case: 'task',
@@ -318,22 +346,18 @@ describe('payloads to response updates', () => {
           id: 'task-1',
           contextId: 'ctx-1',
           status: {
-            state: 'TASK_STATE_FAILED',
-            message: {
-              messageId: 'failure-1',
-              role: 'ROLE_AGENT',
-              parts: [{ text: 'invoice service failed' }],
-            },
+            state: 'TASK_STATE_AUTH_REQUIRED',
+            message: { messageId: 'auth-1', role: 'ROLE_AGENT', parts: [{ text: 'sign in first' }] },
           },
         }),
       },
       {},
     );
 
-    expect(updates.map((update) => update.text)).toContain('invoice service failed');
+    expect(updates.flatMap((update) => update.contents)).toEqual([]);
   });
 
-  it('falls back to the last agent history message when a task has no artifacts', () => {
+  it('does not fall back to history when a terminal task has no artifacts', () => {
     const updates = updatesFromPayload(
       {
         $case: 'task',
@@ -350,7 +374,8 @@ describe('payloads to response updates', () => {
       {},
     );
 
-    expect(updates.map((update) => update.text)).toContain('answer from history');
+    // The history is the conversation so far, not this turn's output.
+    expect(updates.flatMap((update) => update.contents)).toEqual([]);
   });
 
   it('does not replay a history message while a task is still working', () => {
@@ -365,7 +390,7 @@ describe('payloads to response updates', () => {
     });
 
     // Two polls of the same unfinished task, as resuming produces: neither may present the
-    // history as fresh output, or every poll would repeat it.
+    // history as fresh output, or every poll would repeat the same answer.
     for (let poll = 0; poll < 2; poll += 1) {
       const updates = updatesFromPayload({ $case: 'task', value: working }, {});
 
@@ -376,7 +401,7 @@ describe('payloads to response updates', () => {
     }
   });
 
-  it('does not fall back to history when the terminal task repeats only streamed artifacts', () => {
+  it('adds nothing when a terminal task repeats only streamed artifacts', () => {
     const observed: ObservedTaskState = {};
     const streamed = streamEvent({
       artifactUpdate: {
@@ -403,11 +428,12 @@ describe('payloads to response updates', () => {
       observed,
     );
 
-    // The artifact already delivered the answer; the history copy of it must not bring it back.
+    // The artifact already delivered the answer; neither the snapshot's copy of it nor the history
+    // may bring it back.
     expect(terminal.flatMap((update) => update.contents)).toEqual([]);
   });
 
-  it('emits a message mirrored in both the status and the history exactly once', () => {
+  it('emits nothing for a message mirrored in both the status and the history', () => {
     const finalMessage = { messageId: 'final-1', role: 'ROLE_AGENT', parts: [{ text: 'the answer' }] };
 
     const updates = updatesFromPayload(
@@ -423,7 +449,9 @@ describe('payloads to response updates', () => {
       {},
     );
 
-    expect(updates.map((update) => update.text).filter((text) => text === 'the answer')).toHaveLength(1);
+    // Neither source of a terminal task's closing message contributes, so there is nothing to
+    // deduplicate between them.
+    expect(updates.flatMap((update) => update.contents)).toEqual([]);
   });
 
   it('does not emit an artifact again when the terminal task repeats a streamed artifact', () => {

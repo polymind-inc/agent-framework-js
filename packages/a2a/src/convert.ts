@@ -275,21 +275,35 @@ function artifactUpdate(
   });
 }
 
-function isTerminalState(state: TaskState | undefined): boolean {
-  return (
-    state === TaskState.TASK_STATE_COMPLETED ||
-    state === TaskState.TASK_STATE_FAILED ||
-    state === TaskState.TASK_STATE_CANCELED ||
-    state === TaskState.TASK_STATE_REJECTED
-  );
+/**
+ * What a task status contributes to the transcript, which is nothing unless the task is waiting
+ * for input.
+ *
+ * Only then is the status message part of the answer: it is the question addressed to the caller,
+ * so it has to be readable for the caller to answer it. A status message in any other state — the
+ * progress notes of a working task, the closing remark of a `completed` one, the reason a `failed`,
+ * `canceled` or `rejected` one stopped, or the challenge of an `auth-required` one — describes the
+ * run rather than answering it, and folding it in would put "working on it" or "done" where the
+ * answer belongs. None of it is lost: every update carries the protocol object it came from in
+ * `rawRepresentation`, and the task state is on the session.
+ *
+ * This is the single rule for both ways a run is consumed. A whole-task snapshot (an awaited run)
+ * and a status-update event (a streamed one) describe the same remote task, so they must produce
+ * the same transcript. An empty result therefore also has to be left unnamed by both: a message id
+ * whose content was dropped would start an empty message during folding and split the surrounding
+ * artifact in two.
+ */
+function statusContents(state: TaskState | undefined, statusMessage: A2AMessage | undefined): Content[] {
+  return state === TaskState.TASK_STATE_INPUT_REQUIRED && statusMessage !== undefined
+    ? fromA2AParts(statusMessage.parts)
+    : [];
 }
 
 /**
  * Turns a whole task into updates: one per artifact, plus the question it is waiting on.
  *
- * A status message is only content when the task is waiting for input. In any other state it is
- * progress commentary the agent may or may not send, and folding it into the transcript would put
- * "working on it" in front of the answer.
+ * A task's own `history` is never a source of updates: it is the conversation so far, not this
+ * turn's output, and replaying it would answer with messages the caller already has.
  */
 function updatesFromTask(task: Task, observed: ObservedTaskState): AgentResponseUpdate[] {
   const state = task.status?.state;
@@ -302,34 +316,11 @@ function updatesFromTask(task: Task, observed: ObservedTaskState): AgentResponse
     );
 
   const statusMessage = task.status?.message;
-  if (isTerminalState(state) && artifacts.length === 0) {
-    // A finished task that produced no artifacts at all may still have answered as a plain
-    // message, kept in its history. Only that case falls back to the history: an unfinished
-    // task's history would be replayed by every poll, a task whose artifacts were merely
-    // filtered as already streamed has delivered its answer, and a history message the status
-    // branch below is about to surface would arrive twice.
-    const historyAnswer = [...(task.history ?? [])]
-      .reverse()
-      .find((message) => message.role === Role.ROLE_AGENT);
-    if (historyAnswer !== undefined && historyAnswer.messageId !== statusMessage?.messageId) {
-      updates.push(
-        update({
-          contents: fromA2AParts(historyAnswer.parts),
-          responseId: task.id,
-          messageId: historyAnswer.messageId,
-          additionalProperties: mergeMetadata(historyAnswer.metadata, task.metadata),
-          rawRepresentation: task,
-        }),
-      );
-    }
-  }
-  if (
-    (state === TaskState.TASK_STATE_INPUT_REQUIRED || isTerminalState(state)) &&
-    statusMessage !== undefined
-  ) {
+  const question = statusContents(state, statusMessage);
+  if (question.length > 0 && statusMessage !== undefined) {
     updates.push(
       update({
-        contents: fromA2AParts(statusMessage.parts),
+        contents: question,
         responseId: task.id,
         messageId: statusMessage.messageId,
         additionalProperties: mergeMetadata(statusMessage.metadata, task.metadata),
@@ -370,10 +361,7 @@ function updatesFromTask(task: Task, observed: ObservedTaskState): AgentResponse
 function updatesFromStatusUpdate(event: TaskStatusUpdateEvent): AgentResponseUpdate[] {
   const state = event.status?.state;
   const statusMessage = event.status?.message;
-  const contents =
-    state === TaskState.TASK_STATE_INPUT_REQUIRED && statusMessage !== undefined
-      ? fromA2AParts(statusMessage.parts)
-      : [];
+  const contents = statusContents(state, statusMessage);
   const createdAt = omitEmpty(event.status?.timestamp);
   const finishReason = finishReasonFor(state);
   return [
