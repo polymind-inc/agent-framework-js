@@ -107,6 +107,22 @@ contain breaking changes**; patch releases are fixes only.
   `getTools()` now rejects and names both remote tools and the name they collide on, rather than
   silently shadowing one of them.
 
+- **`@polymind-inc/agent-framework-core`** — a run that exhausts `maxIterations` no longer ends on
+  a tool call nobody will make. The final, over-budget request already withdrew the local function
+  declarations; it now also sends `toolChoice: 'none'` (previously `'auto'`), and a local
+  `function_call` or local `function_approval_request` the provider emits anyway is removed from
+  that round instead of being returned unexecuted — in both awaited and streamed form, which fold
+  to the same messages. Filtering is per update, so everything an update keeps is still forwarded
+  the moment it arrives; text, reasoning, response metadata, raw representation, hosted content,
+  provider-hosted approvals and `informationalOnly` call/result pairs are untouched, and an update
+  left with metadata but no content stays visible. When finalization leaves no non-blank
+  user-visible answer and no hosted approval, the run ends on the fixed sentence
+  `Function invocation limit reached before a final answer could be produced.`, matching Python's
+  `_ensure_function_invocation_limit_fallback_response`; content that survived is never displaced
+  to make room for it. Requesting structured output from a run that ends this way now raises the
+  ordinary "not valid JSON" error rather than silently returning `value: undefined`, because the
+  response is no longer a suspended one.
+
 - **[BREAKING] `@polymind-inc/agent-framework-agentserver`, `@polymind-inc/agent-framework-foundry`**
   — a server built without an explicit `store` now persists responses to the **filesystem** rather
   than to memory. `new ResponsesServer({ handler })` and a non-hosted `ResponsesHostServer` both
