@@ -18,7 +18,7 @@ import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { McpClient } from './client.js';
 import { McpConnection } from './connection.js';
-import { fromMcpContent } from './content.js';
+import { fromMcpContent, mcpErrorText } from './content.js';
 import type { TestTool } from './test-server.js';
 import { SlowStartServer, TestMcpServer } from './test-server.js';
 
@@ -43,6 +43,16 @@ function server(): TestMcpServer {
       },
     },
   ]);
+}
+
+/** The message of the {@link ToolInvocationError} `call` rejects with, for exact comparison. */
+async function messageOfRejection(call: unknown): Promise<string> {
+  const error = await Promise.resolve(call).then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  expect(error).toBeInstanceOf(ToolInvocationError);
+  return (error as Error).message;
 }
 
 describe('tool enumeration', () => {
@@ -346,6 +356,55 @@ describe('tool invocation', () => {
     await mcp.close();
   });
 
+  it('puts each text block of an error result on its own line', async () => {
+    // The blocks of a failed call are separate messages, not one message split across blocks:
+    // concatenated without a separator they read as `...rejected itretry after 30s`.
+    const mcp = new McpClient({
+      transport: new TestMcpServer([
+        {
+          name: 'multi-failure',
+          call: () => ({
+            content: [
+              { type: 'text', text: 'the upstream API rejected it' },
+              { type: 'text', text: '' },
+              { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+              { type: 'text', text: 'retry after 30s' },
+            ],
+            isError: true,
+          }),
+        },
+      ]),
+    });
+    const [multiFailure] = await mcp.getTools();
+
+    const error = await messageOfRejection(multiFailure?.execute?.({}, { callId: 'call_1' }));
+
+    // The empty block contributes nothing rather than a blank line, and the image none at all.
+    expect(error).toBe('the upstream API rejected it\nretry after 30s');
+    await mcp.close();
+  });
+
+  it('gives structuredContent its own line in the error text', async () => {
+    const mcp = new McpClient({
+      transport: new TestMcpServer([
+        {
+          name: 'detailed-failure',
+          call: () => ({
+            content: [{ type: 'text', text: 'the request was rejected' }],
+            structuredContent: { code: 'quota_exceeded' },
+            isError: true,
+          }),
+        },
+      ]),
+    });
+    const [detailedFailure] = await mcp.getTools();
+
+    const error = await messageOfRejection(detailedFailure?.execute?.({}, { callId: 'call_1' }));
+
+    expect(error).toBe('the request was rejected\n{"code":"quota_exceeded"}');
+    await mcp.close();
+  });
+
   it('supplies a generic message when an error result carries no text', async () => {
     const mcp = new McpClient({
       transport: new TestMcpServer([
@@ -357,6 +416,31 @@ describe('tool invocation', () => {
     await expect(muteFailure?.execute?.({}, { callId: 'call_1' })).rejects.toThrow(
       'MCP tool "mute-failure" reported an error.',
     );
+    await mcp.close();
+  });
+
+  it('supplies the generic message when an error result has only non-text blocks', async () => {
+    // Joining nothing yields the empty string, which as a tool failure message says nothing at
+    // all; the fallback names the tool instead. Blocks with no text at all must reach it too.
+    const mcp = new McpClient({
+      transport: new TestMcpServer([
+        {
+          name: 'picture-failure',
+          call: () => ({
+            content: [
+              { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+              { type: 'text', text: '' },
+            ],
+            isError: true,
+          }),
+        },
+      ]),
+    });
+    const [pictureFailure] = await mcp.getTools();
+
+    const error = await messageOfRejection(pictureFailure?.execute?.({}, { callId: 'call_1' }));
+
+    expect(error).toBe('MCP tool "picture-failure" reported an error.');
     await mcp.close();
   });
 
@@ -947,5 +1031,32 @@ describe('telemetry', () => {
     } finally {
       await provider.shutdown();
     }
+  });
+});
+
+describe('mcpErrorText', () => {
+  it.each<[string, unknown]>([
+    ['a string', 'not a list'],
+    ['an object', { type: 'text', text: 'lonely' }],
+    ['null', null],
+    ['undefined', undefined],
+  ])('reads %s as no text rather than throwing', (_label, items) => {
+    // The blocks come off the wire, so a server can answer with anything. Reading one as a list
+    // without checking would turn a tool failure into a failure to describe the failure — the
+    // caller would get a TypeError where it expected the server's reason. The transports in these
+    // tests cannot produce it, because the MCP client library validates the result first, so the
+    // rule is pinned here at the helper that has to hold it either way.
+    expect(mcpErrorText(items)).toBe('');
+  });
+
+  it('joins the text blocks of a well-formed list', () => {
+    expect(
+      mcpErrorText([
+        { type: 'text', text: 'rejected it' },
+        { type: 'image', data: 'AAAA' },
+        { type: 'text', text: '' },
+        { type: 'text', text: 'retry after 30s' },
+      ]),
+    ).toBe('rejected it\nretry after 30s');
   });
 });

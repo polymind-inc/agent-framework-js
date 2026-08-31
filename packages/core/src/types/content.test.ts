@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Content } from './content.js';
-import { isUserInputRequest } from './content.js';
+import { isUserInputRequest, textOfContents } from './content.js';
 
 describe('isUserInputRequest', () => {
   it('matches the userInputRequest marker and both request discriminators', () => {
@@ -35,5 +35,22 @@ describe('isUserInputRequest', () => {
     for (const content of negatives) {
       expect(isUserInputRequest(content)).toBe(false);
     }
+  });
+});
+
+describe('textOfContents', () => {
+  it('concatenates text with no separator of its own', () => {
+    // What a message *said*, verbatim: a streamed response arrives as many text contents split
+    // at arbitrary token boundaries, so any separator this helper inserted would appear inside
+    // words. Callers that want their parts kept apart — a list of independent messages, say —
+    // must join them themselves rather than relax this.
+    const contents: Content[] = [
+      { type: 'text', text: 'Hel' },
+      { type: 'data', uri: 'data:image/png;base64,AAAA', mediaType: 'image/png' },
+      { type: 'text', text: '' },
+      { type: 'text', text: 'lo' },
+    ];
+
+    expect(textOfContents(contents)).toBe('Hello');
   });
 });

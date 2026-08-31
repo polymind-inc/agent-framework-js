@@ -10,12 +10,11 @@ import {
   AgentFrameworkError,
   ConfigurationError,
   ToolInvocationError,
-  textOfContents,
   tool,
 } from '@polymind-inc/agent-framework-core';
 import { errorMessageOf } from '@polymind-inc/agent-framework-core/internal';
 import { McpConnection } from './connection.js';
-import { fromMcpContents, mcpMetaProperties } from './content.js';
+import { fromMcpContents, mcpErrorText, mcpMetaProperties } from './content.js';
 import type { McpHeaderProvider } from './headers.js';
 import type { McpSkillsSourceConfig } from './skills.js';
 import { mcpSkillsSource } from './skills.js';
@@ -364,7 +363,7 @@ export class McpClient {
             // as a success would tell the model the call worked and hand it the error text as
             // the answer; throwing routes it through the loop's error handling instead. The
             // connection has already marked the span with `error.type = tool_error`.
-            const text = textOfContents(contents);
+            const text = mcpErrorText(contents);
             throw new ToolInvocationError(
               declared.name,
               text === '' ? `MCP tool "${declared.name}" reported an error.` : text,

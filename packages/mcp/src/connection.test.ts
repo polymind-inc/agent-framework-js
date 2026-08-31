@@ -379,4 +379,31 @@ describe('telemetry', () => {
     expect(span?.attributes['error.type']).toBe('tool_error');
     expect(span?.status.message).toBe('the tool is broken');
   });
+
+  it('puts each text block of an isError result on its own line in the span status', async () => {
+    // The span message and the exception the caller raises describe the same failure, so they
+    // are assembled by the same rule; a concatenation without separators reads as one run-on
+    // sentence in the trace viewer.
+    const connection = connectionTo(
+      new TestMcpServer([
+        {
+          name: 'explode',
+          call: () => ({
+            content: [
+              { type: 'text', text: 'the upstream API rejected it' },
+              { type: 'text', text: '' },
+              { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+              { type: 'text', text: 'retry after 30s' },
+            ],
+            isError: true,
+          }),
+        },
+      ]),
+    );
+    await connection.callTool('explode', {});
+    await connection.close();
+
+    const span = exporter.getFinishedSpans().find((s) => s.name === 'tools/call explode');
+    expect(span?.status.message).toBe('the upstream API rejected it\nretry after 30s');
+  });
 });

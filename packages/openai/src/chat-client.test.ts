@@ -1,4 +1,4 @@
-import type { Message } from '@polymind-inc/agent-framework-core';
+import type { FunctionCallContent, Message } from '@polymind-inc/agent-framework-core';
 import {
   Agent,
   approvalResponse,
@@ -1065,6 +1065,74 @@ describe('Agent over OpenAIChatClient', () => {
       'user',
       'assistant',
       'user',
+    ]);
+  });
+
+  it('replays a JSON round-tripped session that still holds an unanswered call', async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(
+        completedResponse({
+          output: [
+            {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'call_1',
+              name: 'book_flight',
+              arguments: '{"to":"Tokyo"}',
+              status: 'completed',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(completedResponse({ id: 'resp_2' }));
+
+    // A declaration-only tool hands the call back to the caller instead of answering it, so turn
+    // one ends with a call no result pairs with. Saving and restoring the session is what a
+    // caller does between turns, and it must not turn that transcript into a failing request.
+    const book = tool({
+      name: 'book_flight',
+      description: 'Book a flight',
+      parameters: { type: 'object', properties: { to: { type: 'string' } } },
+    });
+    const agent = new Agent({
+      client: new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' }),
+      tools: [book],
+    });
+    const session = agent.createSession();
+    await agent.run('book me a flight', { session });
+
+    const restored = agent.deserializeSession(JSON.parse(JSON.stringify(session)));
+    const stored = await agent.historyProvider.getMessages(
+      restored,
+      restored.partition(agent.historyProvider.sourceId),
+    );
+    const restoredCall = stored
+      .flatMap((message) => message.contents)
+      .find((content): content is FunctionCallContent => content.type === 'function_call');
+    // The call is in the transcript the next turn replays, and it arrives there with no provider
+    // object attached — serialization drops `rawRepresentation` — so whatever the wire conversion
+    // does with it below, it does from the persisted fields alone.
+    assert.exists(restoredCall);
+    expect(restoredCall.callId).toBe('call_1');
+    expect(restoredCall.rawRepresentation).toBeUndefined();
+
+    const resumed = await agent.run('never mind, say hello', { session: restored });
+
+    expect(resumed.text).toBe('Hello!');
+    // Named before it is read: without this, a second request that never happened fails as a
+    // property access on undefined rather than as the missing turn it is.
+    expect(create.mock.calls).toHaveLength(2);
+    const secondInput = create.mock.calls[1]?.[0].input as InputItem[];
+    expect(secondInput.some((item) => item.type === 'function_call')).toBe(false);
+    // Both user turns reach the model; only the unanswerable call is missing.
+    expect(secondInput.map((item) => [item.type, item.role])).toEqual([
+      ['message', 'user'],
+      ['message', 'user'],
+    ]);
+    expect(secondInput.flatMap((item) => item.content ?? []).map((part) => part.text)).toEqual([
+      'book me a flight',
+      'never mind, say hello',
     ]);
   });
 });

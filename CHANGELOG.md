@@ -212,6 +212,75 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-core`** — a streamed code-interpreter call now folds back into
+  one item. `coalesceContents`, and with it `mergeUpdates` / `mergeChatUpdates`, previously left
+  every `code_interpreter_tool_call` and `code_interpreter_tool_result` fragment in the transcript,
+  so a provider that streams the code as deltas produced a list of partial calls where the awaited
+  form of the same turn holds one. Fragments are now correlated by their content type together with
+  `callId`, falling back to `additionalProperties.item_id` when the provider streams no call id,
+  and fold into the first fragment with that key — which keeps its position, so narration that
+  arrived between the fragments stays where it was. `inputs` and `outputs` merge the way Python's
+  `_merge_content_item_lists` does: text-only lists collapse to the longer side when one is a
+  prefix of the other (the `done` event repeating the whole code replaces its own deltas instead of
+  being appended to them), disjoint text is joined, and anything else is concatenated;
+  `additionalProperties` merge with the later fragment winning and annotations are concatenated.
+  Fragments naming different calls, a call and a result naming one id, and fragments naming nothing
+  at all are all left exactly as they arrived. The other content types coalesce as before.
+
+- **`@polymind-inc/agent-framework-core`** — the trailing metadata-only update that
+  `chatResponseToUpdates` and `agentResponseToUpdates` append for response-level usage, additional
+  properties or a continuation token no longer repeats the response's `finishReason`. Anything that
+  reads an exploded response as a stream — the function-invocation loop replaying a non-streaming
+  round, a middleware answering a run without invoking the agent, the telemetry client — saw the
+  turn announce a finish reason a second time on an update carrying no message content, a shape no
+  provider stream produces. The message updates carry the reason exactly as before, so folding the
+  sequence back yields the same response, and both reference implementations agree: .NET's
+  `ChatResponse.ToChatResponseUpdates` builds its trailing update from `AdditionalProperties` and
+  usage alone, and Go's `Response.ToUpdates` is asserted to leave that update's finish reason empty.
+  One consequence, shared with both of them: a response that has no messages at all — where the
+  trailing update is the only one — no longer reports a finish reason to whoever folds the sequence.
+
+- **`@polymind-inc/agent-framework-core`** — a tool that stops for a human without naming anything
+  a human could settle now reports `exception: "UserInputRequiredException"` on the
+  `function_result` it hands the model, instead of `"UserInputRequiredError"`. The marker is
+  wire-visible and was being derived from the thrown error's class name, so a consumer branching on
+  `function_result.exception` — or a transcript compared against another implementation — saw a
+  string no other implementation emits; Python's `_execute_single_function_call` writes
+  `exception="UserInputRequiredException"` for the same case. The marker is now a fixed literal
+  rather than the error's `name`, so subclassing or renaming `UserInputRequiredError` cannot change
+  it. Everything else about this path is unchanged: the model-facing text is still
+  `Tool requires user input but no request details were provided.`, `includeDetailedErrors` still
+  appends ` Exception: <message>` to that text and nothing else, the round still counts against the
+  consecutive-error budget, and the run still continues.
+
+- **`@polymind-inc/agent-framework-anthropic`** — a configured `toolChoice` now reaches the wire
+  even when the request declares no tools. `tool_choice` was gated on the request carrying local
+  tool declarations or an `mcp_servers` entry, so a choice set on a request with neither was
+  dropped — including the function-calling loop's own final round, which withdraws local
+  declarations precisely while pinning the choice to `'none'`, and any caller that asks a
+  tool-free request not to call tools. Python's `_prepare_tools_for_anthropic` and Go's
+  `anthropicprovider` both build `tool_choice` from the option alone, so the field is now sent
+  whenever a choice was configured and omitted only when none was. Requests that already carried
+  declarations are unchanged, as is the mapping itself (`auto` → `auto`, `required` → `any` or a
+  single named `tool`, `none` → `none`). The OpenAI Responses client still gates `tool_choice` on
+  `tools`, matching its own reference implementation.
+
+- **`@polymind-inc/agent-framework-mcp`** — the failure text of a tool result that reports
+  `isError` now puts each text block on its own line. The blocks of a failed call are separate
+  messages — a summary and its detail, or one line per item that failed — and concatenating them
+  without a separator ran them together as `...rejected itretry after 30s`, in the
+  `ToolInvocationError` the model is told about and in the `tools/call` span's status message
+  alike. Both are now joined by one rule: text blocks only, in order, separated by a newline, with
+  empty blocks contributing nothing rather than a blank line. The two texts are not identical — the
+  exception is built from the converted contents, so a call that reported `structuredContent` still
+  carries it as the last line, while the span message is built from the result's own blocks and
+  never had it. A result whose blocks carry no text at all still falls back to the generic
+  `MCP tool "<name>" reported an error.` message. The shared
+  `textOfContents` is untouched and stays a verbatim concatenation — it answers what a message
+  said, where a streamed response splits text at arbitrary token boundaries. The equivalent
+  assembly in `FoundryToolbox` is unchanged for now; it diverges in more than the separator and is
+  tracked separately.
+
 - **`@polymind-inc/agent-framework-mcp`** — a skill discovered over MCP no longer asks the server
   for a resource whose name is empty or only whitespace. Such a name was appended to the skill root
   unchanged, so `getResource('')` issued a `resources/read` for the skill's namespace URI and handed
