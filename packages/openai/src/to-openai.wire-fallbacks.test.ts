@@ -341,7 +341,7 @@ describe('unanswered function calls', () => {
   } as const;
 
   it('omits a lone unanswered call instead of failing the conversion', () => {
-    // A transcript can legitimately end on a call nothing answered: an approval the user never
+    // A transcript can legitimately end on a call that nothing answered: an approval the user never
     // decided, a run that stopped on its iteration budget, an abandoned stream. Replaying such a
     // transcript is a normal thing to ask for, so the unanswerable item is dropped here rather
     // than raising the way the reasoning-group check above does. The split is deliberate: the

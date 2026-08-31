@@ -1120,6 +1120,9 @@ describe('Agent over OpenAIChatClient', () => {
     const resumed = await agent.run('never mind, say hello', { session: restored });
 
     expect(resumed.text).toBe('Hello!');
+    // Named before it is read: without this, a second request that never happened fails as a
+    // property access on undefined rather than as the missing turn it is.
+    expect(create.mock.calls).toHaveLength(2);
     const secondInput = create.mock.calls[1]?.[0].input as InputItem[];
     expect(secondInput.some((item) => item.type === 'function_call')).toBe(false);
     // Both user turns reach the model; only the unanswerable call is missing.
