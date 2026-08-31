@@ -188,10 +188,12 @@ describe('tool schema normalization', () => {
       .mockResolvedValue({ tools: [{ name: 'ping' }] } as unknown as Awaited<
         ReturnType<McpConnection['listTools']>
       >);
+    const mcp = new McpClient({ transport: server() });
     try {
-      const [ping] = await new McpClient({ transport: server() }).getTools();
+      const [ping] = await mcp.getTools();
       expect(ping?.jsonSchema).toEqual({ type: 'object', properties: {} });
     } finally {
+      await mcp.close();
       listTools.mockRestore();
     }
   });
@@ -200,10 +202,12 @@ describe('tool schema normalization', () => {
     const listTools = vi.spyOn(McpConnection.prototype, 'listTools').mockResolvedValue({
       tools: [{ name: 'ping', inputSchema: { type: 'string', description: 'raw' } }],
     } as unknown as Awaited<ReturnType<McpConnection['listTools']>>);
+    const mcp = new McpClient({ transport: server() });
     try {
-      const [ping] = await new McpClient({ transport: server() }).getTools();
+      const [ping] = await mcp.getTools();
       expect(ping?.jsonSchema).toEqual({ type: 'string', description: 'raw' });
     } finally {
+      await mcp.close();
       listTools.mockRestore();
     }
   });
@@ -215,13 +219,15 @@ describe('tool schema normalization', () => {
       .mockResolvedValue({ tools: [{ name: 'ping', inputSchema: declaredSchema }] } as unknown as Awaited<
         ReturnType<McpConnection['listTools']>
       >);
+    const mcp = new McpClient({ transport: server() });
     try {
-      const [ping] = await new McpClient({ transport: server() }).getTools();
+      const [ping] = await mcp.getTools();
 
       expect(declaredSchema).toEqual({ type: 'object' });
       expect(Object.hasOwn(declaredSchema, 'properties')).toBe(false);
       expect(ping?.jsonSchema).not.toBe(declaredSchema);
     } finally {
+      await mcp.close();
       listTools.mockRestore();
     }
   });
