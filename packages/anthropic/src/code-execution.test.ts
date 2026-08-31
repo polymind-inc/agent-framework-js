@@ -654,4 +654,31 @@ describe('complete-message and streaming equivalence', () => {
 
     expect(comparable(closed?.contents ?? [])).toEqual(comparable(parseBlock(block)));
   });
+
+  it('keeps accumulating across a usage snapshot that ends nothing', () => {
+    // A `message_delta` carrying only usage is not the end of the message. Converting the open
+    // call there would clear it mid-flight, and the fragments still to come would belong to no
+    // call and be dropped — the call would fold with its opening placeholder for an input.
+    const block = { type: 'server_tool_use', id: 's1', name: 'code_execution', input: { code: 'x' } };
+    const state = createStreamParseState();
+
+    parseStreamEvent({ type: 'content_block_start', content_block: { ...block, input: {} } }, state);
+    parseStreamEvent(
+      { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"code"' } },
+      state,
+    );
+    const snapshot = parseStreamEvent(
+      { type: 'message_delta', delta: {}, usage: { output_tokens: 5 } },
+      state,
+    );
+    parseStreamEvent(
+      { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: ':"x"}' } },
+      state,
+    );
+    const closed = parseStreamEvent({ type: 'content_block_stop' }, state);
+
+    // The snapshot reports the usage it carried and nothing else.
+    expect(snapshot?.contents.map((content) => content.type)).toEqual(['usage']);
+    expect(comparable(closed?.contents ?? [])).toEqual(comparable(parseBlock(block)));
+  });
 });

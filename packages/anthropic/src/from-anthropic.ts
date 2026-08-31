@@ -699,9 +699,14 @@ export function parseStreamEvent(event: unknown, state: StreamParseState): ChatR
       const usage = usageContent(raw.usage, state.emittedUsage);
       const delta = (raw.delta ?? {}) as AnthropicBlock;
       const finishReason = parseFinishReason(delta.stop_reason);
+      // Only the event that ends the message closes a block still open. A `message_delta` carrying
+      // nothing but a usage snapshot is not the end of anything, and converting the call there
+      // would clear it while its fragments were still arriving — they would then belong to no
+      // call and be dropped, leaving the folded transcript holding a call without its input.
+      const pending = finishReason === undefined ? [] : flushPendingCall(state);
       return chatResponseUpdate({
         role: 'assistant',
-        contents: [...flushPendingCall(state), ...(usage === undefined ? [] : [usage])],
+        contents: [...pending, ...(usage === undefined ? [] : [usage])],
         ...(finishReason === undefined ? {} : { finishReason }),
         rawRepresentation: event,
       });
