@@ -53,6 +53,41 @@ contain breaking changes**; patch releases are fixes only.
   `{ "type": "item_reference", "id": "x" }`; to send a message, give it a `role` and `content`.
   Items of every other type are unaffected.
 
+- **`@polymind-inc/agent-framework-core`** — a tool call that carries no arguments at all now runs
+  with an empty argument object instead of coming back as an `Invalid arguments` result. A
+  `function_call` whose `arguments` field is absent or a native `null` reached schema validation as
+  `undefined` / `null` and was refused there, so a tool whose parameters are all optional never
+  executed — the shape a transcript written by another implementation has, since Python omits
+  `arguments` when it is `None`. All three reference implementations invoke the tool in that case
+  (Python `dict(parse_arguments() or {})`, .NET's nullable `FunctionCallContent.Arguments`, Go's
+  `{}` encoding of empty arguments). Both the ordinary loop and an approval resumed from a
+  serialized session take the same view, which is built fresh per invocation and never written back
+  to the call: `FunctionCallContent.arguments` is unchanged in the transcript and in the serialized
+  session. Empty and whitespace-only argument strings behave exactly as before, malformed non-empty
+  JSON is still an `Invalid JSON arguments` result, and the JSON text `null`, non-null scalars and
+  arrays are not treated as absent — they go on to schema validation as they always did.
+
+- **[BREAKING] `@polymind-inc/agent-framework-openai`** — a strict structured-output schema is now
+  transformed into the closed form the Responses API requires before it is sent. `strict` has always
+  defaulted to `true`, but the JSON Schema went out untouched, so a perfectly valid framework input
+  — a raw object schema without `additionalProperties: false`, or with a `required` list that does
+  not name every property — reached the service as a combination it rejects. The request path now
+  rewrites a deep clone of the schema, mirroring the contract Go's `strictSchemaToMap` applies:
+  `properties`, `items`, `anyOf`, `oneOf`, `$defs` and `definitions` are walked recursively, every
+  object with declared properties gains `additionalProperties: false` and a `required` list naming
+  all of them in a deterministic order, and `default` moves into the node's description. The
+  caller's schema object is never modified. A schema strict mode cannot express now fails locally
+  with the offending path — an explicitly open object (`additionalProperties: true` or a schema
+  value), a non-object root, a root `anyOf`, a boolean subschema, an object that declares nothing,
+  a `required` entry that is not a declared property, or a keyword outside the strict subset
+  (`allOf`, `not`, `if`/`then`/`else`, `patternProperties`, `prefixItems`, `uniqueItems`,
+  `minProperties`/`maxProperties`, the `$dynamic*`/`$recursive*` family and the rest) — instead of
+  producing an opaque service 400. Schemas that already satisfied strict mode, including everything
+  zod emits, are unchanged on the wire. Pass `strict: false` to send a schema through untouched, as
+  before. A `responseFormat` given without a name now takes its name from a string root `title` on
+  the schema, matching Python; an explicit `name` still wins, and the `title` keyword stays on the
+  schema.
+
 - **`@polymind-inc/agent-framework-mcp`** — an MCP server's tool names and input schemas are
   normalized before they reach a provider, and `McpClientConfig.toolNamePrefix` is new. MCP puts no
   restriction on a tool name while providers accept only `[A-Za-z0-9_.-]` in a function name, and a
