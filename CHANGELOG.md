@@ -6,6 +6,19 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **[BREAKING] `@polymind-inc/agent-framework-a2a`** — a remote task's status message becomes a
+  response message only when the task is waiting for input (`input-required`). Previously an
+  awaited `run()` also materialized the status message of a `completed`, `failed`, `canceled` or
+  `rejected` task, and fell back to the last agent message in `task.history` for a terminal task
+  with no artifacts, while the streamed form of the same task did neither — so how the run was
+  consumed changed the answer. Both paths now follow one rule, matching .NET, whose
+  `AgentTaskStatusExtensions` returns content for `TaskState.InputRequired` alone and never reads
+  `task.history`. An agent that answers with a closing status message and no artifact now folds to
+  an empty response: read the task from `rawRepresentation` on the response, whose messages still
+  carry it, or take the state from the session. An `input-required` status message that carries no
+  parts likewise no longer names a message on the awaited path, which the streamed path already
+  declined to do. Artifact conversion and the streamed-artifact deduplication are unchanged.
+
 - **`@polymind-inc/agent-framework-core`** — an approval granted for a call id that an earlier
   completed call had already used is no longer discarded. The approval layer correlated decisions
   against a transcript-wide set of answered call ids, so a provider that reused a call id produced

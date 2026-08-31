@@ -114,6 +114,19 @@ function hasReason(error: unknown, reason: string): boolean {
  * Fields of the shared run options it does not declare (`tools`, `middleware`, `responseFormat`,
  * `options`) are ignored, as they are in the other implementations of this protocol.
  *
+ * ## What becomes a response message
+ *
+ * A task's artifacts are its answer: one message each, and an artifact already delivered while
+ * streaming is not repeated by the closing task snapshot. A task's status message becomes a message
+ * only when the task is waiting for input (`input-required`), where that message is the question
+ * addressed to the caller; a status message in any other state describes the run rather than
+ * answering it and stays out of the transcript, as does the task's `history`, which is the
+ * conversation so far rather than this turn's output. The task or event behind every update is
+ * still on `rawRepresentation`, and the task state is on the session.
+ *
+ * The rule does not depend on how the run is consumed, so a task that answers with a closing status
+ * message and no artifacts folds to an empty response whether awaited or streamed.
+ *
  * ## Security considerations
  *
  * - **The remote agent is untrusted.** Everything it returns — text, structured data, file URLs —
