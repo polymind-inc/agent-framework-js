@@ -253,6 +253,18 @@ contain breaking changes**; patch releases are fixes only.
   appends ` Exception: <message>` to that text and nothing else, the round still counts against the
   consecutive-error budget, and the run still continues.
 
+- **`@polymind-inc/agent-framework-anthropic`** — a configured `toolChoice` now reaches the wire
+  even when the request declares no tools. `tool_choice` was gated on the request carrying local
+  tool declarations or an `mcp_servers` entry, so a choice set on a request with neither was
+  dropped — including the function-calling loop's own final round, which withdraws local
+  declarations precisely while pinning the choice to `'none'`, and any caller that asks a
+  tool-free request not to call tools. Python's `_prepare_tools_for_anthropic` and Go's
+  `anthropicprovider` both build `tool_choice` from the option alone, so the field is now sent
+  whenever a choice was configured and omitted only when none was. Requests that already carried
+  declarations are unchanged, as is the mapping itself (`auto` → `auto`, `required` → `any` or a
+  single named `tool`, `none` → `none`). The OpenAI Responses client still gates `tool_choice` on
+  `tools`, matching its own reference implementation.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

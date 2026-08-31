@@ -10,6 +10,7 @@ import {
   serializeMessage,
   textContent,
   tool,
+  withFunctionInvocation,
 } from '@polymind-inc/agent-framework-core';
 import { arrayToStream } from '@polymind-inc/agent-framework-core/internal';
 import { describe, expect, it } from 'vitest';
@@ -233,6 +234,58 @@ describe('request mapping', () => {
     expect(toAnthropicToolChoice('none')).toEqual({ type: 'none' });
     expect(toAnthropicToolChoice({ required: ['a'] })).toEqual({ type: 'tool', name: 'a' });
     expect(toAnthropicToolChoice({ required: ['a', 'b'] })).toEqual({ type: 'any' });
+  });
+
+  describe('tool choice independence', () => {
+    const search = tool({
+      name: 'search',
+      description: 'Searches',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+      execute: () => 'ok',
+    });
+    const prompt: Message[] = [{ role: 'user', contents: [textContent('hi')] }];
+
+    it('sends a configured choice on a request that declares no tools at all', () => {
+      const { client } = clientWith([message('hi')]);
+      const request = client.buildRequest(prompt, { toolChoice: 'none' });
+
+      expect(request.tool_choice).toEqual({ type: 'none' });
+      expect(request).not.toHaveProperty('tools');
+      expect(request).not.toHaveProperty('mcp_servers');
+    });
+
+    it('sends a configured choice on a request that declares only an MCP server', () => {
+      const { client } = clientWith([message('hi')]);
+      const request = client.buildRequest(prompt, {
+        tools: [client.getMcpTool({ serverLabel: 'docs', serverUrl: 'https://mcp.example/sse' })],
+        toolChoice: 'auto',
+      });
+
+      expect(request.tool_choice).toEqual({ type: 'auto' });
+      expect(request).not.toHaveProperty('tools');
+      expect(request.mcp_servers).toHaveLength(1);
+    });
+
+    it('sends a configured choice on a request that declares local tools', () => {
+      const { client } = clientWith([message('hi')]);
+      const request = client.buildRequest(prompt, {
+        tools: [search],
+        toolChoice: { required: ['search'] },
+      });
+
+      expect(request.tool_choice).toEqual({ type: 'tool', name: 'search' });
+      expect(request.tools).toHaveLength(1);
+    });
+
+    it.each([
+      { label: 'with local tools', tools: [search] },
+      { label: 'without any tools', tools: undefined },
+    ])('omits tool_choice when no choice was configured ($label)', ({ tools }) => {
+      const { client } = clientWith([message('hi')]);
+      const request = client.buildRequest(prompt, tools === undefined ? undefined : { tools });
+
+      expect(request).not.toHaveProperty('tool_choice');
+    });
   });
 
   it('sends structured output through output_config.format', () => {
@@ -857,6 +910,31 @@ describe('through the agent', () => {
     // The second request replays the call and its result as the roles the API demands.
     const second = messages.requests[1]?.messages as Array<{ role: string; content: unknown }>;
     expect(second.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+  });
+
+  it('still sends the pinned choice on the final round, after local tools are withdrawn', async () => {
+    // The function-calling loop's last round withdraws local declarations and pins the choice to
+    // `'none'`, so a request with a choice but no declarations is a shape this package produces on
+    // its own — not a hypothetical.
+    const { client, messages } = clientWith([
+      {
+        id: 'msg_1',
+        model: 'claude-sonnet-4-5',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'get_weather', input: { city: 'Tokyo' } }],
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+      message('Tokyo is sunny.'),
+    ]);
+
+    await withFunctionInvocation(client, { maxIterations: 1 }).getResponse(
+      [{ role: 'user', contents: [textContent('weather in Tokyo?')] }],
+      { tools: [weather] },
+    );
+
+    expect(messages.requests).toHaveLength(2);
+    expect(messages.requests[1]).not.toHaveProperty('tools');
+    expect(messages.requests[1]?.tool_choice).toEqual({ type: 'none' });
   });
 
   it('parses structured output', async () => {
