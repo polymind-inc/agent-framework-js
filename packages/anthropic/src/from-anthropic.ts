@@ -632,17 +632,24 @@ function isProviderExecutedCall(block: AnthropicBlock): boolean {
   );
 }
 
-/** The accumulated fragments as an `input` object, or `undefined` when they do not form one. */
-function parsedInput(json: string): Record<string, unknown> | undefined {
+/**
+ * The accumulated fragments parsed back into the input they spell, or `undefined` when they spell
+ * no complete JSON value.
+ *
+ * Any JSON value, not only an object: a code-execution call carries its program as a plain string,
+ * and reading only objects would leave the streamed form holding the opening placeholder while the
+ * awaited form held the program. The result is wrapped so that a literal `null` — itself valid
+ * JSON — stays distinguishable from fragments that parsed into nothing.
+ */
+function parsedInput(json: string): { value: unknown } | undefined {
   if (json.trim() === '') {
     return undefined;
   }
   try {
-    const parsed: unknown = JSON.parse(json);
-    return isRecord(parsed) ? parsed : undefined;
+    return { value: JSON.parse(json) as unknown };
   } catch {
     // A truncated stream leaves half a JSON document behind; the opening placeholder is closer to
-    // the model's intent than a fragment that cannot be parsed back into arguments.
+    // the model's intent than a fragment that cannot be parsed back into an input.
     return undefined;
   }
 }
@@ -657,7 +664,7 @@ function flushPendingCall(state: StreamParseState): Content[] {
   const input = parsedInput(pending.json);
   // Converted without the streaming state, so the completed block reads exactly as the same block
   // does in an awaited response.
-  return parseContentBlocks([input === undefined ? pending.block : { ...pending.block, input }]);
+  return parseContentBlocks([input === undefined ? pending.block : { ...pending.block, input: input.value }]);
 }
 
 function contentUpdate(contents: Content[], event: unknown): ChatResponseUpdate | undefined {

@@ -630,4 +630,28 @@ describe('complete-message and streaming equivalence', () => {
       comparable(awaited.messages[0]?.contents ?? []),
     );
   });
+
+  // A code-execution call carries its program as a plain string, so its fragments spell a JSON
+  // string rather than an object. Reading only objects back would leave the streamed call holding
+  // the placeholder its block opened with while the awaited one held the program.
+  it.each<[string, unknown]>([
+    ['a string', "print('hi')"],
+    ['an array', ['print(1)', 'print(2)']],
+    ['null', null],
+  ])('folds %s input the awaited path would have carried', (_label, input) => {
+    const block = { type: 'server_tool_use', id: 's1', name: 'code_execution', input };
+    const state = createStreamParseState();
+
+    parseStreamEvent({ type: 'content_block_start', content_block: { ...block, input: {} } }, state);
+    parseStreamEvent(
+      {
+        type: 'content_block_delta',
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
+      },
+      state,
+    );
+    const closed = parseStreamEvent({ type: 'content_block_stop' }, state);
+
+    expect(comparable(closed?.contents ?? [])).toEqual(comparable(parseBlock(block)));
+  });
 });
