@@ -286,11 +286,15 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
             },
             { type: 'null' },
           ],
+          // Advertised only: omitting `args` is a supported call, and saying so keeps the model
+          // from inventing a placeholder for a script that takes nothing. The tool never
+          // substitutes the value — a script still sees `undefined` for an omitted argument.
+          default: null,
           description:
             'Arguments to pass to the script. Use an array of strings for CLI-style positional ' +
             'arguments (e.g. ["input.docx", "--output", "result.idx"]), or an object for named ' +
             'parameters (e.g. {"length": 24, "uppercase": true}). How these values are mapped to ' +
-            'the underlying script is determined by the script implementation.',
+            'the underlying script is determined by the script implementation or configured runner.',
         },
       },
       required: ['skill_name', 'script_name'],
