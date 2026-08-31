@@ -85,6 +85,43 @@ export function fromMcpContent(block: McpContentBlock): Content {
 }
 
 /**
+ * The failure text an MCP `isError` result carries: its text, one block per line.
+ *
+ * The text blocks of a failed call are separate messages — a summary and its detail, one line per
+ * item that failed — so running them together produces `...rejected itretry after 30s`. Blocks
+ * that carry no text contribute nothing rather than a blank line. Anything that is not text is
+ * skipped: an image or an embedded blob has no place in an exception message.
+ *
+ * This is the MCP layer's own rule, not the meaning of the shared `textOfContents`, which answers
+ * what a message *said* and must stay a verbatim concatenation — a streamed response splits text
+ * at arbitrary token boundaries, where an inserted newline would land inside a word.
+ *
+ * Accepts both raw MCP content blocks and the framework content converted from them, so the two
+ * descriptions of a failure — the exception the caller raises and the message on the client
+ * span — are assembled by this one rule instead of a copy of it each.
+ *
+ * Takes `unknown` and reads nothing it has not checked. One caller hands it a field straight off
+ * the wire, and a server that answers with something other than a list must not turn a tool failure
+ * into a failure to describe the failure. Anything that is not a list of blocks reads as no text.
+ */
+export function mcpErrorText(items: unknown): string {
+  if (!Array.isArray(items)) {
+    return '';
+  }
+  const lines: string[] = [];
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+    const block = item as { type?: unknown; text?: unknown };
+    if (block.type === 'text' && typeof block.text === 'string' && block.text !== '') {
+      lines.push(block.text);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
  * The `additionalProperties` an MCP result's `_meta` envelope contributes, or `undefined`.
  *
  * A server may attach `_meta` to a tool result — Information Flow Control labels, for instance.

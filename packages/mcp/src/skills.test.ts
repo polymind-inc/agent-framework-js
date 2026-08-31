@@ -222,6 +222,63 @@ describe('loading', () => {
     await connection.close();
   });
 
+  it.each([[''], [' '], ['\t'], ['\n  '], ['\u00a0']])(
+    'refuses the blank resource name %j without asking the server',
+    async (name) => {
+      // The skill root is served here, so a request that did go out would come back with content
+      // instead of nothing — the refusal has to happen before the read, not after it.
+      const { server, connection } = serverWith([
+        indexOf(unitConverterEntry),
+        { uri: 'skill://unit-converter/', text: 'namespace root' },
+      ]);
+      const [skill] = await mcpSkillsSource(connection).getSkills(context());
+      const getResource = skill?.getResource;
+      expect(getResource).toBeTypeOf('function');
+
+      expect(await getResource?.call(skill, name)).toBeUndefined();
+      expect(server.reads).toEqual([INDEX_URI]);
+      await connection.close();
+    },
+  );
+
+  it('issues no resources/read at all for blank names reaching the skill api directly', async () => {
+    const uris: string[] = [];
+    const reader: McpResourceReader = {
+      readResource: async (uri): Promise<ReadResourceResult> => {
+        uris.push(uri);
+        const text = uri === INDEX_URI ? JSON.stringify({ skills: [unitConverterEntry] }) : 'served';
+        return { contents: [{ uri, text }] };
+      },
+    };
+
+    const [skill] = await mcpSkillsSource(reader).getSkills(context());
+    const getResource = skill?.getResource;
+    expect(getResource).toBeTypeOf('function');
+    const results = await Promise.all(['', '   ', '\t\n'].map((name) => getResource?.call(skill, name)));
+
+    expect(results).toEqual([undefined, undefined, undefined]);
+    expect(uris.filter((uri) => uri !== INDEX_URI)).toEqual([]);
+  });
+
+  it('reads a name that only looks blank at the edges at the uri the server listed', async () => {
+    // Surrounding whitespace decides blankness and nothing else: a name with content in it keeps
+    // the spaces around it rather than being trimmed. Backslashes are still normalized, so this
+    // says nothing about a name that carries one.
+    const { server, connection } = serverWith([
+      indexOf(unitConverterEntry),
+      { uri: 'skill://unit-converter/ notes.md ', text: 'notes' },
+    ]);
+
+    const [skill] = await mcpSkillsSource(connection).getSkills(context());
+    const getResource = skill?.getResource;
+    expect(getResource).toBeTypeOf('function');
+    const resource = await getResource?.call(skill, ' notes.md ');
+
+    expect(server.reads).toContain('skill://unit-converter/ notes.md ');
+    expect(await resource?.read({ skill: skill as Skill, callId: 'c1' })).toBe('notes');
+    await connection.close();
+  });
+
   it('fetches a resource whose listed name contains a literal percent-escape at that exact uri', async () => {
     // The traversal check decodes the name to inspect it, but the name the server listed is the
     // name it serves: the request must go out undecoded.
