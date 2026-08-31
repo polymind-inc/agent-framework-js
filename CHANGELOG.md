@@ -212,6 +212,19 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-core`** — the trailing metadata-only update that
+  `chatResponseToUpdates` and `agentResponseToUpdates` append for response-level usage, additional
+  properties or a continuation token no longer repeats the response's `finishReason`. Anything that
+  reads an exploded response as a stream — the function-invocation loop replaying a non-streaming
+  round, a middleware answering a run without invoking the agent, the telemetry client — saw the
+  turn announce a finish reason a second time on an update carrying no message content, a shape no
+  provider stream produces. The message updates carry the reason exactly as before, so folding the
+  sequence back yields the same response, and both reference implementations agree: .NET's
+  `ChatResponse.ToChatResponseUpdates` builds its trailing update from `AdditionalProperties` and
+  usage alone, and Go's `Response.ToUpdates` is asserted to leave that update's finish reason empty.
+  One consequence, shared with both of them: a response that has no messages at all — where the
+  trailing update is the only one — no longer reports a finish reason to whoever folds the sequence.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

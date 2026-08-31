@@ -5,6 +5,7 @@ import { dataContent, textContent, unknownContent } from './content.js';
 import type { AgentResponseUpdate, ChatResponseUpdate } from './response.js';
 import {
   agentResponse,
+  agentResponseToUpdates,
   agentResponseUpdate,
   chatResponse,
   chatResponseToUpdates,
@@ -185,6 +186,97 @@ describe('chatResponseToUpdates', () => {
     );
     expect(updates).toEqual([]);
     expect(mergeChatUpdates(updates).messages).toEqual([]);
+  });
+
+  it('emits no trailing update for a usage record whose every counter is zero', () => {
+    const updates: ChatResponseUpdate[] = chatResponseToUpdates(
+      chatResponse<undefined>({
+        messages: [{ role: 'assistant', contents: [textContent('hi')], messageId: 'm1' }],
+        usageDetails: { inputTokenCount: 0, outputTokenCount: 0 },
+      }),
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.messageId).toBe('m1');
+  });
+
+  it('finishes every message update and leaves the trailing metadata update unfinished', () => {
+    const original = chatResponse<undefined>({
+      messages: [
+        { role: 'assistant', contents: [textContent('hi')], messageId: 'm1' },
+        { role: 'assistant', contents: [textContent(' there')], messageId: 'm2' },
+      ],
+      responseId: 'resp_1',
+      conversationId: 'conv_1',
+      model: 'gpt-4o',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      finishReason: 'content_filter',
+      usageDetails: { inputTokenCount: 4, outputTokenCount: 6 },
+      additionalProperties: { tenant: 'contoso' },
+      continuationToken: { responseId: 'resp_1' },
+    });
+
+    const updates: ChatResponseUpdate[] = chatResponseToUpdates(original);
+
+    expect(updates.map((u) => u.finishReason)).toEqual(['content_filter', 'content_filter', undefined]);
+    const trailing = updates[2];
+    assert.exists(trailing);
+    expect(trailing.contents).toEqual([
+      { type: 'usage', usageDetails: { inputTokenCount: 4, outputTokenCount: 6 } },
+    ]);
+    expect(trailing.additionalProperties).toEqual({ tenant: 'contoso' });
+    expect(trailing.continuationToken).toEqual({ responseId: 'resp_1' });
+    expect(trailing.responseId).toBe('resp_1');
+    expect(trailing.conversationId).toBe('conv_1');
+    expect(trailing.model).toBe('gpt-4o');
+    expect(trailing.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    // The message updates keep the response-level finish reason, so folding still recovers it.
+    expect(mergeChatUpdates<undefined>(updates).finishReason).toBe('content_filter');
+  });
+});
+
+describe('agentResponseToUpdates', () => {
+  it('finishes every message update and leaves the trailing metadata update unfinished', () => {
+    const original = agentResponse<undefined>({
+      messages: [
+        { role: 'assistant', contents: [textContent('hi')], messageId: 'm1' },
+        { role: 'assistant', contents: [textContent(' there')], messageId: 'm2' },
+      ],
+      responseId: 'resp_1',
+      agentId: 'agent_1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      finishReason: 'stop',
+      usageDetails: { inputTokenCount: 4, outputTokenCount: 6 },
+      additionalProperties: { tenant: 'contoso' },
+      continuationToken: { responseId: 'resp_1' },
+    });
+
+    const updates: AgentResponseUpdate[] = agentResponseToUpdates(original);
+
+    expect(updates.map((u) => u.finishReason)).toEqual(['stop', 'stop', undefined]);
+    const trailing = updates[2];
+    assert.exists(trailing);
+    expect(trailing.contents).toEqual([
+      { type: 'usage', usageDetails: { inputTokenCount: 4, outputTokenCount: 6 } },
+    ]);
+    expect(trailing.additionalProperties).toEqual({ tenant: 'contoso' });
+    expect(trailing.continuationToken).toEqual({ responseId: 'resp_1' });
+    expect(trailing.responseId).toBe('resp_1');
+    expect(trailing.agentId).toBe('agent_1');
+    expect(trailing.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(mergeUpdates<undefined>(updates).finishReason).toBe('stop');
+  });
+
+  it('emits a metadata-only update carrying no finish reason when the response has no messages', () => {
+    const updates: AgentResponseUpdate[] = agentResponseToUpdates(
+      agentResponse<undefined>({
+        messages: [],
+        finishReason: 'stop',
+        usageDetails: { inputTokenCount: 4 },
+      }),
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.finishReason).toBeUndefined();
   });
 });
 

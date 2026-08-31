@@ -425,15 +425,19 @@ function responseToUpdates(
     inits.push(init);
   }
 
-  // Go gates the trailing update on a non-zero usage record (`!isZeroUsage`), not mere presence.
+  // A usage record whose every counter is zero reports nothing, so it does not on its own earn a
+  // trailing update.
   const hasUsage = !isEmptyUsage(response.usageDetails);
   if (hasUsage || response.additionalProperties !== undefined || response.continuationToken !== undefined) {
     const init: ResponseUpdateInitBase = {
       contents: hasUsage ? [{ type: 'usage', usageDetails: response.usageDetails as UsageDetails }] : [],
     };
+    // No `finishReason` on this one: the reason describes the generation the message updates hold,
+    // and it is those updates that carry it into a folded response. Stamping it here as well would
+    // report the turn as finished a second time, after its last message.
     copyDefined(init, response, ['responseId', 'createdAt', 'continuationToken']);
     addExtras(init);
-    copyDefined(init, response, ['finishReason', 'additionalProperties']);
+    copyDefined(init, response, ['additionalProperties']);
     inits.push(init);
   }
   return inits;
