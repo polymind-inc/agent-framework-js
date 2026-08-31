@@ -47,9 +47,12 @@ export function extractTraceContext(headers: Headers): Context {
  * `ff` is reserved and is never a version. Neither id may be all zeros — that is the value the
  * format defines as "no trace". A version this build does not know may append further fields, so
  * the trailing group is allowed and checked against the version below.
+ *
+ * Exact, with no allowance for surrounding whitespace: the header API has already stripped it by
+ * the time a value is read, on this path and on the propagator's alike, so tolerating it here would
+ * only widen the grammar past what it says.
  */
-const TRACEPARENT =
-  /^\s?((?!ff)[\da-f]{2})-((?![0]{32})[\da-f]{32})-(?![0]{16})[\da-f]{16}-[\da-f]{2}(-.*)?\s?$/;
+const TRACEPARENT = /^((?!ff)[\da-f]{2})-((?![0]{32})[\da-f]{32})-(?![0]{16})[\da-f]{16}-[\da-f]{2}(-.*)?$/;
 
 /**
  * The trace-id field of a W3C `traceparent`, when the whole value is one.

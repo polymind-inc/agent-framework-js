@@ -191,6 +191,20 @@ describe('request id resolution', () => {
     },
   );
 
+  it('accepts a traceparent the caller padded with spaces', async () => {
+    // The grammar has no room for surrounding whitespace, and the matcher takes it literally. This
+    // still resolves because the header API strips the padding before either path reads the value —
+    // which is the assumption that lets the matcher stay exact. If that ever stops being true, this
+    // fails and the assumption gets revisited rather than silently costing callers their trace.
+    registerSdk();
+
+    const response = await makeServer().handle(
+      post({ input: 'x' }, { traceparent: `  ${TRACEPARENT}  `, [HEADERS.requestId]: 'req-123' }),
+    );
+
+    expect(requestIdOf(response)).toBe(TRACE_ID);
+  });
+
   it('answers a valid traceparent the same way with and without an SDK', async () => {
     // The other half of the same property: agreement has to hold for the values that do name a
     // trace, or the rule above would be satisfied by rejecting everything.
