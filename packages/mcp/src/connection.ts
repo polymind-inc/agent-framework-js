@@ -18,6 +18,7 @@ import {
   setMcpSpanError,
   withMcpClientSpan,
 } from '@polymind-inc/agent-framework-core';
+import { mcpErrorText } from './content.js';
 import type { McpHeaderProvider } from './headers.js';
 import { headerInjectingFetch } from './headers.js';
 
@@ -64,20 +65,6 @@ function httpTransportFactory(config: McpConnectionConfig): () => Transport {
   const url = new URL(String(config.url));
   const fetchImpl = headerInjectingFetch(url, config.headers, config.fetch ?? globalThis.fetch);
   return () => new StreamableHTTPClientTransport(url, { fetch: fetchImpl });
-}
-
-/** The text of a result's `text` blocks, concatenated; used as the span's error description. */
-function textOfBlocks(content: unknown): string {
-  if (!Array.isArray(content)) {
-    return '';
-  }
-  let out = '';
-  for (const block of content as Array<{ type?: unknown; text?: unknown }>) {
-    if (block.type === 'text' && typeof block.text === 'string') {
-      out += block.text;
-    }
-  }
-  return out;
 }
 
 /** Construction options for {@link McpConnection}. */
@@ -326,7 +313,9 @@ export class McpConnection {
           client.callTool({ name, arguments: args }, options),
         );
         if (result.isError === true) {
-          const text = textOfBlocks(result.content);
+          // One line per text block, the same rule the raised failure text is assembled by: a
+          // trace viewer shows the blocks of a failed call as the separate messages they are.
+          const text = mcpErrorText(result.content);
           setMcpSpanError(span, 'tool_error', text === '' ? undefined : text);
         }
         return result;
