@@ -53,6 +53,20 @@ contain breaking changes**; patch releases are fixes only.
   `{ "type": "item_reference", "id": "x" }`; to send a message, give it a `role` and `content`.
   Items of every other type are unaffected.
 
+- **`@polymind-inc/agent-framework-core`** — a tool call that carries no arguments at all now runs
+  with an empty argument object instead of coming back as an `Invalid arguments` result. A
+  `function_call` whose `arguments` field is absent or a native `null` reached schema validation as
+  `undefined` / `null` and was refused there, so a tool whose parameters are all optional never
+  executed — the shape a transcript written by another implementation has, since Python omits
+  `arguments` when it is `None`. All three reference implementations invoke the tool in that case
+  (Python `dict(parse_arguments() or {})`, .NET's nullable `FunctionCallContent.Arguments`, Go's
+  `{}` encoding of empty arguments). Both the ordinary loop and an approval resumed from a
+  serialized session take the same view, which is built fresh per invocation and never written back
+  to the call: `FunctionCallContent.arguments` is unchanged in the transcript and in the serialized
+  session. Empty and whitespace-only argument strings behave exactly as before, malformed non-empty
+  JSON is still an `Invalid JSON arguments` result, and the JSON text `null`, non-null scalars and
+  arrays are not treated as absent — they go on to schema validation as they always did.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
