@@ -207,9 +207,12 @@ function scanOccurrences(messages: readonly Message[]): ApprovalScan {
       }
       if (isApprovalRequest(content)) {
         const current = open.get(content.id);
-        if (current !== undefined && !current.answered && current.callId === content.functionCall.callId) {
+        if (current !== undefined && current.callId === content.functionCall.callId) {
           // A replayed copy of an occurrence that is still open. The first copy stays canonical,
-          // so a doctored replay neither displaces it nor asks the human a second time.
+          // so a doctored replay neither displaces it nor asks the human a second time. A decision
+          // having already settled it makes no difference: only a result ends an occurrence, so a
+          // copy replayed after its own decision is still that same occurrence, and opening a new
+          // one would ask again for what the human just granted.
           continue;
         }
         const occurrence: ApprovalOccurrence = {

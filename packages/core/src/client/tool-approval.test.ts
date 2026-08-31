@@ -1000,4 +1000,28 @@ describe('approval occurrences of a reused call id', () => {
     expect(executed).toEqual(['first', 'second']);
     expect(third.text).toBe('done');
   });
+
+  it('honours a decision that a replayed copy of its own still-open request follows', async () => {
+    const executed: string[] = [];
+    const session = new AgentSession();
+    const store = sessionApprovalStore(session);
+    const request = functionApprovalRequestContent(valued('c1', 'gated', 'only'));
+    store.addPending([request]);
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'stop' }]);
+
+    // A caller that rebuilds the transcript can put the request back after the decision that
+    // answered it. No result separates the copies, so both are the same open occurrence: the
+    // decision still settles it, and the human is not asked again for what they just granted.
+    await composed(mock, store).getResponse(
+      [
+        { role: 'assistant', contents: [request] },
+        { role: 'user', contents: [approvalResponse(request, true)] },
+        { role: 'assistant', contents: [request] },
+      ],
+      { tools: [recordingGate(executed)] },
+    );
+
+    expect(executed).toEqual(['only']);
+    expect(session.state._toolApproval).toBeUndefined();
+  });
 });
