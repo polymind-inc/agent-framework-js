@@ -18,7 +18,7 @@ import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { McpClient } from './client.js';
 import { McpConnection } from './connection.js';
-import { fromMcpContent } from './content.js';
+import { fromMcpContent, mcpErrorText } from './content.js';
 import type { TestTool } from './test-server.js';
 import { SlowStartServer, TestMcpServer } from './test-server.js';
 
@@ -1031,5 +1031,32 @@ describe('telemetry', () => {
     } finally {
       await provider.shutdown();
     }
+  });
+});
+
+describe('mcpErrorText', () => {
+  it.each<[string, unknown]>([
+    ['a string', 'not a list'],
+    ['an object', { type: 'text', text: 'lonely' }],
+    ['null', null],
+    ['undefined', undefined],
+  ])('reads %s as no text rather than throwing', (_label, items) => {
+    // The blocks come off the wire, so a server can answer with anything. Reading one as a list
+    // without checking would turn a tool failure into a failure to describe the failure — the
+    // caller would get a TypeError where it expected the server's reason. The transports in these
+    // tests cannot produce it, because the MCP client library validates the result first, so the
+    // rule is pinned here at the helper that has to hold it either way.
+    expect(mcpErrorText(items)).toBe('');
+  });
+
+  it('joins the text blocks of a well-formed list', () => {
+    expect(
+      mcpErrorText([
+        { type: 'text', text: 'rejected it' },
+        { type: 'image', data: 'AAAA' },
+        { type: 'text', text: '' },
+        { type: 'text', text: 'retry after 30s' },
+      ]),
+    ).toBe('rejected it\nretry after 30s');
   });
 });

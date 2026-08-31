@@ -217,10 +217,12 @@ contain breaking changes**; patch releases are fixes only.
   messages — a summary and its detail, or one line per item that failed — and concatenating them
   without a separator ran them together as `...rejected itretry after 30s`, in the
   `ToolInvocationError` the model is told about and in the `tools/call` span's status message
-  alike. Both are now assembled by one rule: text blocks only, in order, joined with a newline,
-  with empty blocks contributing nothing rather than a blank line, and `structuredContent` keeping
-  its place as the last line of a call that reported both. A result whose blocks carry no text at
-  all still falls back to the generic `MCP tool "<name>" reported an error.` message. The shared
+  alike. Both are now joined by one rule: text blocks only, in order, separated by a newline, with
+  empty blocks contributing nothing rather than a blank line. The two texts are not identical — the
+  exception is built from the converted contents, so a call that reported `structuredContent` still
+  carries it as the last line, while the span message is built from the result's own blocks and
+  never had it. A result whose blocks carry no text at all still falls back to the generic
+  `MCP tool "<name>" reported an error.` message. The shared
   `textOfContents` is untouched and stays a verbatim concatenation — it answers what a message
   said, where a streamed response splits text at arbitrary token boundaries. The equivalent
   assembly in `FoundryToolbox` is unchanged for now; it diverges in more than the separator and is

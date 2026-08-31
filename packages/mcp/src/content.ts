@@ -99,10 +99,17 @@ export function fromMcpContent(block: McpContentBlock): Content {
  * Accepts both raw MCP content blocks and the framework content converted from them, so the two
  * descriptions of a failure — the exception the caller raises and the message on the client
  * span — are assembled by this one rule instead of a copy of it each.
+ *
+ * Takes `unknown` and reads nothing it has not checked. One caller hands it a field straight off
+ * the wire, and a server that answers with something other than a list must not turn a tool failure
+ * into a failure to describe the failure. Anything that is not a list of blocks reads as no text.
  */
-export function mcpErrorText(items: readonly unknown[] | undefined): string {
+export function mcpErrorText(items: unknown): string {
+  if (!Array.isArray(items)) {
+    return '';
+  }
   const lines: string[] = [];
-  for (const item of items ?? []) {
+  for (const item of items) {
     if (typeof item !== 'object' || item === null) {
       continue;
     }
