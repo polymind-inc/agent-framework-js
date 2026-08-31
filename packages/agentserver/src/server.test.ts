@@ -101,7 +101,7 @@ describe('routes', () => {
   it('gets, lists input items for, and deletes a response', async () => {
     const server = makeServer();
     const created = (await (
-      await server.handle(post({ input: [{ type: 'message', id: 'in_1' }] }))
+      await server.handle(post({ input: [{ type: 'message', id: 'in_1', role: 'user', content: 'one' }] }))
     ).json()) as ResponseObject;
 
     const fetched = await server.handle(new Request(`http://localhost:8088/responses/${created.id}`));
@@ -151,6 +151,37 @@ describe('routes', () => {
     expect(list.data[1]?.id).toMatch(/^fco_/);
     // Minted ids co-locate with the response, like every other id the turn mints.
     expect(partitionKeyOf(list.data[0]?.id)).toBe(partitionKeyOf(created.id));
+  });
+
+  it('accepts an input item with no type and shows the handler and the store a message', async () => {
+    // `{ role, content }` with no discriminator is a valid OpenAI Responses input item, and both
+    // reference servers default the missing `type` to `message` before anything else looks at the
+    // item. Without that default the item reaches the handler untyped and — having no known id
+    // prefix — silently drops out of the stored transcript.
+    let seen: unknown;
+    const server = makeServer(async function* (request, context) {
+      seen = request.input;
+      yield { type: 'response.completed', response: context.response };
+    });
+
+    const response = await server.handle(post({ input: [{ role: 'user', content: 'hello' }] }));
+    const created = (await response.json()) as ResponseObject;
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual([{ type: 'message', role: 'user', content: 'hello' }]);
+
+    const items = await server.handle(
+      new Request(`http://localhost:8088/responses/${created.id}/input_items`),
+    );
+    const list = (await items.json()) as {
+      data: Array<{ type: string; role?: string; content?: unknown; id?: string }>;
+    };
+
+    expect(list.data).toHaveLength(1);
+    expect(list.data[0]?.type).toBe('message');
+    expect(list.data[0]?.role).toBe('user');
+    expect(list.data[0]?.content).toBe('hello');
+    expect(list.data[0]?.id).toMatch(/^msg_/);
   });
 
   it('mints ids across the reference id-generator dispatch, not just the common types', async () => {
@@ -236,9 +267,9 @@ describe('routes', () => {
   it('lists input items newest-first by default, and accepts order case-insensitively', async () => {
     const server = makeServer();
     const input = [
-      { type: 'message', id: 'in_1' },
-      { type: 'message', id: 'in_2' },
-      { type: 'message', id: 'in_3' },
+      { type: 'message', id: 'in_1', role: 'user', content: 'one' },
+      { type: 'message', id: 'in_2', role: 'user', content: 'two' },
+      { type: 'message', id: 'in_3', role: 'user', content: 'three' },
     ];
     const created = (await (await server.handle(post({ input }))).json()) as ResponseObject;
 
@@ -288,10 +319,15 @@ describe('routes', () => {
     });
 
     const first = (await (
-      await server.handle(post({ input: [{ type: 'message', id: 'in_1' }] }))
+      await server.handle(post({ input: [{ type: 'message', id: 'in_1', role: 'user', content: 'one' }] }))
     ).json()) as ResponseObject;
     const second = (await (
-      await server.handle(post({ input: [{ type: 'message', id: 'in_2' }], previous_response_id: first.id }))
+      await server.handle(
+        post({
+          input: [{ type: 'message', id: 'in_2', role: 'user', content: 'two' }],
+          previous_response_id: first.id,
+        }),
+      )
     ).json()) as ResponseObject;
 
     // A new conversation starts empty; the follow-up replays the first turn's input *and* output.
@@ -337,7 +373,9 @@ describe('cross-user isolation', () => {
       yield { type: 'response.completed', response: { ...context.response, status: 'completed' } };
     });
 
-    const mine = await createFor(server, alice, { input: [{ type: 'message', id: 'secret_1' }] });
+    const mine = await createFor(server, alice, {
+      input: [{ type: 'message', id: 'secret_1', role: 'user', content: 'secret' }],
+    });
     const stolen = await server.handle(post({ input: 'x', previous_response_id: mine.id }, mallory));
 
     // 404 rather than 403: whether the id exists is itself Alice's business.
@@ -353,7 +391,7 @@ describe('cross-user isolation', () => {
     });
 
     await createFor(server, alice, {
-      input: [{ type: 'message', id: 'secret_1' }],
+      input: [{ type: 'message', id: 'secret_1', role: 'user', content: 'secret' }],
       conversation: { id: `caresp_${'c'.repeat(18)}${'d'.repeat(32)}` },
     });
     const stolen = await server.handle(
@@ -636,12 +674,32 @@ describe('validation', () => {
     }
   });
 
-  it('rejects an input item without a type', async () => {
+  it('rejects a type-less input item that is not a valid message', async () => {
+    // Defaulting to `message` does not make an id-only object valid: it still has to carry `role`
+    // and `content`. Pointing at a stored item needs the explicit `item_reference` discriminator.
     const response = await makeServer().handle(post({ input: [{ id: 'no_type' }] }));
+    const body = (await response.json()) as {
+      error: { code: string; message: string; details: Array<{ code: string; param: string; type: string }> };
+    };
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('invalid_request');
+    expect(body.error.message).toBe('request body failed schema validation');
+    expect(body.error.details.map((d) => d.param)).toEqual(['$.input[0].role', '$.input[0].content']);
+    for (const detail of body.error.details) {
+      expect(detail.code).toBe('invalid_value');
+      expect(detail.type).toBe('invalid_request_error');
+    }
+  });
+
+  it('rejects a null type rather than treating it as absent', async () => {
+    const response = await makeServer().handle(
+      post({ input: [{ type: null, role: 'user', content: 'hi' }] }),
+    );
     const body = (await response.json()) as { error: { details: Array<{ param: string }> } };
 
     expect(response.status).toBe(400);
-    expect(body.error.details.map((d) => d.param)).toContain('$.input[0]');
+    expect(body.error.details.map((d) => d.param)).toEqual(['$.input[0]']);
   });
 
   it('rejects a conversation id that cannot be a storage key', async () => {
@@ -704,7 +762,12 @@ describe('request limits', () => {
       handler: lifecycleHandler({ echo: true }),
       limits: { maxInputItems: 2 },
     });
-    const items = Array.from({ length: 3 }, (_, i) => ({ type: 'message', id: `in_${i}` }));
+    const items = Array.from({ length: 3 }, (_, i) => ({
+      type: 'message',
+      id: `in_${i}`,
+      role: 'user',
+      content: `item ${i}`,
+    }));
 
     const response = await server.handle(post({ input: items }));
 

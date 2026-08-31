@@ -89,6 +89,19 @@ function isPlainObject(value: unknown): value is JsonObject {
 }
 
 /**
+ * The discriminator an input item that names none is validated and normalized as.
+ *
+ * `{ role: "user", content: "hello" }` is a valid Responses input item, and both reference servers
+ * resolve its absent `type` to `message` before dispatching — .NET's item validator supplies the
+ * default from its custom `ResolveDefaultDiscriminator`, Python's reads `value.get("type",
+ * "message")`. The default is what makes the item *dispatch* to the message rules; it does not
+ * excuse them, so `role` and `content` are still required and an id-only object is still refused.
+ * An item that names `message` itself dispatches to exactly the same rules — one shape, one set of
+ * requirements, whether the caller wrote the discriminator or left it out.
+ */
+const DEFAULT_ITEM_TYPE = 'message';
+
+/**
  * Structural validation of a `POST /responses` body.
  *
  * Mirrors what Python gets from its generated `validate_create_response_payload`: every field the
@@ -123,8 +136,29 @@ function schemaDetails(request: JsonObject): ApiErrorDetail[] {
   }
   if (Array.isArray(input)) {
     input.forEach((item, index) => {
-      if (!isPlainObject(item) || typeof item.type !== 'string') {
-        wrong(`$.input[${index}]`, "an object with a string 'type'");
+      const path = `$.input[${index}]`;
+      if (!isPlainObject(item)) {
+        wrong(path, "an object with a string 'type'");
+        return;
+      }
+      if (Object.hasOwn(item, 'type')) {
+        // Present but not a string — `null` included — is a broken discriminator, not an absent
+        // one, and taking the default for it would silently reinterpret the item.
+        if (typeof item.type !== 'string') {
+          wrong(path, "an object with a string 'type'");
+          return;
+        }
+        // Any other discriminator names a shape this pass does not model.
+        if (item.type !== DEFAULT_ITEM_TYPE) return;
+      }
+      // A message, whether it said so or was resolved to one, answers for the two fields a message
+      // must carry. Both spellings reach the same rules, the way the reference validators dispatch
+      // them, so naming the discriminator explicitly cannot buy a laxer check than omitting it.
+      // Reported per field so a caller learns which half of `{ role, content }` is missing rather
+      // than only that the item was refused.
+      if (typeof item.role !== 'string') wrong(`${path}.role`, 'a string');
+      if (typeof item.content !== 'string' && !Array.isArray(item.content)) {
+        wrong(`${path}.content`, 'a string or an array');
       }
     });
   }
@@ -182,6 +216,32 @@ function schemaDetails(request: JsonObject): ApiErrorDetail[] {
   return details;
 }
 
+/**
+ * Writes the resolved discriminator onto every input item that named none, so that the handler,
+ * the id minting and the stored transcript all read the same `type` the validation above judged
+ * the item by. Left implicit, such an item reaches the handler untyped and has no known id prefix,
+ * which quietly drops it out of persistence — the next turn would replay a conversation missing
+ * what the caller actually said.
+ *
+ * The request and its items belong to the caller, so nothing is written in place: only the items
+ * that need the default are rebuilt, and when none does the request is handed back unchanged.
+ */
+function withResolvedItemTypes(request: CreateResponseRequest): CreateResponseRequest {
+  const input = request.input;
+  if (!Array.isArray(input)) {
+    return request;
+  }
+  let defaulted = false;
+  const items = input.map((item: unknown): unknown => {
+    if (!isPlainObject(item) || Object.hasOwn(item, 'type')) {
+      return item;
+    }
+    defaulted = true;
+    return { type: DEFAULT_ITEM_TYPE, ...item };
+  });
+  return defaulted ? { ...request, input: items } : request;
+}
+
 /** Optional limits for {@link parseCreateRequest}. */
 export interface ParseCreateRequestLimits {
   /** Maximum number of items an `input` array may carry. */
@@ -195,6 +255,9 @@ export interface ParseCreateRequestLimits {
  * a 400 with the offending `param` rather than something a handler has to re-check. Structural
  * problems are reported first (the counterpart of Python's generated schema-validation pass, as
  * field-level `details[]` with JSON paths), then the semantic constraints.
+ *
+ * The returned request is normalized: an input item that omitted its `type` carries the resolved
+ * `message` discriminator. The body handed in is never written to.
  *
  * @throws {ProtocolError} 400 when the body is not an object or breaks a documented constraint.
  */
@@ -211,7 +274,7 @@ export function parseCreateRequest(
     throw badRequest('request body failed schema validation', { code: 'invalid_request', details });
   }
 
-  const request = payload as CreateResponseRequest;
+  const request = withResolvedItemTypes(payload as CreateResponseRequest);
 
   // After the schema pass `store` is a boolean or absent, so `!== false` here and the
   // `=== false` persistence check in the server agree — there is no third, falsy-but-not-false
