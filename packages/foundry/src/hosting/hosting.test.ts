@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -47,6 +47,7 @@ import type { HostedAgentContext } from './hosted-context.js';
 import { getHostedAgentContext } from './hosted-context.js';
 import { OutputBuilder } from './output.js';
 import { FoundryResponseStore } from './response-store.js';
+import { ResponsesHostServer } from './server.js';
 import { FileSystemAgentSessionStore, InMemoryAgentSessionStore } from './session-store.js';
 
 function say(text: string): MockTurn {
@@ -715,6 +716,49 @@ describe('environment defaults', () => {
   it('keeps a local run in memory', () => {
     expect(defaultSessionStore(false).constructor.name).toBe('InMemoryAgentSessionStore');
     expect(defaultApprovalStorage(false).constructor.name).toBe('InMemoryApprovalStorage');
+  });
+
+  it('persists a local run’s responses to the state root, so a restart can be continued', async () => {
+    // The composition, not just `defaultStore(false)`: what a caller gets from
+    // `new ResponsesHostServer({ agent })` with no `store` is what the matrix is about.
+    const root = await mkdtemp(join(tmpdir(), 'afjs-host-store-'));
+    vi.stubEnv('AGENTSERVER_STATE_ROOT', root);
+    try {
+      const app = new ResponsesHostServer({
+        agent: new Agent({ client: new MockChatClient([say('Hello there')]), instructions: 'Be helpful.' }),
+        sessionStore: new InMemoryAgentSessionStore(),
+        approvalStorage: new InMemoryApprovalStorage(),
+        hosted: false,
+      });
+
+      const created = (await (await app.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
+
+      // Clear text on disk, under the documented root — the transcript is readable by anyone who
+      // can read the directory, and nothing here ever removes it.
+      expect(await readFile(join(root, 'responses', `${created.id}.json`), 'utf8')).toContain('Hello there');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an explicitly in-memory local run off the filesystem', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'afjs-host-store-'));
+    vi.stubEnv('AGENTSERVER_STATE_ROOT', root);
+    try {
+      const app = new ResponsesHostServer({
+        agent: new Agent({ client: new MockChatClient([say('Hello there')]), instructions: 'Be helpful.' }),
+        sessionStore: new InMemoryAgentSessionStore(),
+        approvalStorage: new InMemoryApprovalStorage(),
+        hosted: false,
+        store: new InMemoryResponseProvider(),
+      });
+
+      await app.handle(post({ input: 'Hi' }));
+
+      await expect(readdir(join(root, 'responses'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

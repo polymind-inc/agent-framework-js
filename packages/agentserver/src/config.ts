@@ -112,7 +112,14 @@ export function gracefulShutdownSeconds(): number {
   return intEnv('AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS', 30);
 }
 
-/** Root for local persistence when the platform's storage is not available. */
+/**
+ * Root for local persistence when the platform's storage is not available.
+ *
+ * `AGENTSERVER_STATE_ROOT`, defaulting to `~/.agentserver` — the same variable and default the
+ * reference servers resolve their durable state under. The default response store writes whole
+ * transcripts here in the clear and never removes them, so an operator who cares where that is,
+ * or who wants it on a volume they can wipe, sets this.
+ */
 export function stateRoot(): string {
   return (
     env('AGENTSERVER_STATE_ROOT') ?? `${process.env.HOME ?? process.env.USERPROFILE ?? '.'}/.agentserver`

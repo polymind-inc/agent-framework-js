@@ -107,6 +107,50 @@ contain breaking changes**; patch releases are fixes only.
   `getTools()` now rejects and names both remote tools and the name they collide on, rather than
   silently shadowing one of them.
 
+- **`@polymind-inc/agent-framework-core`** — a run that exhausts `maxIterations` no longer ends on
+  a tool call nobody will make. The final, over-budget request already withdrew the local function
+  declarations; it now also sends `toolChoice: 'none'` (previously `'auto'`), and a local
+  `function_call` or local `function_approval_request` the provider emits anyway is removed from
+  that round instead of being returned unexecuted — in both awaited and streamed form, which fold
+  to the same messages. Filtering is per update, so everything an update keeps is still forwarded
+  the moment it arrives; text, reasoning, response metadata, raw representation, hosted content,
+  provider-hosted approvals and `informationalOnly` call/result pairs are untouched, and an update
+  left with metadata but no content stays visible. When finalization leaves no non-blank
+  user-visible answer and no hosted approval, the run ends on the fixed sentence
+  `Function invocation limit reached before a final answer could be produced.`, matching Python's
+  `_ensure_function_invocation_limit_fallback_response`; content that survived is never displaced
+  to make room for it. Requesting structured output from a run that ends this way now raises the
+  ordinary "not valid JSON" error rather than silently returning `value: undefined`, because the
+  response is no longer a suspended one.
+
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`, `@polymind-inc/agent-framework-foundry`**
+  — a server built without an explicit `store` now persists responses to the **filesystem** rather
+  than to memory. `new ResponsesServer({ handler })` and a non-hosted `ResponsesHostServer` both
+  default to `FileResponseProvider` under `${AGENTSERVER_STATE_ROOT}/responses`
+  (`~/.agentserver/responses` when that variable is unset), so a `previous_response_id` chain
+  survives a restart instead of answering 404 — the local default both reference servers already
+  make (.NET registers `FileResponsesProvider` for a non-hosted host; Python's
+  `ResponsesAgentServerHost` falls through to `FileResponseStore`, under the same state root).
+  A hosted `ResponsesHostServer` is unchanged: the Foundry storage service when the platform
+  injects the project endpoint, the sandbox filesystem when it does not.
+
+  **Migration.** Nothing to do to keep the new behaviour, but two consequences are worth a
+  decision. First, the process now writes to disk where it previously did not: it needs write
+  access to the state root, and a read-only or ephemeral filesystem wants
+  `AGENTSERVER_STATE_ROOT` pointed somewhere writable. Second, **transcripts are persisted in the
+  clear** — each file is plain JSON holding a whole conversation, readable by anything running as
+  the same account, and nothing in this package expires, rotates or bounds them. Retention,
+  cleanup and the directory's permissions are the operator's responsibility. To keep the previous
+  process-local behaviour, pass the store explicitly:
+
+  ```ts
+  new ResponsesServer({ handler, store: new InMemoryResponseProvider() });
+  ```
+
+  Tests are the other place this shows up: a suite that builds a server without naming a store now
+  writes into `~/.agentserver` unless it pins `AGENTSERVER_STATE_ROOT` to a temporary directory —
+  this repository's own suites pass an in-memory store explicitly and pin the root regardless.
+
 - **`@polymind-inc/agent-framework-anthropic`** — the code-execution beta's blocks are read as the
   typed content the framework already models instead of falling through the generic rules. The beta
   is requested by default, but a `tool_use` / `server_tool_use` whose name identifies code execution
