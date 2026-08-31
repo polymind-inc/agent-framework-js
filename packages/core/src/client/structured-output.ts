@@ -32,15 +32,29 @@ function isNamedFormat(value: object): value is JsonSchemaResponseFormat {
 }
 
 /**
+ * The name to send when the caller did not supply one.
+ *
+ * A schema written by hand or produced by a schema library usually names itself with a root
+ * `title`, and that name is far more useful to a provider — and to anyone reading a trace — than a
+ * generic placeholder. Python does the same for the OpenAI response format. The keyword stays on
+ * the schema: it is a legal annotation, and removing it would change what the caller declared.
+ */
+function defaultFormatName(schema: JsonSchema): string {
+  const title = schema.title;
+  return typeof title === 'string' && title !== '' ? title : 'response';
+}
+
+/**
  * Normalizes a {@link ResponseFormat} into a JSON Schema plus the metadata providers require.
  *
  * @throws {SchemaResolutionError} When the schema cannot be converted to JSON Schema.
  */
 export function resolveResponseFormat(format: ResponseFormat): ResolvedResponseFormat {
   if (typeof format === 'object' && format !== null && !isStandardSchema(format) && isNamedFormat(format)) {
+    const schema = resolveJsonSchema(format.schema);
     const resolved: ResolvedResponseFormat = {
-      name: format.name ?? 'response',
-      schema: resolveJsonSchema(format.schema),
+      name: format.name ?? defaultFormatName(schema),
+      schema,
       strict: format.strict ?? true,
     };
     if (format.description !== undefined) {
@@ -49,9 +63,10 @@ export function resolveResponseFormat(format: ResponseFormat): ResolvedResponseF
     return resolved;
   }
 
+  const schema = resolveJsonSchema(format);
   const resolved: ResolvedResponseFormat = {
-    name: 'response',
-    schema: resolveJsonSchema(format),
+    name: defaultFormatName(schema),
+    schema,
     strict: true,
   };
   if (isStandardSchema(format)) {

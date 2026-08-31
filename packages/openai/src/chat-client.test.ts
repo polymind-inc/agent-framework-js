@@ -274,16 +274,110 @@ describe('OpenAIChatClient request mapping', () => {
 
   it('maps responseFormat to text.format', () => {
     const request = client.buildRequest(HI, {
-      responseFormat: { name: 'person', schema: { type: 'object', properties: {} }, strict: true },
+      responseFormat: {
+        name: 'person',
+        schema: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          required: ['name'],
+          additionalProperties: false,
+        },
+        strict: true,
+      },
     });
     expect(request.text).toEqual({
       format: {
         type: 'json_schema',
         name: 'person',
-        schema: { type: 'object', properties: {} },
+        schema: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          required: ['name'],
+          additionalProperties: false,
+        },
         strict: true,
       },
     });
+  });
+
+  it('closes a strict responseFormat schema the caller left open-ended', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        address: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+    };
+    const before = structuredClone(schema);
+
+    const request = client.buildRequest(HI, { responseFormat: schema });
+
+    expect(request.text).toEqual({
+      format: {
+        type: 'json_schema',
+        name: 'response',
+        schema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            address: {
+              type: 'object',
+              properties: { city: { type: 'string' } },
+              required: ['city'],
+              additionalProperties: false,
+            },
+          },
+          required: ['address', 'name'],
+          additionalProperties: false,
+        },
+        strict: true,
+      },
+    });
+    // Building the request must not write anything back into the caller's schema.
+    expect(schema).toEqual(before);
+  });
+
+  it('leaves a non-strict responseFormat schema alone', () => {
+    // An explicitly open map is a shape strict mode rejects, so this passes only while the
+    // transform stays off the `strict: false` path.
+    const schema = {
+      type: 'object',
+      properties: { tags: { type: 'object', additionalProperties: { type: 'string' } } },
+    };
+    const request = client.buildRequest(HI, {
+      responseFormat: { name: 'loose', schema, strict: false },
+    });
+    expect(request.text).toEqual({
+      format: { type: 'json_schema', name: 'loose', schema, strict: false },
+    });
+  });
+
+  it('refuses a strict responseFormat schema strict mode cannot express', () => {
+    expect(() =>
+      client.buildRequest(HI, {
+        responseFormat: {
+          name: 'loose',
+          schema: {
+            type: 'object',
+            properties: { tags: { type: 'object', additionalProperties: { type: 'string' } } },
+          },
+        },
+      }),
+    ).toThrow(/strict JSON schema at properties\/tags: additionalProperties must be false/);
+  });
+
+  it('names the format from a raw schema title unless the caller names it', () => {
+    const schema = { type: 'object', title: 'Person', properties: { name: { type: 'string' } } };
+    expect(
+      (client.buildRequest(HI, { responseFormat: schema }).text as { format: { name: string } }).format.name,
+    ).toBe('Person');
+    expect(
+      (
+        client.buildRequest(HI, { responseFormat: { name: 'explicit', schema } }).text as {
+          format: { name: string };
+        }
+      ).format.name,
+    ).toBe('explicit');
   });
 
   it('routes conversationId to previous_response_id or conversation', () => {

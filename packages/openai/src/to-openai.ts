@@ -21,6 +21,7 @@ import {
   safeStringify,
   topLevelMediaType,
 } from '@polymind-inc/agent-framework-core/internal';
+import { toStrictJsonSchema } from './strict-schema.js';
 
 /** A Responses API input item, kept loose so unmodelled item types pass through. */
 export type ResponsesInputItem = Record<string, unknown>;
@@ -720,13 +721,23 @@ export function toResponsesToolChoice(choice: ToolChoice | undefined): unknown {
   };
 }
 
-/** Converts a {@link ResponseFormat} into the Responses API `text.format` value. */
+/**
+ * Converts a {@link ResponseFormat} into the Responses API `text.format` value.
+ *
+ * A strict format's schema goes through {@link toStrictJsonSchema} first: `strict: true` and an
+ * untransformed schema is a combination the service rejects, and the caller's schema is a plain
+ * JSON Schema that need not already carry the closure keywords strict mode requires. A
+ * `strict: false` format is passed through structurally unchanged — the transform's rules do not
+ * apply there, and applying them would change what the caller asked for.
+ *
+ * @throws {ChatClientError} When a strict schema cannot be represented in strict mode.
+ */
 export function toResponsesTextFormat(format: ResponseFormat): Record<string, unknown> {
   const resolved = resolveResponseFormat(format);
   const config: Record<string, unknown> = {
     type: 'json_schema',
     name: resolved.name,
-    schema: resolved.schema,
+    schema: resolved.strict ? toStrictJsonSchema(resolved.schema) : resolved.schema,
     strict: resolved.strict,
   };
   if (resolved.description !== undefined) {

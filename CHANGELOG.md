@@ -67,6 +67,27 @@ contain breaking changes**; patch releases are fixes only.
   JSON is still an `Invalid JSON arguments` result, and the JSON text `null`, non-null scalars and
   arrays are not treated as absent — they go on to schema validation as they always did.
 
+- **[BREAKING] `@polymind-inc/agent-framework-openai`** — a strict structured-output schema is now
+  transformed into the closed form the Responses API requires before it is sent. `strict` has always
+  defaulted to `true`, but the JSON Schema went out untouched, so a perfectly valid framework input
+  — a raw object schema without `additionalProperties: false`, or with a `required` list that does
+  not name every property — reached the service as a combination it rejects. The request path now
+  rewrites a deep clone of the schema, mirroring the contract Go's `strictSchemaToMap` applies:
+  `properties`, `items`, `anyOf`, `oneOf`, `$defs` and `definitions` are walked recursively, every
+  object with declared properties gains `additionalProperties: false` and a `required` list naming
+  all of them in a deterministic order, and `default` moves into the node's description. The
+  caller's schema object is never modified. A schema strict mode cannot express now fails locally
+  with the offending path — an explicitly open object (`additionalProperties: true` or a schema
+  value), a non-object root, a root `anyOf`, a boolean subschema, an object that declares nothing,
+  a `required` entry that is not a declared property, or a keyword outside the strict subset
+  (`allOf`, `not`, `if`/`then`/`else`, `patternProperties`, `prefixItems`, `uniqueItems`,
+  `minProperties`/`maxProperties`, the `$dynamic*`/`$recursive*` family and the rest) — instead of
+  producing an opaque service 400. Schemas that already satisfied strict mode, including everything
+  zod emits, are unchanged on the wire. Pass `strict: false` to send a schema through untouched, as
+  before. A `responseFormat` given without a name now takes its name from a string root `title` on
+  the schema, matching Python; an explicit `name` still wins, and the `title` keyword stays on the
+  schema.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
