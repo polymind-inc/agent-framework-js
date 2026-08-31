@@ -116,6 +116,40 @@ function toolResultContent(result: unknown): AnthropicBlock[] | string {
   return safeStringify(result);
 }
 
+/** The blocks a provider-run code-execution call and its result arrive as. */
+const PROVIDER_EXECUTED_BLOCKS = new Set([
+  'tool_use',
+  'server_tool_use',
+  'code_execution_tool_result',
+  'bash_code_execution_tool_result',
+  'text_editor_code_execution_tool_result',
+]);
+
+/**
+ * The block to replay for content describing a call the provider ran itself.
+ *
+ * These contents model an outcome, not a request the caller can make: there is no block to build
+ * from their fields, and the result blocks have to go back on the assistant turn that produced
+ * them rather than as a `tool_result` answering a call the transcript no longer contains. The
+ * block the API sent is replayed instead — the same forward-compatible rule {@link Content} of
+ * type `unknown` follows — so an exchange that used code execution survives the next request.
+ */
+function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
+  if (
+    content.type !== 'code_interpreter_tool_call' &&
+    content.type !== 'code_interpreter_tool_result' &&
+    content.type !== 'shell_tool_result' &&
+    content.type !== 'function_result'
+  ) {
+    return undefined;
+  }
+  const raw = content.rawRepresentation;
+  if (!isRecord(raw) || typeof raw.type !== 'string' || !PROVIDER_EXECUTED_BLOCKS.has(raw.type)) {
+    return undefined;
+  }
+  return raw;
+}
+
 /**
  * Converts one framework content item into Messages API blocks.
  *
@@ -124,6 +158,11 @@ function toolResultContent(result: unknown): AnthropicBlock[] | string {
  * `_prepare_message_for_anthropic`).
  */
 function appendContent(blocks: AnthropicBlock[], content: Content): void {
+  const providerExecuted = providerExecutedBlock(content);
+  if (providerExecuted !== undefined) {
+    blocks.push(providerExecuted);
+    return;
+  }
   switch (content.type) {
     case 'text': {
       // The API rejects empty text blocks.
