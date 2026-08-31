@@ -1,7 +1,13 @@
 import { assert, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { ConfigurationError, SchemaResolutionError, UserInputRequiredError } from '../errors.js';
+import {
+  ChatClientError,
+  ConfigurationError,
+  SchemaResolutionError,
+  UserInputRequiredError,
+} from '../errors.js';
 import { functionMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
+import { hostedTool } from '../tools/hosted.js';
 import { invocationCountOf, resetInvocationCount, tool } from '../tools/tool.js';
 import type {
   Content,
@@ -12,11 +18,13 @@ import type {
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
+import type { ChatResponseUpdate } from '../types/response.js';
 import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import { deserializeContent } from '../types/serialization.js';
 import type { ChatClient, ChatClientMetadata, ChatOptions } from './chat-client.js';
 import { FunctionInvocationLimitError } from './function-execution.js';
 import { withFunctionInvocation } from './function-invocation.js';
+import { withStructuredOutput } from './structured-output.js';
 import { MockChatClient } from './test-support.js';
 
 function call(
@@ -353,7 +361,7 @@ describe('withFunctionInvocation', () => {
     expect(inner.callCount).toBe(3);
     expect(inner.calls[0]?.options?.tools).toHaveLength(1);
     expect(inner.calls[2]?.options?.tools).toBeUndefined();
-    expect(inner.calls[2]?.options?.toolChoice).toBe('auto');
+    expect(inner.calls[2]?.options?.toolChoice).toBe('none');
   });
 
   it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
@@ -1615,5 +1623,507 @@ describe('calls whose arguments are missing or null', () => {
     assert.exists(transcriptCall);
     expect(transcriptCall.arguments).toBe(fields.arguments as undefined);
     expect(Object.hasOwn(transcriptCall, 'arguments')).toBe('arguments' in fields);
+  });
+});
+
+describe('withFunctionInvocation at the iteration limit', () => {
+  const FALLBACK_TEXT = 'Function invocation limit reached before a final answer could be produced.';
+
+  const loopTool = (execute: () => Promise<string> = async () => 'again') =>
+    tool({ name: 'loop', description: 'd', parameters: echoSchema, execute });
+
+  function localApproval(callId: string): FunctionApprovalRequestContent {
+    return {
+      type: 'function_approval_request',
+      id: `ficc_${callId}`,
+      functionCall: call(callId, 'loop'),
+      userInputRequest: true,
+    };
+  }
+
+  function hostedApproval(callId: string): FunctionApprovalRequestContent {
+    return {
+      type: 'function_approval_request',
+      id: `ficc_${callId}`,
+      functionCall: { ...call(callId, 'remote'), additionalProperties: { server_label: 'srv' } },
+      userInputRequest: true,
+    };
+  }
+
+  const informationalCall = (callId: string): FunctionCallContent => ({
+    ...call(callId, 'web_search'),
+    informationalOnly: true,
+  });
+  const informationalResult = (callId: string): FunctionResultContent => ({
+    type: 'function_result',
+    callId,
+    result: 'searched',
+  });
+
+  /**
+   * A provider scripted at *update* granularity, so a test can put metadata on an individual
+   * update rather than on a whole turn. Each entry answers one round in order; the last entry
+   * repeats once the script runs out, like {@link MockChatClient}.
+   */
+  function updateScript(turns: () => ChatResponseUpdate[][]): {
+    client: ChatClient<ChatOptions>;
+    requests: Array<ChatOptions | undefined>;
+  } {
+    const scripted = turns();
+    let index = 0;
+    const requests: Array<ChatOptions | undefined> = [];
+    const client: ChatClient<ChatOptions> = {
+      metadata: { providerName: 'mock' },
+      getResponse: (_messages, options) => {
+        requests.push(options);
+        const turn = scripted[Math.min(index++, scripted.length - 1)] ?? [];
+        return createResponseStream({
+          start: () =>
+            (async function* () {
+              yield* turn;
+            })(),
+          finalize: (updates) => mergeChatUpdates(updates),
+        });
+      },
+    };
+    return { client, requests };
+  }
+
+  /** Message ids the framework generates are random; everything else has to match exactly. */
+  function normalizeMessages(messages: Message[]): unknown {
+    return messages.map((msg) => ({
+      ...msg,
+      messageId:
+        msg.messageId !== undefined && /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(msg.messageId)
+          ? '<generated>'
+          : msg.messageId,
+    }));
+  }
+
+  const contentsOf = (messages: Message[]): Content[] => messages.flatMap((msg) => msg.contents);
+
+  it('sends the final request without local declarations and with toolChoice none', async () => {
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+    const search = hostedTool('web_search', { type: 'web_search' });
+
+    await withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool(), search],
+      toolChoice: 'auto',
+    } as ChatOptions);
+
+    expect(inner.callCount).toBe(2);
+    expect(inner.calls[0]?.options?.tools).toHaveLength(2);
+    // The hosted tool is the provider's own; only the local declaration is withdrawn.
+    expect(inner.calls[1]?.options?.tools).toEqual([search]);
+    expect(inner.calls[1]?.options?.toolChoice).toBe('none');
+  });
+
+  it('drops a local call and a local approval the provider emits on the final round', async () => {
+    const execute = vi.fn(async () => 'again');
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      {
+        contents: [textContent('here it is'), call('c2', 'loop'), localApproval('c3')],
+        finishReason: 'tool_calls',
+      },
+    ]);
+
+    const response = await withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool(execute)],
+    } as ChatOptions);
+
+    // Only round 0 ran a tool; the final round's call is never executed.
+    expect(execute).toHaveBeenCalledTimes(1);
+    const contents = contentsOf(response.messages);
+    expect(contents.filter((c) => c.type === 'function_call' && c.callId === 'c2')).toEqual([]);
+    expect(contents.filter((c) => c.type === 'function_approval_request')).toEqual([]);
+    expect(response.text).toBe('here it is');
+  });
+
+  it('drops the same content from the yielded updates when streaming', async () => {
+    const execute = vi.fn(async () => 'again');
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      {
+        contents: [textContent('here it is'), call('c2', 'loop'), localApproval('c3')],
+        finishReason: 'tool_calls',
+      },
+    ]);
+
+    const stream = withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool(execute)],
+    } as ChatOptions);
+    const yielded: ChatResponseUpdate[] = [];
+    for await (const update of stream) {
+      yielded.push(update);
+    }
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const streamedContents = yielded.flatMap((update) => update.contents);
+    expect(streamedContents.filter((c) => c.type === 'function_call' && c.callId === 'c2')).toEqual([]);
+    expect(streamedContents.filter((c) => c.type === 'function_approval_request')).toEqual([]);
+    const folded = await stream.finalResponse();
+    expect(folded.text).toBe('here it is');
+  });
+
+  it('yields retained content before the final round stream completes', async () => {
+    // Filtering is per update: a retained update reaches the caller while the provider is still
+    // producing, rather than after the whole round has been buffered.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let index = 0;
+    const client: ChatClient<ChatOptions> = {
+      metadata: { providerName: 'mock' },
+      getResponse: () => {
+        const round = index++;
+        return createResponseStream({
+          start: () =>
+            (async function* () {
+              if (round === 0) {
+                yield chatResponseUpdate({
+                  contents: [call('c1', 'loop')],
+                  role: 'assistant',
+                  messageId: 'm0',
+                  finishReason: 'tool_calls',
+                });
+                return;
+              }
+              yield chatResponseUpdate({
+                contents: [textContent('early')],
+                role: 'assistant',
+                messageId: 'm1',
+              });
+              await gate;
+              yield chatResponseUpdate({
+                contents: [call('c2', 'loop')],
+                role: 'assistant',
+                messageId: 'm1',
+                finishReason: 'tool_calls',
+              });
+            })(),
+          finalize: (updates) => mergeChatUpdates(updates),
+        });
+      },
+    };
+
+    const stream = withFunctionInvocation(client, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    const iterator = stream[Symbol.asyncIterator]();
+    let next = await iterator.next();
+    while (!next.done && next.value.text !== 'early') {
+      next = await iterator.next();
+    }
+    // Reached while the provider's own stream is still parked on the gate.
+    assert.isFalse(next.done);
+    expect(next.value.text).toBe('early');
+    release();
+    const rest: ChatResponseUpdate[] = [];
+    for (next = await iterator.next(); !next.done; next = await iterator.next()) {
+      rest.push(next.value);
+    }
+    expect(rest.flatMap((update) => update.contents).filter((c) => c.type === 'function_call')).toEqual([]);
+  });
+
+  it('keeps text, reasoning and metadata while removing only the local call', async () => {
+    const { client } = updateScript(() => [
+      [
+        chatResponseUpdate({
+          contents: [call('c1', 'loop')],
+          role: 'assistant',
+          finishReason: 'tool_calls',
+        }),
+      ],
+      [
+        chatResponseUpdate({
+          contents: [
+            textContent('partial'),
+            { type: 'text_reasoning', text: 'thinking' },
+            call('c2', 'loop'),
+          ],
+          role: 'assistant',
+          messageId: 'm1',
+          responseId: 'resp_final',
+          additionalProperties: { trace: 'abc' },
+          finishReason: 'tool_calls',
+        }),
+      ],
+    ]);
+
+    const stream = withFunctionInvocation(client, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    const yielded: ChatResponseUpdate[] = [];
+    for await (const update of stream) {
+      yielded.push(update);
+    }
+    const mixed = yielded.find((update) => update.messageId === 'm1');
+    assert.exists(mixed);
+    expect(mixed.contents.map((c) => c.type)).toEqual(['text', 'text_reasoning']);
+    expect(mixed.responseId).toBe('resp_final');
+    expect(mixed.additionalProperties).toEqual({ trace: 'abc' });
+    expect(mixed.finishReason).toBe('tool_calls');
+  });
+
+  it('keeps a metadata-only update after its local call is removed', async () => {
+    const { client } = updateScript(() => [
+      [
+        chatResponseUpdate({
+          contents: [call('c1', 'loop')],
+          role: 'assistant',
+          finishReason: 'tool_calls',
+        }),
+      ],
+      [
+        chatResponseUpdate({ contents: [textContent('answer')], role: 'assistant', messageId: 'm1' }),
+        chatResponseUpdate({
+          contents: [call('c2', 'loop')],
+          role: 'assistant',
+          messageId: 'm1',
+          responseId: 'resp_final',
+          finishReason: 'tool_calls',
+        }),
+        // Nothing but a local call, and no metadata at all: this one goes away entirely.
+        chatResponseUpdate({ contents: [call('c3', 'loop')] }),
+      ],
+    ]);
+
+    const stream = withFunctionInvocation(client, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    const yielded: ChatResponseUpdate[] = [];
+    for await (const update of stream) {
+      yielded.push(update);
+    }
+    const metadataOnly = yielded.filter((update) => update.responseId === 'resp_final');
+    expect(metadataOnly).toHaveLength(1);
+    expect(metadataOnly[0]?.contents).toEqual([]);
+    expect(metadataOnly[0]?.finishReason).toBe('tool_calls');
+    // The bare call update carried nothing else, so nothing is forwarded in its place.
+    expect(yielded.filter((update) => update.contents.length === 0)).toHaveLength(1);
+  });
+
+  it.each([true, false])(
+    'preserves provider-executed calls and hosted approvals on the final round (streamed=%s)',
+    async (streamed) => {
+      const script = (): ChatResponseUpdate[][] => [
+        [
+          chatResponseUpdate({
+            contents: [call('c1', 'loop')],
+            role: 'assistant',
+            finishReason: 'tool_calls',
+          }),
+        ],
+        [
+          chatResponseUpdate({
+            contents: [
+              informationalCall('i1'),
+              informationalResult('i1'),
+              hostedApproval('h1'),
+              call('c2', 'loop'),
+              localApproval('c3'),
+            ],
+            role: 'assistant',
+            messageId: 'm1',
+            finishReason: 'tool_calls',
+          }),
+        ],
+      ];
+      const { client } = updateScript(script);
+      const invoked = withFunctionInvocation(client, { maxIterations: 1 }).getResponse([], {
+        tools: [loopTool()],
+      } as ChatOptions);
+      if (streamed) {
+        for await (const _update of invoked) {
+          // drain
+        }
+      }
+      const response = streamed ? await invoked.finalResponse() : await invoked;
+
+      const contents = contentsOf(response.messages);
+      expect(contents.filter((c) => c.type === 'function_call' && c.informationalOnly === true)).toHaveLength(
+        1,
+      );
+      expect(contents.filter((c) => c.type === 'function_result' && c.callId === 'i1')).toHaveLength(1);
+      expect(contents.filter((c) => c.type === 'function_approval_request')).toEqual([hostedApproval('h1')]);
+      expect(contents.filter((c) => c.type === 'function_call' && c.callId === 'c2')).toEqual([]);
+      // A hosted approval is an answer the caller can act on, so no fallback is manufactured.
+      expect(response.text).not.toContain(FALLBACK_TEXT);
+    },
+  );
+
+  it.each([true, false])(
+    'appends the fallback after a provider-executed pair that answers nobody (streamed=%s)',
+    async (streamed) => {
+      const script = (): ChatResponseUpdate[][] => [
+        [
+          chatResponseUpdate({
+            contents: [call('c1', 'loop')],
+            role: 'assistant',
+            finishReason: 'tool_calls',
+          }),
+        ],
+        [
+          chatResponseUpdate({
+            contents: [informationalCall('i1'), informationalResult('i1'), call('c2', 'loop')],
+            role: 'assistant',
+            messageId: 'm1',
+            finishReason: 'tool_calls',
+          }),
+        ],
+      ];
+      const { client } = updateScript(script);
+      const invoked = withFunctionInvocation(client, { maxIterations: 1 }).getResponse([], {
+        tools: [loopTool()],
+      } as ChatOptions);
+      if (streamed) {
+        for await (const _update of invoked) {
+          // drain
+        }
+      }
+      const response = streamed ? await invoked.finalResponse() : await invoked;
+
+      const contents = contentsOf(response.messages);
+      // The pair survives — but a report of work the provider already did is not an answer, so
+      // the run still ends on the fallback.
+      expect(contents.filter((c) => c.type === 'function_call' && c.informationalOnly === true)).toHaveLength(
+        1,
+      );
+      expect(contents.filter((c) => c.type === 'function_result' && c.callId === 'i1')).toHaveLength(1);
+      expect(response.text).toBe(FALLBACK_TEXT);
+    },
+  );
+
+  it.each([true, false])(
+    'appends the deterministic fallback when nothing user-visible remains (streamed=%s)',
+    async (streamed) => {
+      const inner = new MockChatClient([
+        { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+        { contents: [textContent('   '), call('c2', 'loop')], finishReason: 'tool_calls' },
+      ]);
+      const invoked = withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+        tools: [loopTool()],
+      } as ChatOptions);
+      if (streamed) {
+        for await (const _update of invoked) {
+          // drain
+        }
+      }
+      const response = streamed ? await invoked.finalResponse() : await invoked;
+
+      const texts = contentsOf(response.messages)
+        .filter((c) => c.type === 'text')
+        .map((c) => c.text);
+      expect(texts).toContain(FALLBACK_TEXT);
+      // Retained content is not displaced to make room for the fallback.
+      expect(texts).toContain('   ');
+    },
+  );
+
+  it('reports a limit-terminated run as an answer rather than a suspension', async () => {
+    // The withheld call used to make the response look suspended, so structured output silently
+    // left `value` undefined. With nothing pending, the fallback is read as the model's answer
+    // and fails to parse like any other non-JSON reply.
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      { contents: [call('c2', 'loop')], finishReason: 'tool_calls' },
+    ]);
+    const client = withStructuredOutput(withFunctionInvocation(inner, { maxIterations: 1 }));
+    await expect(
+      client.getResponse([], {
+        tools: [loopTool()],
+        responseFormat: { schema: { type: 'object' } },
+      } as ChatOptions),
+    ).rejects.toThrow(ChatClientError);
+  });
+
+  it('adds no fallback when a visible answer remains', async () => {
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      { contents: [textContent('the answer'), call('c2', 'loop')], finishReason: 'tool_calls' },
+    ]);
+    const response = await withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    expect(response.text).toBe('the answer');
+  });
+
+  it('adds no fallback when a non-text answer remains', async () => {
+    const chart: Content = { type: 'uri', uri: 'https://example.test/chart.png', mediaType: 'image/png' };
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      { contents: [chart, call('c2', 'loop')], finishReason: 'tool_calls' },
+    ]);
+    const response = await withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    expect(contentsOf(response.messages)).toContainEqual(chart);
+    expect(response.text).toBe('');
+  });
+
+  it('appends the fallback when the final round produced only reasoning', async () => {
+    const reasoning: Content = { type: 'text_reasoning', text: 'the tool would say...' };
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'loop')], finishReason: 'tool_calls' },
+      { contents: [reasoning, call('c2', 'loop')], finishReason: 'tool_calls' },
+    ]);
+    const response = await withFunctionInvocation(inner, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    // Reasoning explains an answer instead of being one, so it is kept and still counted as none.
+    expect(contentsOf(response.messages)).toContainEqual(reasoning);
+    expect(response.text).toBe(FALLBACK_TEXT);
+  });
+
+  it('produces the same folded messages awaited and streamed', async () => {
+    const script = (): ChatResponseUpdate[][] => [
+      [
+        chatResponseUpdate({
+          contents: [call('c1', 'loop', '{"value":"x"}')],
+          role: 'assistant',
+          messageId: 'm0',
+          responseId: 'resp_0',
+          finishReason: 'tool_calls',
+        }),
+      ],
+      [
+        chatResponseUpdate({
+          contents: [textContent(' '), informationalCall('i1'), informationalResult('i1')],
+          role: 'assistant',
+          messageId: 'm1',
+          responseId: 'resp_1',
+        }),
+        chatResponseUpdate({
+          contents: [call('c2', 'loop'), localApproval('c3')],
+          role: 'assistant',
+          messageId: 'm1',
+          responseId: 'resp_1',
+          finishReason: 'tool_calls',
+        }),
+      ],
+    ];
+
+    const awaitedClient = updateScript(script);
+    const awaited = await withFunctionInvocation(awaitedClient.client, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+
+    const streamedClient = updateScript(script);
+    const stream = withFunctionInvocation(streamedClient.client, { maxIterations: 1 }).getResponse([], {
+      tools: [loopTool()],
+    } as ChatOptions);
+    const yielded: ChatResponseUpdate[] = [];
+    for await (const update of stream) {
+      yielded.push(update);
+    }
+
+    expect(normalizeMessages(mergeChatUpdates(yielded).messages)).toEqual(
+      normalizeMessages(awaited.messages),
+    );
   });
 });

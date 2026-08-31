@@ -13,12 +13,14 @@ import type { AnyFunctionTool, Tool, ToolContext } from '../tools/tool.js';
 import { isFunctionTool } from '../tools/tool.js';
 import type {
   Content,
+  ContentType,
   FunctionApprovalRequestContent,
   FunctionApprovalResponseContent,
   FunctionCallContent,
 } from '../types/content.js';
+import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
-import type { ChatResponseUpdate } from '../types/response.js';
+import type { ChatResponse, ChatResponseUpdate } from '../types/response.js';
 import { chatResponseToUpdates, chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
 import type { ChatClient, ChatOptions, ChatResponseStream } from './chat-client.js';
 import type { InvocationEnv, InvocationRoundConfig, RoundOutcome } from './function-execution.js';
@@ -32,8 +34,11 @@ export interface FunctionInvocationConfig {
    * Maximum number of tool rounds per run. Must be a positive safe integer. Default `40`,
    * matching .NET and Go.
    *
-   * On hitting the limit the loop makes one final model call with the function tools removed, so
-   * the run always ends with an assistant message rather than an unanswered tool call.
+   * On hitting the limit the loop makes one final model call with the function tools removed and
+   * `toolChoice: 'none'`. Should the model still answer with a local call or a local approval
+   * request, it is removed from that round rather than handed to the caller, and a run left with
+   * no answer at all ends on a fixed sentence — so the run always ends with an assistant message
+   * rather than an unanswered tool call.
    */
   maxIterations?: number;
   /**
@@ -97,22 +102,138 @@ function buildToolMap(
 }
 
 /**
- * Drops function tools for the final, over-budget model call.
+ * Prepares the final, over-budget model call.
  *
- * Mirrors Go `prepareOptionsForLastIteration`: without declarations the model cannot request more
- * local calls, so the run terminates with prose.
+ * Local function declarations are withdrawn (Go `prepareOptionsForLastIteration`) and the tool
+ * choice is pinned to `'none'` (Python's last phase), so the model is asked for prose rather than
+ * for calls nobody will run. Provider-hosted declarations stay: the provider executes those
+ * itself, and removing them would change what it can report about work it already did.
  */
 function withoutFunctionTools<TOptions extends ChatOptions>(options: TOptions): TOptions {
   const remaining = (options.tools ?? []).filter((candidate) => !isFunctionTool(candidate));
-  if (remaining.length === (options.tools ?? []).length) {
-    return options;
-  }
-  const next = { ...options, tools: remaining } as TOptions;
+  const next = { ...options, toolChoice: 'none' } as TOptions;
   if (remaining.length === 0) {
     delete next.tools;
-    next.toolChoice = 'auto';
+  } else {
+    next.tools = remaining;
   }
   return next;
+}
+
+/** The answer a run ends with when the iteration budget ran out before the model produced one. */
+const FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT =
+  'Function invocation limit reached before a final answer could be produced.';
+
+/**
+ * Content types that are an answer in themselves, alongside non-blank text.
+ *
+ * Reasoning is deliberately absent: it explains an answer rather than being one, so a round that
+ * produced nothing but reasoning still needs the fallback below.
+ */
+const USER_VISIBLE_CONTENT_TYPES: ReadonlySet<ContentType> = new Set<ContentType>([
+  'data',
+  'uri',
+  'error',
+  'hosted_file',
+  'hosted_vector_store',
+]);
+
+/**
+ * Local tool content the final request can neither execute nor answer.
+ *
+ * Two things qualify: a call this layer would have run (a provider-executed `informationalOnly`
+ * call is a report, not a request), and an approval request for a local tool. An approval a
+ * provider raised for its own hosted tool is *its* to settle — see {@link isHostedApproval} — so
+ * it survives and reaches the caller.
+ */
+function isUnexecutableLocalContent(content: Content): boolean {
+  if (isPendingCall(content)) {
+    return true;
+  }
+  return content.type === 'function_approval_request' && !isHostedApproval(content);
+}
+
+/**
+ * Whether an update still says something once its contents are gone.
+ *
+ * `role` is excluded on purpose: every update carries one, so counting it would keep every empty
+ * husk. The rest — ids, model, finish reason, continuation token, raw representation — is what a
+ * consumer folds into the response, and dropping it would lose response-level facts.
+ */
+function hasMeaningfulMetadata(update: ChatResponseUpdate): boolean {
+  return (
+    update.authorName !== undefined ||
+    update.responseId !== undefined ||
+    update.messageId !== undefined ||
+    update.conversationId !== undefined ||
+    update.model !== undefined ||
+    update.createdAt !== undefined ||
+    update.finishReason !== undefined ||
+    update.continuationToken !== undefined ||
+    (update.additionalProperties !== undefined && Object.keys(update.additionalProperties).length > 0) ||
+    update.rawRepresentation !== undefined
+  );
+}
+
+/**
+ * Removes unexecutable local content from one update, returning `undefined` for an update that is
+ * left with nothing at all.
+ *
+ * Applied per update rather than to a buffered round, so everything the update kept keeps flowing
+ * at the moment it arrived. The update is never mutated: the same objects are also what the
+ * provider's own stream and any layer beneath observe.
+ */
+function dropUnexecutableLocalContent(update: ChatResponseUpdate): ChatResponseUpdate | undefined {
+  if (!update.contents.some(isUnexecutableLocalContent)) {
+    return update;
+  }
+  const kept = update.contents.filter((content) => !isUnexecutableLocalContent(content));
+  if (kept.length === 0 && !hasMeaningfulMetadata(update)) {
+    return undefined;
+  }
+  return chatResponseUpdate({ ...update, contents: kept });
+}
+
+/** Whether the round left the caller something to read. */
+function hasUserVisibleAnswer(response: ChatResponse<unknown>): boolean {
+  for (const msg of response.messages) {
+    for (const content of msg.contents) {
+      if (content.type === 'text') {
+        if (content.text.trim() !== '') {
+          return true;
+        }
+      } else if (USER_VISIBLE_CONTENT_TYPES.has(content.type)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Whether the round left a provider-owned approval for the caller to settle. */
+function hasHostedApprovalRequest(response: ChatResponse<unknown>): boolean {
+  return response.messages.some((msg) =>
+    msg.contents.some((content) => content.type === 'function_approval_request' && isHostedApproval(content)),
+  );
+}
+
+/**
+ * The answer emitted when the final round produced nothing the caller can use.
+ *
+ * A round left with an empty message — everything it carried was withheld — takes the sentence
+ * into that message, which is what the id-less update folds into. Otherwise the sentence opens a
+ * message of its own: appending it to a message that kept content would coalesce the two texts
+ * into one run of prose, and the fallback is meant to be recognizable verbatim.
+ */
+function limitFallbackUpdate(response: ChatResponse<unknown>): ChatResponseUpdate {
+  const last = response.messages.at(-1);
+  const emptiedMessage = last !== undefined && last.contents.length === 0;
+  return chatResponseUpdate({
+    contents: [textContent(FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)],
+    role: 'assistant',
+    finishReason: 'stop',
+    ...(emptiedMessage ? {} : { messageId: crypto.randomUUID() }),
+  });
 }
 
 /**
@@ -214,7 +335,9 @@ function collectExecutableCalls(messages: Message[]): FunctionCallContent[] {
  * - a tool declared without `execute` stops the loop so the caller can handle the call;
  * - a tool's `maxInvocations` budget is claimed here, and a spent budget is reported to the model as
  *   a result rather than failing the run;
- * - after `maxIterations` rounds, one final call is made with the function tools removed;
+ * - after `maxIterations` rounds, one final call is made with the function tools removed and
+ *   `toolChoice: 'none'`, and anything local the model still asks for on that round is dropped
+ *   instead of being returned unexecuted;
  * - `maxConsecutiveErrors` failing rounds in a row abort the run with the aggregated error.
  *
  * Streaming behaves identically: every inner update is forwarded as it arrives and the generated
@@ -630,12 +753,24 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
         (candidate) => candidate.approvalMode === 'always_require',
       );
 
+      // The final request carries no local function declarations, so a call or approval the
+      // provider emits anyway is content this layer will neither execute nor remove later —
+      // exactly the unanswered tool call the run promises not to end on. Each update is filtered
+      // as it arrives, before it is accumulated or forwarded, so whatever the update kept still
+      // reaches the caller at the moment the provider sent it.
+      const retained = (update: ChatResponseUpdate): ChatResponseUpdate | undefined =>
+        isFinalIteration ? dropUnexecutableLocalContent(update) : update;
+
       const inner = client.getResponse(history, roundOptions);
       const updates: ChatResponseUpdate[] = [];
       let flushed = 0;
       let buffering = false;
       if (stream) {
-        for await (const update of inner) {
+        for await (const raw of inner) {
+          const update = retained(raw);
+          if (update === undefined) {
+            continue;
+          }
           updates.push(update);
           buffering ||= mayRequireApproval && update.contents.some(isPendingCall);
           if (!buffering) {
@@ -644,7 +779,12 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
           }
         }
       } else {
-        updates.push(...chatResponseToUpdates(await inner));
+        for (const raw of chatResponseToUpdates(await inner)) {
+          const update = retained(raw);
+          if (update !== undefined) {
+            updates.push(update);
+          }
+        }
         if (!mayRequireApproval) {
           for (const update of updates) {
             flushed++;
@@ -668,7 +808,16 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
         yield update;
       }
 
-      if (isFinalIteration || shouldStop(calls, tools)) {
+      if (isFinalIteration) {
+        // Only once the round is complete is it known whether anything usable survived. The
+        // fallback is appended, never substituted: retained content keeps its place and the
+        // sentence is added after it.
+        if (!hasUserVisibleAnswer(roundResponse) && !hasHostedApprovalRequest(roundResponse)) {
+          yield limitFallbackUpdate(roundResponse);
+        }
+        return;
+      }
+      if (shouldStop(calls, tools)) {
         return;
       }
 
