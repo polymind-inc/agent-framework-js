@@ -178,7 +178,7 @@ export class AnthropicChatClient
     if (converted.length === 0) {
       // A deliberate divergence, not parity: the reference implementation sends the empty list and
       // lets the service answer with a 400 that names nothing the caller can act on. Failing here
-      // instead costs a round trip and says which call was empty, while changing no request the
+      // instead saves that round trip and says which call was empty, while changing no request the
       // service would have accepted.
       throw new ChatClientError('Messages are required: the request would carry no messages.');
     }
