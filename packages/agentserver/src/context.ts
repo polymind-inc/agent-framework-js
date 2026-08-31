@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { context as otelContext, propagation } from '@opentelemetry/api';
+import { inboundTraceId } from './observability/trace-context.js';
 
 /** The HTTP header names that make up the platform contract (protocol v2.0.0). */
 export const HEADERS = {
@@ -33,6 +34,13 @@ export interface RequestContext {
   readonly userId: string | undefined;
   /** The platform's per-request call id, when protocol v2.0.0 is in play. */
   readonly foundryCallId: string | undefined;
+  /**
+   * The correlation id for this request, in priority order: the trace this request belongs to,
+   * the non-empty `x-request-id` the caller sent, or one minted here.
+   *
+   * One value serves every place the id surfaces — the response header and the error body — so a
+   * log line naming it identifies exactly one turn.
+   */
   readonly requestId: string;
   /** `x-client-*` headers the caller sent. */
   readonly clientHeaders: Readonly<Record<string, string>>;
@@ -69,11 +77,36 @@ function collectClientHeaders(headers: Headers): Record<string, string> {
   return collected;
 }
 
+/**
+ * The correlation id one request answers under, resolved once.
+ *
+ * In order: the trace this request belongs to, then a non-empty `x-request-id` the caller sent,
+ * then a fresh id.
+ *
+ * The trace id leads because it is the only candidate that also names the spans this turn
+ * produced: an operator holding it can move between the response, the platform's logs and the
+ * trace without a second lookup. A caller's `x-request-id` correlates only with that caller, and
+ * a minted id with nothing at all — each is what remains when the richer source is absent. An
+ * empty header is not a correlation id, so it is treated as no header rather than echoed back as
+ * an empty one.
+ */
+function resolveRequestId(headers: Headers): string {
+  const traceId = inboundTraceId(headers);
+  if (traceId !== undefined) {
+    return traceId;
+  }
+  const incoming = headers.get(HEADERS.requestId);
+  if (incoming !== null && incoming !== '') {
+    return incoming;
+  }
+  return crypto.randomUUID();
+}
+
 /** Builds the context for one inbound request. */
 export function createRequestContext(headers: Headers): RequestContext {
   const userId = headers.get(HEADERS.userId) ?? undefined;
   const foundryCallId = headers.get(HEADERS.foundryCallId) ?? undefined;
-  const requestId = headers.get(HEADERS.requestId) ?? crypto.randomUUID();
+  const requestId = resolveRequestId(headers);
   const clientHeaders = collectClientHeaders(headers);
   const traceparent = headers.get('traceparent') ?? undefined;
   const tracestate = headers.get('tracestate') ?? undefined;

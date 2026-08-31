@@ -212,6 +212,21 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-agentserver`** — the `x-request-id` a response carries is now
+  the trace the request belongs to, when it names one. The value was the caller's `x-request-id`
+  header or a minted UUID, never the trace id, so the id on the response led nowhere in a trace
+  backend; both reference servers resolve the same three sources in the same order (.NET
+  `RequestIdMiddleware.ResolveRequestId`, Python `_request_id._resolve_request_id`). The trace id
+  is taken from the span active around the request, else from a registered propagator's extraction
+  — so a non-W3C format is honored — else from the `traceparent` header read directly, which keeps
+  the answer identical whether or not an OTel SDK was registered in the process. A trace id that is
+  not 32 hex digits, or is all zeros, names no trace and is skipped, as is an empty `x-request-id`
+  (previously echoed back as an empty header). The resolved value is the one already shared by the
+  response header, the `request_id` in an error body and `HostedAgentContext.requestId`, so all
+  three continue to agree. The `azure.ai.agentserver.x-request-id` baggage entry and the
+  `x_request_id` baggage the server propagates are unchanged: both still carry the header exactly
+  as the caller sent it, and are absent when the caller sent none.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

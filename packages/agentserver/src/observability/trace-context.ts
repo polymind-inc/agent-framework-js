@@ -8,11 +8,13 @@
  * deliberate choice on both sides (.NET `ResponsesActivitySource`, Python
  * `TraceContextMiddleware`).
  *
- * With no SDK registered, `propagation` is a no-op and everything here returns the root context.
+ * With no SDK registered, `propagation` is a no-op and every context built here is the root
+ * context. {@link inboundTraceId} is the exception: what it answers reaches the caller on a
+ * response header, so it reads the inbound `traceparent` itself rather than going quiet.
  */
 
 import type { Context, TextMapGetter } from '@opentelemetry/api';
-import { propagation, ROOT_CONTEXT } from '@opentelemetry/api';
+import { isValidTraceId, context as otelContext, propagation, ROOT_CONTEXT, trace } from '@opentelemetry/api';
 
 const HEADERS_GETTER: TextMapGetter<Headers> = {
   get(carrier: Headers, key: string): string | undefined {
@@ -37,6 +39,49 @@ export function extractTraceContext(headers: Headers): Context {
     extracted = propagation.setBaggage(extracted, bag.setEntry('x_request_id', { value: requestId }));
   }
   return extracted;
+}
+
+/**
+ * The trace-id field of a W3C `traceparent`, when the value carries a usable one.
+ *
+ * The format is `version-traceid-parentid-flags`; a later version may append fields, so only the
+ * leading four are required.
+ */
+function traceparentTraceId(traceparent: string | null): string | undefined {
+  if (traceparent === null) {
+    return undefined;
+  }
+  const fields = traceparent.trim().split('-');
+  const traceId = fields.length >= 4 ? fields[1] : undefined;
+  return traceId !== undefined && isValidTraceId(traceId) ? traceId : undefined;
+}
+
+/**
+ * The trace this request already belongs to, or `undefined` when it belongs to none.
+ *
+ * Three sources, in priority order: the span active around the call — an outer instrumentation's
+ * server span, when the host created one — then the context a registered propagator extracts from
+ * the request, which is what carries a non-W3C format, and finally the `traceparent` header read
+ * directly.
+ *
+ * That last source is what keeps the answer the same whether or not an OTel SDK was ever
+ * registered: with none, the propagation API is a no-op. A value the caller reads back off the
+ * response is part of the contract with that caller, so it must not change because of a
+ * telemetry choice made inside this process.
+ *
+ * A trace id that is not 32 hex digits, or is all zeros — the value W3C reserves for "no trace",
+ * which a broken instrumentation does emit — names no trace and is rejected at every source.
+ */
+export function inboundTraceId(headers: Headers): string | undefined {
+  const active = trace.getSpanContext(otelContext.active())?.traceId;
+  if (active !== undefined && isValidTraceId(active)) {
+    return active;
+  }
+  const extracted = trace.getSpanContext(propagation.extract(ROOT_CONTEXT, headers, HEADERS_GETTER))?.traceId;
+  if (extracted !== undefined && isValidTraceId(extracted)) {
+    return extracted;
+  }
+  return traceparentTraceId(headers.get('traceparent'));
 }
 
 /**
