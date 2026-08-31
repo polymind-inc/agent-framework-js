@@ -107,6 +107,18 @@ contain breaking changes**; patch releases are fixes only.
   `getTools()` now rejects and names both remote tools and the name they collide on, rather than
   silently shadowing one of them.
 
+- **`@polymind-inc/agent-framework-core`** — chat spans and the two chat metrics
+  (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration`) now carry `server.address`,
+  naming the endpoint the model call went to. The key was already on the metric dimension
+  allowlist but nothing produced a value, so no span or histogram ever reported it. The value is
+  the host of the client's endpoint (`api.openai.com`), the form the semantic conventions define
+  for this key and the one MCP spans already emit, and it is `unknown` when the client names no
+  endpoint — so a dashboard grouping by `server.address` sees one dimension set across every
+  provider. `ChatClientMetadata` gains an optional `providerUri` for a client to declare that
+  endpoint; the OpenAI, Anthropic and Foundry clients fill it from their SDK's base URL. No
+  existing attribute changed type or shape, and `server.port` is still not emitted. The
+  `invoke_agent` span does not carry the address: it describes the agent, not a connection.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

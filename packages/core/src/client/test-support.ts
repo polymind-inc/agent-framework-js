@@ -44,14 +44,16 @@ export interface RecordedCall {
  * in {@link MockChatClient.calls} for assertions on what reached the client.
  */
 export class MockChatClient implements ChatClient<ChatOptions> {
-  readonly metadata: ChatClientMetadata = { providerName: 'mock', modelId: 'mock-model' };
+  readonly metadata: ChatClientMetadata;
   /** Every call received so far, in order. */
   readonly calls: RecordedCall[] = [];
   #index = 0;
   readonly #turns: MockTurn[];
 
-  constructor(turns: MockTurn[]) {
+  /** `metadata` overrides the defaults, for tests that assert on provider-derived telemetry. */
+  constructor(turns: MockTurn[], metadata?: Partial<ChatClientMetadata>) {
     this.#turns = turns;
+    this.metadata = { providerName: 'mock', modelId: 'mock-model', ...metadata };
   }
 
   /** Shorthand for `calls.length`. */

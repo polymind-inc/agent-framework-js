@@ -83,6 +83,21 @@ export const GEN_AI_MESSAGE_EVENT = {
 } as const;
 
 /**
+ * OpenTelemetry general server attributes.
+ *
+ * Not GenAI-specific: the same two keys identify the endpoint behind a model call and behind an
+ * MCP connection, so both conventions reuse them and so must every emitter here — a dashboard
+ * filtering on `server.address` has to see one vocabulary, whichever span it lands on.
+ *
+ * @see https://opentelemetry.io/docs/specs/semconv/attributes-registry/server/
+ */
+export const SERVER = {
+  /** The host the request goes to, for example `api.openai.com`. Not a full URL. */
+  address: 'server.address',
+  port: 'server.port',
+} as const;
+
+/**
  * OpenTelemetry MCP semantic-convention attributes.
  *
  * Values match Python's `OtelAttr.MCP_*`.
@@ -93,6 +108,9 @@ export const MCP = {
   methodName: 'mcp.method.name',
   /** Set on the `initialize` span once the MCP client wires it (Python parity; deferred low). */
   protocolVersion: 'mcp.protocol.version',
+  // The same two keys as {@link SERVER}, spelled out because `isolatedDeclarations` needs a
+  // literal here rather than a reference. Change one side and you must change the other; the
+  // observability tests fail if the pairs ever disagree.
   serverAddress: 'server.address',
   serverPort: 'server.port',
   /** The resource a `resources/read` span was for. Python has no equivalent constant yet. */
@@ -110,4 +128,30 @@ export const GEN_AI_OPERATION = {
 /** Maps a framework `finishReason` to the semantic-convention value (Python `FINISH_REASON_MAP`). */
 export function otelFinishReason(finishReason: string): string {
   return finishReason === 'tool_calls' ? 'tool_call' : finishReason;
+}
+
+/** What {@link serverAddress} reports when the endpoint cannot be determined. */
+export const UNKNOWN_SERVER_ADDRESS = 'unknown';
+
+/**
+ * The `server.address` value for a client whose endpoint is `providerUri`.
+ *
+ * The host, not the URL: the convention defines this key as the server's address, and it is also
+ * a metric dimension — a full endpoint URL carries the deployment path, so histogram series would
+ * split per deployment instead of per host.
+ *
+ * An absent or unparseable endpoint reports {@link UNKNOWN_SERVER_ADDRESS} rather than nothing, so
+ * every chat call contributes to the same dimension set whether or not its client names a URL.
+ */
+export function serverAddress(providerUri: string | undefined): string {
+  if (providerUri === undefined || providerUri === '') {
+    return UNKNOWN_SERVER_ADDRESS;
+  }
+  let hostname: string;
+  try {
+    hostname = new URL(providerUri).hostname;
+  } catch {
+    return UNKNOWN_SERVER_ADDRESS;
+  }
+  return hostname === '' ? UNKNOWN_SERVER_ADDRESS : hostname;
 }

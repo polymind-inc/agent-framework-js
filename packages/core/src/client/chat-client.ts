@@ -10,6 +10,14 @@ export interface ChatClientMetadata {
   readonly providerName: string;
   readonly modelId?: string;
   /**
+   * The endpoint requests go to, as an absolute URL.
+   *
+   * Its host becomes `server.address` on chat spans and on the chat metrics. Leave it unset when
+   * the client has no single endpoint; the address is then reported as `'unknown'` rather than
+   * dropped, so a dashboard's dimension set stays the same shape across providers.
+   */
+  readonly providerUri?: string;
+  /**
    * Whether `conversationId` names a service-side anchor that stays stable across responses, as
    * opposed to a per-response chain that must advance to each round's reported id.
    *

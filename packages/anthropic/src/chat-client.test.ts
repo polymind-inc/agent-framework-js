@@ -86,6 +86,17 @@ describe('construction', () => {
     expect(() => new AnthropicChatClient({ model: '' })).toThrow(ConfigurationError);
   });
 
+  it('reports the endpoint so telemetry can name the server it called', () => {
+    // The endpoint verbatim, not its host: `server.address` is derived from this in one place, in
+    // core, so every provider reports that attribute the same way.
+    const client = new AnthropicChatClient({
+      model: 'claude-sonnet-4-5',
+      apiKey: 'k',
+      baseURL: 'https://anthropic.example.com/v1',
+    });
+    expect(client.metadata.providerUri).toBe('https://anthropic.example.com/v1');
+  });
+
   it('rejects a blank MCP server label with a ConfigurationError', () => {
     const { client } = clientWith([]);
     expect(() => client.getMcpTool({ serverLabel: '  ', serverUrl: 'https://mcp.example/sse' })).toThrow(

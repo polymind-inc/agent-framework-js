@@ -1,7 +1,7 @@
 import type { Attributes, Histogram, Meter } from '@opentelemetry/api';
 import { metrics } from '@opentelemetry/api';
 import type { UsageDetails } from '../types/usage.js';
-import { GEN_AI } from './attributes.js';
+import { GEN_AI, SERVER } from './attributes.js';
 import { INSTRUMENTATION_VERSION } from './version.js';
 
 /** Package identity reported on every metric this framework emits. */
@@ -82,8 +82,8 @@ const METRIC_ATTRIBUTES: readonly string[] = [
   GEN_AI.providerName,
   GEN_AI.requestModel,
   GEN_AI.responseModel,
-  'server.address',
-  'server.port',
+  SERVER.address,
+  SERVER.port,
 ];
 
 /** Keeps only the dimensions a metric may carry. */

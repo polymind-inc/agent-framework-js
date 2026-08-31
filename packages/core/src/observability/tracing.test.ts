@@ -14,7 +14,7 @@ import { tool } from '../tools/tool.js';
 import { textContent } from '../types/content.js';
 import { message } from '../types/message.js';
 import { agentResponse } from '../types/response.js';
-import { GEN_AI } from './attributes.js';
+import { GEN_AI, MCP, SERVER } from './attributes.js';
 import { configureObservability, getTracer } from './settings.js';
 import { addMessageEvents, responseFinishReason, startAgentRunSpan } from './tracing.js';
 
@@ -191,6 +191,48 @@ describe('GenAI tracing', () => {
     expect(chat.attributes[GEN_AI.temperature]).toBe(0.5);
     expect(chat.attributes[GEN_AI.maxTokens]).toBe(100);
     expect(chat.attributes[GEN_AI.responseId]).toBe('resp_1');
+  });
+
+  it('spells the server keys one way for chat spans and MCP spans alike', () => {
+    // `isolatedDeclarations` forbids MCP referencing SERVER for these two, so the duplicate
+    // literals are held together here instead: one key, one vocabulary, whichever span carries it.
+    expect(MCP.serverAddress).toBe(SERVER.address);
+    expect(MCP.serverPort).toBe(SERVER.port);
+  });
+
+  it('records the endpoint host as server.address on the chat span', async () => {
+    const mock = new MockChatClient([{ contents: [textContent('hi')], finishReason: 'stop' }], {
+      providerUri: 'https://api.example.com/openai/v1',
+    });
+
+    await new Agent({ client: mock, name: 'bot' }).run('hello');
+
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
+    expect(chat.attributes[SERVER.address]).toBe('api.example.com');
+    // Only the chat span names an endpoint: the agent span describes the agent, not the
+    // connection, so the reference implementations leave the address off it.
+    expect(byName('invoke_agent bot')?.attributes[SERVER.address]).toBeUndefined();
+  });
+
+  it("reports server.address as 'unknown' when the client names no endpoint", async () => {
+    const mock = new MockChatClient([{ contents: [textContent('hi')], finishReason: 'stop' }]);
+
+    await new Agent({ client: mock, name: 'bot' }).run('hello');
+
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
+    expect(chat.attributes[SERVER.address]).toBe('unknown');
+  });
+
+  it("reports server.address as 'unknown' when the endpoint is not a parseable URL", async () => {
+    const mock = new MockChatClient([{ contents: [textContent('hi')], finishReason: 'stop' }], {
+      providerUri: 'api.example.com',
+    });
+
+    await new Agent({ client: mock, name: 'bot' }).run('hello');
+
+    expect(byName('chat mock-model')?.attributes[SERVER.address]).toBe('unknown');
   });
 
   it('records the tool call id and type on execute_tool', async () => {
