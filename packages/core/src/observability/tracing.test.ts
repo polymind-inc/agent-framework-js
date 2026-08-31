@@ -771,7 +771,8 @@ describe('gen_ai.response.finish_reasons', () => {
   it('reads a reason the provider reported only on its wire object', async () => {
     // The resolution that finds it there also feeds the output messages and the choice events, so
     // the attribute has to come from the same reading — otherwise one response is described by a
-    // reason on two surfaces and by nothing on the third.
+    // reason on some surfaces and by nothing on the others. Every span reporting the attribute
+    // resolves it the same way, in one place.
     const wireOnly = {
       contents: [textContent('hi')],
       rawRepresentation: { finish_reason: 'tool_calls' },
@@ -779,6 +780,13 @@ describe('gen_ai.response.finish_reasons', () => {
     await new Agent({ client: new MockChatClient([wireOnly]), name: 'bot' }).run('q');
 
     expect(byName('chat mock-model')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
+    // The agent span resolves the same way and still finds nothing, because an agent response's
+    // `rawRepresentation` is the update it was folded from — measured to be a `ChatResponseUpdate`
+    // carrying `contents`, `role` and ids — not the provider object the chat response held. A
+    // reason reported only on the wire therefore reaches the chat span alone. This pins that:
+    // if the agent response ever starts carrying the provider object, it fails and the difference
+    // gets a decision rather than appearing by accident.
+    expect(byName('invoke_agent bot')?.attributes[GEN_AI.finishReasons]).toBeUndefined();
   });
 });
 

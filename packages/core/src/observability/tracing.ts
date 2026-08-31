@@ -29,15 +29,22 @@ function setUsageAttributes(span: Span, usage: UsageDetails | undefined): void {
   setAttr(span, GEN_AI.reasoningOutputTokens, usage.reasoningOutputTokenCount);
 }
 
-/** Records what a response reported: id, model, why it stopped, and what it cost. */
+/**
+ * Records what a response reported: id, model, why it stopped, and what it cost.
+ *
+ * The finish reason is resolved rather than read straight off the field, so a provider that reports
+ * it only on its wire object is described the same way here as it is anywhere else the reason is
+ * read. Every span that reports one goes through this, which is what keeps them agreeing.
+ */
 export function setResponseAttributes(
   span: Span,
   response: ResponseBase<unknown> & { model?: string },
 ): void {
   setAttr(span, GEN_AI.responseId, response.responseId);
   setAttr(span, GEN_AI.responseModel, response.model);
-  if (response.finishReason !== undefined) {
-    span.setAttribute(GEN_AI.finishReasons, [otelFinishReason(response.finishReason)]);
+  const finishReason = responseFinishReason(response);
+  if (finishReason !== undefined && finishReason !== '') {
+    span.setAttribute(GEN_AI.finishReasons, [otelFinishReason(finishReason)]);
   }
   setUsageAttributes(span, response.usageDetails);
 }
@@ -600,13 +607,6 @@ export function startAgentRunSpan(
  */
 export function finishChatSpan(span: Span, response: ChatResponse<unknown>, finishReason?: string): void {
   setResponseAttributes(span, response);
-  // Restated from the resolved reason, which `setResponseAttributes` cannot see: it reads the
-  // response field, while a provider that reports the reason only on its wire object is exactly
-  // what the resolution exists for. Without this the messages below and the choice events would
-  // name a reason this attribute never mentioned.
-  if (finishReason !== undefined && finishReason !== '') {
-    span.setAttribute(GEN_AI.finishReasons, [otelFinishReason(finishReason)]);
-  }
   setAttr(span, GEN_AI.conversationId, response.conversationId);
   setMessageContent(span, GEN_AI.outputMessages, response.messages, finishReason);
 }
