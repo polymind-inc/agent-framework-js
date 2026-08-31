@@ -107,6 +107,31 @@ contain breaking changes**; patch releases are fixes only.
   `getTools()` now rejects and names both remote tools and the name they collide on, rather than
   silently shadowing one of them.
 
+- **`@polymind-inc/agent-framework-anthropic`** — the code-execution beta's blocks are read as the
+  typed content the framework already models instead of falling through the generic rules. The beta
+  is requested by default, but a `tool_use` / `server_tool_use` whose name identifies code execution
+  arrived as an ordinary function call and every result block arrived as unknown content. A code
+  execution call is now a `code_interpreter_tool_call` carrying its call id and its input;
+  `code_execution_tool_result` becomes a `code_interpreter_tool_result` whose outputs are the run's
+  stdout (plain or encrypted) as text, its stderr as an error, and its files as `hosted_file` items;
+  `bash_code_execution_tool_result` becomes a `shell_tool_result` holding one
+  `shell_command_output` with stdout, stderr, exit code and a `timedOut` flag set for
+  `execution_time_exceeded`, with the run's files reported beside it; and
+  `text_editor_code_execution_tool_result` becomes a `function_result` whose items are the error,
+  the viewed text, the replaced lines or the create flag, annotated with the line spans the wire
+  reported. Each mapping matches Python's shape and keeps the provider block on
+  `rawRepresentation`, so fields the framework does not model survive. Ordinary tool calls are
+  untouched, and a block — or a result payload — of a kind this build does not model still becomes
+  unknown content that round-trips verbatim. Provider-executed calls are also no longer emitted
+  before their arguments arrive: while streaming, a `server_tool_use`, an `mcp_tool_use` or a code
+  execution call is converted once its block closes, so the accumulated `input_json_delta`
+  fragments reach the folded transcript instead of being dropped — a streamed hosted call used to
+  land with empty arguments. A local `tool_use` still streams its arguments as before. Replaying an
+  exchange that used code execution sends the provider's own blocks back on the assistant turn that
+  produced them, the rule unknown content already followed, so typing them costs the conversation
+  nothing on its next turn. No new exports, tool declaration factory or request-side field: the
+  contents produced are the ones core already defines and serializes.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
