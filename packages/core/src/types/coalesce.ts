@@ -1,6 +1,8 @@
 import { decodeBase64, encodeBase64 } from './base64.js';
 import type {
+  Annotation,
   Content,
+  ContentBase,
   DataContent,
   FunctionCallContent,
   TextContent,
@@ -36,10 +38,11 @@ function withOptionalProps<T extends object>(base: T, props: Record<string, unkn
 }
 
 /**
- * A content item participates in coalescing only when it carries no annotations.
+ * A content item joins a positional run only when it carries no annotations.
  *
  * Merging annotated items would invalidate their span offsets, so the reference implementations
- * (Go `message.coalesce`) leave them alone.
+ * (Go `message.coalesce`) leave them alone. The keyed code-interpreter pass is not gated on this
+ * — see {@link coalesceCodeInterpreter} for why its items have no offsets to invalidate.
  */
 function coalescable(content: Content): boolean {
   return content.annotations === undefined || content.annotations.length === 0;
@@ -299,6 +302,175 @@ const RULES: Rule[] = [
   },
 ];
 
+/**
+ * The two code-interpreter contents, seen through the fields the keyed pass merges.
+ *
+ * `inputs` belongs to the call and `outputs` to the result; one shape covers both because the
+ * merge rule is identical on either side and each field is folded only when a fragment has it.
+ */
+interface CodeInterpreterFragment extends ContentBase {
+  type: 'code_interpreter_tool_call' | 'code_interpreter_tool_result';
+  callId?: string;
+  inputs?: Content[];
+  outputs?: Content[];
+}
+
+function isCodeInterpreter(content: Content): content is CodeInterpreterFragment {
+  return content.type === 'code_interpreter_tool_call' || content.type === 'code_interpreter_tool_result';
+}
+
+/**
+ * What correlates two code-interpreter fragments, or `undefined` when nothing does.
+ *
+ * The provider's own call id wins; a streamed fragment that carries none is keyed by the
+ * `item_id` its provider metadata reports, which is what a Responses-style
+ * `code_interpreter_call_code.delta` puts there. An empty or non-string value names no call, so
+ * the fragment is left alone rather than folded into whichever fragment happens to be keyless
+ * too (Python `_code_interpreter_key`).
+ */
+function codeInterpreterKey(content: CodeInterpreterFragment): string | undefined {
+  const callId = content.callId;
+  const key = callId === undefined || callId === '' ? content.additionalProperties?.item_id : callId;
+  return typeof key === 'string' && key !== '' ? key : undefined;
+}
+
+/** The concatenated text of `items`, or `undefined` when they are not all text. */
+function contentItemsText(items: readonly Content[]): string | undefined {
+  let text = '';
+  for (const item of items) {
+    if (item.type !== 'text') {
+      return undefined;
+    }
+    text += item.text;
+  }
+  return text;
+}
+
+/**
+ * Folds one streamed `inputs` or `outputs` list into what the run has accumulated.
+ *
+ * The shape of the list decides how. A text-only list is one growing string, so when either side
+ * is a prefix of the other the longer side wins outright: a `done` event repeats the whole code
+ * its deltas spelled out, and appending that would put the program in twice. Only genuinely
+ * disjoint text is concatenated. Any other list — logs next to a generated image — is appended,
+ * because those are separate results rather than fragments of one.
+ *
+ * Ported from Python `_merge_content_item_lists`. Go takes the other route for this merge
+ * (`message.CoalesceContents` concatenates the lists and re-runs itself over them).
+ */
+function mergeContentItemLists(
+  existing: Content[] | undefined,
+  incoming: Content[] | undefined,
+): Content[] | undefined {
+  if (incoming === undefined) {
+    return existing;
+  }
+  if (existing === undefined) {
+    return incoming;
+  }
+  const existingText = contentItemsText(existing);
+  const incomingText = contentItemsText(incoming);
+  if (existingText !== undefined && incomingText !== undefined) {
+    if (incomingText.startsWith(existingText)) {
+      return incoming;
+    }
+    if (existingText.startsWith(incomingText)) {
+      return existing;
+    }
+    // Disjoint text: keep the first item's metadata and give it the joined string. `existing` is
+    // non-empty here — an empty list has empty text, which is a prefix of everything.
+    return [{ ...(existing[0] as TextContent), text: existingText + incomingText }];
+  }
+  return [...existing, ...incoming];
+}
+
+function combineAnnotations(
+  a: Annotation[] | undefined,
+  b: Annotation[] | undefined,
+): Annotation[] | undefined {
+  if (a === undefined) {
+    return b;
+  }
+  return b === undefined ? a : [...a, ...b];
+}
+
+/**
+ * Folds `incoming` into the fragment that opened the run.
+ *
+ * The first fragment's remaining fields are kept as they are — its `callId`, and its
+ * `rawRepresentation`, which stays the provider object this call was first seen as (Go keeps the
+ * first item's header for the same merge; Python accumulates a list, a shape this framework does
+ * not give `rawRepresentation`, which it neither serializes nor compares).
+ */
+function mergeCodeInterpreter(
+  existing: CodeInterpreterFragment,
+  incoming: CodeInterpreterFragment,
+): CodeInterpreterFragment {
+  const merged: CodeInterpreterFragment = { ...existing };
+  const inputs = mergeContentItemLists(existing.inputs, incoming.inputs);
+  if (inputs !== undefined) {
+    merged.inputs = inputs;
+  }
+  const outputs = mergeContentItemLists(existing.outputs, incoming.outputs);
+  if (outputs !== undefined) {
+    merged.outputs = outputs;
+  }
+  const annotations = combineAnnotations(existing.annotations, incoming.annotations);
+  if (annotations !== undefined) {
+    merged.annotations = annotations;
+  }
+  const props = mergeAdditionalProperties(existing.additionalProperties, incoming.additionalProperties);
+  if (props !== undefined) {
+    merged.additionalProperties = props;
+  }
+  return merged;
+}
+
+/**
+ * Merges code-interpreter call and result fragments that name the same call.
+ *
+ * This one is keyed rather than positional: a provider interleaves the code it is running with
+ * the text it is narrating, so the fragments of one call are not adjacent and the run-based rules
+ * would never see them together. Each key's fragments fold into the first one, which keeps its
+ * place in the transcript, and fragments naming different calls — or naming nothing — stay
+ * separate. Ported from Python `_coalesce_code_interpreter_content`.
+ *
+ * Unlike every other rule here, an annotated fragment still merges: these items carry no text of
+ * their own, so there are no span offsets for a merge to invalidate, and Python concatenates the
+ * annotations onto the folded item.
+ */
+function coalesceCodeInterpreter(contents: Content[]): Content[] {
+  const out: Content[] = [];
+  // Content type, then call id, to the index the first fragment with that key took in `out`: a
+  // call and a result naming one id are two separate items, so the type is part of the key.
+  const firstOfKey = new Map<string, Map<string, number>>();
+  for (const content of contents) {
+    if (!isCodeInterpreter(content)) {
+      out.push(content);
+      continue;
+    }
+    const key = codeInterpreterKey(content);
+    if (key === undefined) {
+      out.push(content);
+      continue;
+    }
+    let byKey = firstOfKey.get(content.type);
+    if (byKey === undefined) {
+      byKey = new Map();
+      firstOfKey.set(content.type, byKey);
+    }
+    const at = byKey.get(key);
+    if (at === undefined) {
+      // A fragment nothing joins is left exactly as it arrived, like a run of one above.
+      byKey.set(key, out.length);
+      out.push(content);
+      continue;
+    }
+    out[at] = mergeCodeInterpreter(out[at] as CodeInterpreterFragment, content);
+  }
+  return out;
+}
+
 function applyRule(contents: Content[], rule: Rule): Content[] {
   const out: Content[] = [];
   const participates = rule.coalescable ?? coalescable;
@@ -328,10 +500,10 @@ function applyRule(contents: Content[], rule: Rule): Content[] {
 }
 
 /**
- * Merges adjacent compatible content items.
+ * Merges compatible content items back into the logical items a provider streamed as fragments.
  *
- * Streaming providers emit content in fragments: text deltas, reasoning deltas and partial
- * function-call argument strings. Coalescing rebuilds the logical items:
+ * Most rules are positional — text deltas, reasoning deltas and partial function-call argument
+ * strings arrive back to back:
  *
  * - consecutive `text` items are concatenated;
  * - consecutive `text_reasoning` items are concatenated when their ids agree and they are the same
@@ -341,9 +513,15 @@ function applyRule(contents: Content[], rule: Rule): Content[] {
  *   arguments shallow-merged) when their `callId`s agree;
  * - consecutive textual `data` items with the same media type and name are concatenated.
  *
- * Items carrying {@link Annotation}s are never merged — with one exception, an *empty* annotated
- * text item, which is how a streamed citation arrives (see {@link coalescableText}). A run of a
- * single item is returned unchanged. Matches Go `message.CoalesceContents`.
+ * Items carrying {@link Annotation}s are never merged by those rules — with one exception, an
+ * *empty* annotated text item, which is how a streamed citation arrives (see
+ * {@link coalescableText}). A positional run of a single item is returned unchanged. Matches Go
+ * `message.CoalesceContents`.
+ *
+ * Code-interpreter fragments are keyed instead: `code_interpreter_tool_call` and
+ * `code_interpreter_tool_result` items naming the same call — by `callId`, or by
+ * `additionalProperties.item_id` when the provider streams no call id — fold into the first of
+ * them wherever it sits, even with narration in between (see {@link coalesceCodeInterpreter}).
  *
  * @param contents - The content list to coalesce. Not mutated.
  * @returns A new list.
@@ -353,5 +531,5 @@ export function coalesceContents(contents: readonly Content[]): Content[] {
   for (const rule of RULES) {
     result = applyRule(result, rule);
   }
-  return result;
+  return coalesceCodeInterpreter(result);
 }
