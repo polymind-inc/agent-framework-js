@@ -17,6 +17,7 @@ import type {
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
 import type { Message } from '../types/message.js';
+import { deserializeContent } from '../types/serialization.js';
 import type { ChatClient, ChatOptions } from './chat-client.js';
 import { withFunctionInvocation } from './function-invocation.js';
 import { MockChatClient } from './test-support.js';
@@ -1024,4 +1025,75 @@ describe('approval occurrences of a reused call id', () => {
     expect(executed).toEqual(['only']);
     expect(session.state._toolApproval).toBeUndefined();
   });
+});
+
+describe('approval resume for a call carrying no arguments', () => {
+  /**
+   * A `function_call` as another implementation serialized it: `arguments` omitted — Python drops
+   * the field when it is `None` — or written out as a literal `null`.
+   */
+  function wireCall(fields: Record<string, unknown>): FunctionCallContent {
+    return deserializeContent({
+      type: 'function_call',
+      callId: 'c1',
+      name: 'sweep',
+      ...fields,
+    }) as FunctionCallContent;
+  }
+
+  const nullish: Array<[label: string, fields: Record<string, unknown>]> = [
+    ['omitted', {}],
+    ['native null', { arguments: null }],
+  ];
+
+  /** The `function_call` of the single pending approval inside a serialized session. */
+  function storedCall(wire: unknown): Record<string, unknown> {
+    const state = (wire as { state: Record<string, unknown> }).state;
+    const partition = state._toolApproval as { pending: Array<{ functionCall: Record<string, unknown> }> };
+    const first = partition.pending[0];
+    assert.exists(first);
+    return first.functionCall;
+  }
+
+  it.each(nullish)(
+    'executes a call whose arguments are %s after suspend, serialize, restore and resume',
+    async (_label, fields) => {
+      const seen: unknown[] = [];
+      const sweep = tool({
+        name: 'sweep',
+        description: 'Sweep everything',
+        parameters: { type: 'object', properties: { scope: { type: 'string' } } },
+        approvalMode: 'always_require',
+        execute: async (input) => {
+          seen.push(input);
+          return 'swept';
+        },
+      });
+      const mock = new MockChatClient([
+        { contents: [wireCall(fields)], finishReason: 'tool_calls' },
+        { contents: [textContent('done')], finishReason: 'stop' },
+      ]);
+      const agent = new Agent({ client: mock, tools: [sweep] });
+      const session = agent.createSession();
+
+      const request = approvals(await agent.run('sweep', { session }))[0];
+      assert.exists(request);
+      expect(seen).toEqual([]);
+
+      // The human answers in another process, so only the serialized session bridges the turns.
+      const wire = JSON.parse(JSON.stringify(session)) as unknown;
+      // What the session persisted is the wire shape the provider reported, not a normalized copy.
+      expect(Object.hasOwn(storedCall(wire), 'arguments')).toBe('arguments' in fields);
+      expect(storedCall(wire).arguments).toBe(fields.arguments as undefined);
+
+      const resumed = await agent.run(approvalResponse(request, true), {
+        session: AgentSession.fromJSON(wire),
+      });
+
+      expect(seen).toEqual([{}]);
+      expect(results(resumed.messages)).toEqual([['c1', 'swept']]);
+      // The request the caller still holds was never rewritten either.
+      expect(request.functionCall.arguments).toBe(fields.arguments as undefined);
+    },
+  );
 });

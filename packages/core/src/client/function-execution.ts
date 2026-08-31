@@ -140,9 +140,27 @@ export class FunctionInvocationLimitError extends ToolInvocationError {
   }
 }
 
+/**
+ * Turns the model's `arguments` field into the value the tool's schema is validated against.
+ *
+ * A call that carries no arguments is a call with *empty* arguments, not a malformed one. That
+ * absence is spelled several ways — the field omitted (Python drops `arguments` when it is `None`,
+ * so a transcript it wrote arrives without one), a native `null`, or an empty string — and each
+ * stands for the same empty argument object. All three reference implementations invoke the tool
+ * in that case rather than refusing the call, so a tool whose parameters are all optional runs.
+ *
+ * The normalization is a fresh object built for this invocation. Nothing is written back to the
+ * call, which stays exactly as the transcript recorded it.
+ *
+ * Only the *unparsed* field is read as absent. The JSON text `null` is a value the model sent, so
+ * it — like any other non-object JSON — goes on to schema validation and is refused there.
+ */
 function parseArguments(
   call: FunctionCallContent,
 ): { ok: true; value: unknown } | { ok: false; message: string } {
+  if (call.arguments === undefined || call.arguments === null) {
+    return { ok: true, value: {} };
+  }
   if (typeof call.arguments !== 'string') {
     return { ok: true, value: call.arguments };
   }

@@ -11,7 +11,9 @@ import type {
   UserInputRequestContent,
 } from '../types/content.js';
 import { textContent } from '../types/content.js';
+import type { Message } from '../types/message.js';
 import { chatResponseUpdate, mergeChatUpdates } from '../types/response.js';
+import { deserializeContent } from '../types/serialization.js';
 import type { ChatClient, ChatClientMetadata, ChatOptions } from './chat-client.js';
 import { FunctionInvocationLimitError } from './function-execution.js';
 import { withFunctionInvocation } from './function-invocation.js';
@@ -1464,5 +1466,154 @@ describe('conversation chaining between rounds', () => {
     const secondRequest = requests[1];
     assert.exists(secondRequest);
     expect(secondRequest.conversationId).toBe('resp_r1');
+  });
+});
+
+describe('calls whose arguments are missing or null', () => {
+  /**
+   * A `function_call` exactly as it arrives from the wire.
+   *
+   * Deserialization casts a known content `type` without filling in fields, so a call written by
+   * another implementation reaches the loop with `arguments` absent — Python omits the field when
+   * it is `None` — or carrying a literal `null`.
+   */
+  function wireCall(fields: Record<string, unknown>): FunctionCallContent {
+    return deserializeContent({ type: 'function_call', callId: 'c1', ...fields }) as FunctionCallContent;
+  }
+
+  /** The two wire shapes that carry no arguments at all, as opposed to empty ones. */
+  const nullish: Array<[label: string, fields: Record<string, unknown>]> = [
+    ['omitted', {}],
+    ['native null', { arguments: null }],
+  ];
+
+  const optionalParameters = {
+    type: 'object',
+    properties: { note: { type: 'string' } },
+    additionalProperties: false,
+  } as const;
+
+  const requiredParameters = {
+    type: 'object' as const,
+    properties: { resource: { type: 'string' } },
+    required: ['resource'],
+    additionalProperties: false,
+  };
+
+  function scriptedClient(...calls: FunctionCallContent[]): MockChatClient {
+    return new MockChatClient([
+      { contents: calls, finishReason: 'tool_calls' },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+  }
+
+  function exceptionOf(response: { messages: Message[] }): string | undefined {
+    return resultsOf(response.messages.flatMap((m) => m.contents))[0]?.exception;
+  }
+
+  it.each(nullish)('executes an all-optional tool once with {} when arguments are %s', async (_l, fields) => {
+    const execute = vi.fn(async () => 'pong');
+    const ping = tool({ name: 'ping', description: 'd', parameters: optionalParameters, execute });
+    const inner = scriptedClient(wireCall({ name: 'ping', ...fields }));
+
+    const response = await withFunctionInvocation(inner).getResponse([], { tools: [ping] } as ChatOptions);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({}, expect.anything());
+    expect(resultsOf(response.messages.flatMap((m) => m.contents)).map((r) => r.result)).toEqual(['pong']);
+  });
+
+  it('hands every call its own arguments object', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const ping = tool({
+      name: 'ping',
+      description: 'd',
+      parameters: optionalParameters,
+      execute: async (input: Record<string, unknown>) => {
+        seen.push(input);
+        // A tool that writes into what it was handed must not be able to reach the next call.
+        input.note = 'mutated';
+        return 'pong';
+      },
+    });
+    const inner = scriptedClient(
+      wireCall({ callId: 'c1', name: 'ping' }),
+      wireCall({ callId: 'c2', name: 'ping', arguments: null }),
+    );
+
+    await withFunctionInvocation(inner).getResponse([], { tools: [ping] } as ChatOptions);
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBe(seen[1]);
+    expect(seen[1]).toEqual({ note: 'mutated' });
+  });
+
+  it.each(['', '   ', '\n\t'])('keeps an empty argument string %j executing with {}', async (args) => {
+    const execute = vi.fn(async () => 'pong');
+    const ping = tool({ name: 'ping', description: 'd', parameters: optionalParameters, execute });
+    const inner = scriptedClient(wireCall({ name: 'ping', arguments: args }));
+
+    await withFunctionInvocation(inner).getResponse([], { tools: [ping] } as ChatOptions);
+
+    expect(execute).toHaveBeenCalledWith({}, expect.anything());
+  });
+
+  it.each(nullish)('still refuses a required parameter when arguments are %s', async (_label, fields) => {
+    const execute = vi.fn(async () => 'never');
+    const strict = tool({ name: 'strict', description: 'd', parameters: requiredParameters, execute });
+    const inner = scriptedClient(wireCall({ name: 'strict', ...fields }));
+
+    const response = await withFunctionInvocation(inner).getResponse([], { tools: [strict] } as ChatOptions);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(exceptionOf(response)).toBe('Invalid arguments: $.resource: required property is missing');
+  });
+
+  it('still reports malformed non-empty JSON as an invalid-JSON result', async () => {
+    const execute = vi.fn(async () => 'never');
+    const ping = tool({ name: 'ping', description: 'd', parameters: optionalParameters, execute });
+    const inner = scriptedClient(wireCall({ name: 'ping', arguments: '{"note":' }));
+
+    const response = await withFunctionInvocation(inner).getResponse([], { tools: [ping] } as ChatOptions);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(exceptionOf(response)).toContain('Invalid JSON arguments');
+  });
+
+  it.each(['null', '42', '"note"', '[]'])(
+    'validates the parsed value of %j instead of reading it as missing arguments',
+    async (args) => {
+      const execute = vi.fn(async () => 'never');
+      const ping = tool({ name: 'ping', description: 'd', parameters: optionalParameters, execute });
+      const inner = scriptedClient(wireCall({ name: 'ping', arguments: args }));
+
+      const response = await withFunctionInvocation(inner).getResponse([], { tools: [ping] } as ChatOptions);
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(exceptionOf(response)).toBe('Invalid arguments: $: expected object');
+    },
+  );
+
+  it.each(nullish)('leaves the %s arguments of the transcript call untouched', async (_label, fields) => {
+    const ping = tool({
+      name: 'ping',
+      description: 'd',
+      parameters: optionalParameters,
+      execute: async () => 'pong',
+    });
+    const original = wireCall({ name: 'ping', ...fields });
+    const inner = scriptedClient(original);
+
+    const response = await withFunctionInvocation(inner).getResponse([], { tools: [ping] } as ChatOptions);
+
+    // The normalization is a view taken for this invocation; nothing writes it back.
+    expect(original.arguments).toBe(fields.arguments as undefined);
+    expect(Object.hasOwn(original, 'arguments')).toBe('arguments' in fields);
+    const transcriptCall = response.messages
+      .flatMap((m) => m.contents)
+      .find((content): content is FunctionCallContent => content.type === 'function_call');
+    assert.exists(transcriptCall);
+    expect(transcriptCall.arguments).toBe(fields.arguments as undefined);
+    expect(Object.hasOwn(transcriptCall, 'arguments')).toBe('arguments' in fields);
   });
 });
