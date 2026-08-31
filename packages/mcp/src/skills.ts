@@ -254,13 +254,21 @@ function skillRootUri(url: string): string {
 }
 
 /**
- * Normalizes a resource name, refusing the shapes that would leave the skill's namespace.
+ * Normalizes a resource name, refusing the shapes that must not become a request.
  *
- * The server resolves the URI and is the authority on what it will serve, but a name the model
- * composed should not be forwarded when it is visibly an escape attempt: an absolute path, an
+ * A name that is empty or only whitespace names nothing. Appending it to the skill root would
+ * request the root itself, so it is refused here rather than answered with whatever the server
+ * happens to serve at that URI. Whitespace decides blankness only: a name with content in it is
+ * requested exactly as the server listed it, untrimmed.
+ *
+ * Past that, the server resolves the URI and is the authority on what it will serve, but a name the
+ * model composed should not be forwarded when it is visibly an escape attempt: an absolute path, an
  * embedded scheme, or a `..` segment.
  */
 function safeResourceName(name: string): string | undefined {
+  if (name.trim() === '') {
+    return undefined;
+  }
   const normalized = name.replaceAll('\\', '/');
   // A downstream server or URI library may decode once or more before resolving the path. Run the
   // same checks over every decoded stage so `%2e%2e` and double-encoded variants cannot become

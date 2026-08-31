@@ -212,6 +212,16 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-mcp`** — a skill discovered over MCP no longer asks the server
+  for a resource whose name is empty or only whitespace. Such a name was appended to the skill root
+  unchanged, so `getResource('')` issued a `resources/read` for the skill's namespace URI and handed
+  back whatever the server serves there — content the caller never named. The name is now refused
+  before the request goes out and the call answers `undefined`, the same answer a name that fails
+  the traversal checks already got. The skills provider's `read_skill_resource` tool rejected blank
+  names before reaching the skill, so this is visible only to code calling the `Skill` API directly.
+  Whitespace decides blankness alone: a name with content in it is still requested exactly as the
+  server listed it, untrimmed and undecoded.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
