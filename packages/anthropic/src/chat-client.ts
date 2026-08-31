@@ -253,9 +253,11 @@ export class AnthropicChatClient
     if (mcp_servers !== undefined) {
       request.mcp_servers = mcp_servers;
     }
-    if (tools !== undefined || mcp_servers !== undefined) {
-      setIfDefined(request, 'tool_choice', toAnthropicToolChoice(options?.toolChoice));
-    }
+    // The choice travels on the option alone, never gated on what this request declares. The
+    // function-calling loop's final round withdraws local declarations while pinning the choice to
+    // `'none'`, so gating would drop the instruction on exactly the request that exists to send it.
+    // Python and Go build it from the option alone too; it is omitted only when none was configured.
+    setIfDefined(request, 'tool_choice', toAnthropicToolChoice(options?.toolChoice));
 
     Object.assign(request, options?.additionalProperties ?? {});
 
