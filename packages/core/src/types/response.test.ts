@@ -1,6 +1,7 @@
 import { assert, describe, expect, it } from 'vitest';
 import { decodeBase64 } from './base64.js';
 import { coalesceContents } from './coalesce.js';
+import type { Content } from './content.js';
 import { dataContent, textContent, unknownContent } from './content.js';
 import type { AgentResponseUpdate, ChatResponseUpdate } from './response.js';
 import {
@@ -401,6 +402,158 @@ describe('coalesceContents', () => {
     expect(merged).toEqual([
       { type: 'text_reasoning', id: 'rs_1', text: 'ab' },
       { type: 'text_reasoning', id: 'rs_2', text: 'c' },
+    ]);
+  });
+
+  it('replaces code-interpreter deltas with the later full value for the same call', () => {
+    // The streamed shape a Responses-style provider emits: argument deltas followed by a `done`
+    // event repeating the whole code. Concatenating them would run `print(print(1))`. The merged
+    // item keeps the first fragment's raw representation, the object the call was first seen as.
+    const merged = coalesceContents([
+      {
+        type: 'code_interpreter_tool_call',
+        callId: 'ci_1',
+        inputs: [textContent('print(')],
+        rawRepresentation: { event: 'delta' },
+      },
+      {
+        type: 'code_interpreter_tool_call',
+        callId: 'ci_1',
+        inputs: [textContent('print(1)')],
+        rawRepresentation: { event: 'done' },
+      },
+    ]);
+    expect(merged).toEqual([
+      {
+        type: 'code_interpreter_tool_call',
+        callId: 'ci_1',
+        inputs: [textContent('print(1)')],
+        rawRepresentation: { event: 'delta' },
+      },
+    ]);
+  });
+
+  it('merges code-interpreter fragments separated by other content at the first occurrence', () => {
+    const merged = coalesceContents([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('pri')] },
+      textContent('running it now'),
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('nt(1)')] },
+    ]);
+    expect(merged).toEqual([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('print(1)')] },
+      textContent('running it now'),
+    ]);
+  });
+
+  it('keeps code-interpreter fragments apart when the type or the id differs', () => {
+    const merged = coalesceContents([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('a')] },
+      { type: 'code_interpreter_tool_call', callId: 'ci_2', inputs: [textContent('b')] },
+      // Same id as the first fragment, but a result is not a call: the key is the pair.
+      { type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('c')] },
+    ]);
+    expect(merged).toEqual([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('a')] },
+      { type: 'code_interpreter_tool_call', callId: 'ci_2', inputs: [textContent('b')] },
+      { type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('c')] },
+    ]);
+  });
+
+  it('keys a code-interpreter fragment by its item id when it carries no call id', () => {
+    const merged = coalesceContents([
+      {
+        type: 'code_interpreter_tool_result',
+        outputs: [textContent('one')],
+        additionalProperties: { item_id: 'ci_1', sequence_number: 1 },
+      },
+      {
+        type: 'code_interpreter_tool_result',
+        outputs: [textContent(' two')],
+        additionalProperties: { item_id: 'ci_1', sequence_number: 2 },
+      },
+    ]);
+    expect(merged).toEqual([
+      {
+        type: 'code_interpreter_tool_result',
+        outputs: [textContent('one two')],
+        additionalProperties: { item_id: 'ci_1', sequence_number: 2 },
+      },
+    ]);
+  });
+
+  it('leaves keyless code-interpreter fragments untouched', () => {
+    // Nothing names these calls, so folding them together would invent a correlation. Each pair
+    // shares the same absent key, which is what a rule that keyed on `undefined`, on `''` or on a
+    // non-string `item_id` would happily merge.
+    const fragments: Content[] = [
+      { type: 'code_interpreter_tool_call', inputs: [textContent('a')] },
+      { type: 'code_interpreter_tool_call', inputs: [textContent('b')] },
+      { type: 'code_interpreter_tool_call', callId: '', inputs: [textContent('c')] },
+      { type: 'code_interpreter_tool_call', callId: '', inputs: [textContent('d')] },
+      {
+        type: 'code_interpreter_tool_call',
+        additionalProperties: { item_id: 7 },
+        inputs: [textContent('e')],
+      },
+      {
+        type: 'code_interpreter_tool_call',
+        additionalProperties: { item_id: 7 },
+        inputs: [textContent('f')],
+      },
+    ];
+    const merged = coalesceContents(fragments);
+    expect(merged).toEqual(fragments);
+    expect(merged[0]).toBe(fragments[0]);
+  });
+
+  it('merges annotated code-interpreter fragments, combining their annotations', () => {
+    // The offset rule that keeps annotated text apart does not reach here: these items hold no
+    // text of their own, so Python merges them and concatenates the annotations.
+    const merged = coalesceContents([
+      {
+        type: 'code_interpreter_tool_result',
+        callId: 'ci_1',
+        outputs: [textContent('out')],
+        annotations: [{ type: 'citation', title: 'first' }],
+      },
+      {
+        type: 'code_interpreter_tool_result',
+        callId: 'ci_1',
+        outputs: [{ type: 'data', uri: 'data:image/png;base64,AAA=', mediaType: 'image/png' }],
+        annotations: [{ type: 'citation', title: 'second' }],
+      },
+    ]);
+    expect(merged).toEqual([
+      {
+        type: 'code_interpreter_tool_result',
+        callId: 'ci_1',
+        outputs: [
+          textContent('out'),
+          { type: 'data', uri: 'data:image/png;base64,AAA=', mediaType: 'image/png' },
+        ],
+        annotations: [
+          { type: 'citation', title: 'first' },
+          { type: 'citation', title: 'second' },
+        ],
+      },
+    ]);
+  });
+
+  it('folds streamed code-interpreter fragments through mergeUpdates', () => {
+    const response = mergeUpdates([
+      update({
+        contents: [{ type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('1+')] }],
+      }),
+      update({
+        contents: [{ type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('1+1')] }],
+      }),
+      update({
+        contents: [{ type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('2')] }],
+      }),
+    ]);
+    expect(response.messages[0]?.contents).toEqual([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('1+1')] },
+      { type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('2')] },
     ]);
   });
 });

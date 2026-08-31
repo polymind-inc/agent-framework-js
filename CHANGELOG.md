@@ -212,6 +212,21 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-core`** — a streamed code-interpreter call now folds back into
+  one item. `coalesceContents`, and with it `mergeUpdates` / `mergeChatUpdates`, previously left
+  every `code_interpreter_tool_call` and `code_interpreter_tool_result` fragment in the transcript,
+  so a provider that streams the code as deltas produced a list of partial calls where the awaited
+  form of the same turn holds one. Fragments are now correlated by their content type together with
+  `callId`, falling back to `additionalProperties.item_id` when the provider streams no call id,
+  and fold into the first fragment with that key — which keeps its position, so narration that
+  arrived between the fragments stays where it was. `inputs` and `outputs` merge the way Python's
+  `_merge_content_item_lists` does: text-only lists collapse to the longer side when one is a
+  prefix of the other (the `done` event repeating the whole code replaces its own deltas instead of
+  being appended to them), disjoint text is joined, and anything else is concatenated;
+  `additionalProperties` merge with the later fragment winning and annotations are concatenated.
+  Fragments naming different calls, a call and a result naming one id, and fragments naming nothing
+  at all are all left exactly as they arrived. The other content types coalesce as before.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
