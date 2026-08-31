@@ -522,7 +522,11 @@ describe('route-level errors', () => {
   });
 
   it('does not claim a path that merely starts with the prefix', async () => {
-    const server = new ResponsesServer({ handler: lifecycleHandler({ echo: true }), prefix: '/api' });
+    const server = new ResponsesServer({
+      handler: lifecycleHandler({ echo: true }),
+      store: new InMemoryResponseProvider(),
+      prefix: '/api',
+    });
 
     expect((await server.handle(post({ input: 'x' }))).status).toBe(404);
     expect(
@@ -734,6 +738,7 @@ describe('request limits', () => {
     expect(
       () =>
         new ResponsesServer({
+          store: new InMemoryResponseProvider(),
           handler: lifecycleHandler({ echo: true }),
           limits: { [name]: value },
         }),
@@ -743,6 +748,7 @@ describe('request limits', () => {
   it('answers 413 for a body over the configured bound, before the handler runs', async () => {
     let ran = false;
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         ran = true;
         yield { type: 'response.completed', response: context.response };
@@ -759,6 +765,7 @@ describe('request limits', () => {
 
   it('bounds the number of input items', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: lifecycleHandler({ echo: true }),
       limits: { maxInputItems: 2 },
     });
@@ -819,6 +826,7 @@ describe('lifecycle enforcement', () => {
   it('supplies created and in_progress for a handler that skips them', async () => {
     const violations: string[] = [];
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         yield { type: 'response.completed', response: { ...context.response, status: 'completed' } };
       },
@@ -838,6 +846,7 @@ describe('lifecycle enforcement', () => {
   it('fails a response whose handler ends without a terminal event', async () => {
     const violations: string[] = [];
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         yield { type: 'response.created', response: context.response };
         yield { type: 'response.in_progress', response: { ...context.response, status: 'in_progress' } };
@@ -854,6 +863,7 @@ describe('lifecycle enforcement', () => {
   it('emits exactly one terminal event', async () => {
     const violations: string[] = [];
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         yield { type: 'response.created', response: context.response };
         yield { type: 'response.in_progress', response: context.response };
@@ -874,6 +884,7 @@ describe('lifecycle enforcement', () => {
   it('turns a handler exception into response.failed carrying the real message', async () => {
     const violations: Array<{ kind: string; detail?: string }> = [];
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         yield { type: 'response.created', response: context.response };
         yield { type: 'response.in_progress', response: context.response };
@@ -900,6 +911,7 @@ describe('lifecycle enforcement', () => {
 
   it('falls back to the error name when the thrown message is empty', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         yield { type: 'response.created', response: context.response };
         yield { type: 'response.in_progress', response: context.response };
@@ -918,6 +930,7 @@ describe('lifecycle enforcement', () => {
   it('ends a cancelled turn as incomplete rather than failed', async () => {
     const violations: string[] = [];
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request, context) {
         yield { type: 'response.created', response: context.response };
         yield { type: 'response.in_progress', response: context.response };
@@ -1126,6 +1139,7 @@ describe('protocol version fail-close', () => {
 describe('handler exceptions before streaming starts', () => {
   it('answers 500 with a fixed message, classified as an upstream failure', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       // Throws synchronously, before any event, so the response is still a plain HTTP error.
       handler: () => {
         throw new Error('Internal connection string: sk-secret');
@@ -1147,6 +1161,7 @@ describe('handler exceptions before streaming starts', () => {
 
   it('classifies an async handler failure before the first event as upstream too', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* () {
         throw new Error('agent setup failed');
         // biome-ignore lint/correctness/noUnreachable: never runs; the yield only makes this function a generator
@@ -1162,6 +1177,7 @@ describe('handler exceptions before streaming starts', () => {
 
   it('keeps a ProtocolError thrown by the handler, including its own source', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* () {
         throw new ProtocolError(400, 'the platform did not identify the user', {
           code: 'missing_user_id',
@@ -1261,6 +1277,7 @@ describe('resource hygiene', () => {
 
   it('removes its abort listeners when the handler fails before streaming starts', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: () => {
         throw new Error('setup failed');
       },

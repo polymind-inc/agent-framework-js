@@ -39,7 +39,7 @@ import {
   type ResourceRouteState,
 } from './resource-routes.js';
 import { resolveAgentReference, resolveAgentSessionId } from './session-id.js';
-import { InMemoryResponseProvider } from './store/memory.js';
+import { FileResponseProvider } from './store/file.js';
 import type { ResponseGeneration, ResponseProvider } from './store/provider.js';
 import { sameOwner } from './store/provider.js';
 import { conversationIdOf, parseCreateRequest, positiveLimit, validateResponseId } from './validation.js';
@@ -107,7 +107,15 @@ export interface ResponsesServerLimits {
 /** Construction options for {@link ResponsesServer}. */
 export interface ResponsesServerConfig {
   handler: ResponseHandler;
-  /** Defaults to {@link InMemoryResponseProvider}. */
+  /**
+   * Where responses live. Defaults to a {@link FileResponseProvider} under
+   * `${AGENTSERVER_STATE_ROOT}/responses` (`~/.agentserver/responses` when that variable is
+   * unset), so a `previous_response_id` chain survives a restart.
+   *
+   * That default writes transcripts to disk **in the clear**, and nothing expires them: see the
+   * class's security notes on {@link ResponsesServer}. Pass `new InMemoryResponseProvider()` to
+   * opt out and keep every conversation process-local.
+   */
   store?: ResponseProvider;
   /** Mounted under this path prefix. Foundry serves at the root, which is the default. */
   prefix?: string;
@@ -155,6 +163,11 @@ interface TurnTelemetry {
  * - **Handler exceptions are opaque to the caller.** A 500 body says only `internal server error`.
  *   They are classified `upstream` on `x-platform-error-source`; the `x-platform-error-detail`
  *   diagnostics header is reserved for `platform`-source failures of this layer itself.
+ * - **Transcripts are persisted to disk by default, in the clear.** With no `store`, responses go
+ *   to `${AGENTSERVER_STATE_ROOT}/responses` (`~/.agentserver/responses` by default) as JSON
+ *   holding whole conversations. Nothing here expires or rotates them, so retention and cleanup
+ *   belong to whoever runs the process, and the directory needs the protection the conversations
+ *   do. `new InMemoryResponseProvider()` opts out.
  */
 export class ResponsesServer {
   readonly #handler: ResponseHandler;
@@ -176,7 +189,11 @@ export class ResponsesServer {
 
   constructor(options: ResponsesServerConfig) {
     this.#handler = options.handler;
-    this.#store = options.store ?? new InMemoryResponseProvider();
+    // File-backed by default, so a `previous_response_id` chain outlives the process the way both
+    // reference servers make it: .NET registers `FileResponsesProvider` for a non-hosted host and
+    // Python's `ResponsesAgentServerHost` falls through to `FileResponseStore`, both under the
+    // shared `AGENTSERVER_STATE_ROOT`. An in-memory store is the explicit opt-out.
+    this.#store = options.store ?? new FileResponseProvider();
     this.#prefix = trimTrailingSlashes(options.prefix ?? '');
     this.#onViolation = options.onViolation;
     this.#hosted = options.hosted ?? isHosted();

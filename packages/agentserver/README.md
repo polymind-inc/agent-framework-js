@@ -27,6 +27,37 @@ with a Node adapter on the `./node` subpath:
 npm install @polymind-inc/agent-framework-agentserver
 ```
 
+## Response store
+
+`new ResponsesServer({ handler })` stores responses on the **filesystem** by default, so a
+`previous_response_id` chain survives a restart. Both reference servers make the same local
+choice — .NET registers `FileResponsesProvider` for a non-hosted host, Python's
+`ResponsesAgentServerHost` falls through to `FileResponseStore`.
+
+| Variable                 | Effect                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| `AGENTSERVER_STATE_ROOT` | Root for local persistence. Defaults to `~/.agentserver`; responses live in `responses/`. |
+
+**Security and retention.** A response holds a whole conversation, and it is written as plain
+JSON: anything the user or the model said is readable by anyone who can read that directory, and
+by anything else running as the same account. Nothing here expires, rotates or bounds those
+files — retention and cleanup belong to whoever runs the process. Give the directory the
+protection the conversations deserve, or move it somewhere that has it:
+
+```sh
+AGENTSERVER_STATE_ROOT=/var/lib/my-agent node server.js
+```
+
+To opt out and keep every conversation in the process, pass the in-memory store explicitly:
+
+```ts
+new ResponsesServer({ handler, store: new InMemoryResponseProvider() });
+```
+
+That is also what a test wants: a suite that lets the default apply must point
+`AGENTSERVER_STATE_ROOT` at a temporary directory it cleans up, or it will write into the
+developer's home.
+
 ## Trust model
 
 This server is designed to run **behind the Microsoft Foundry gateway**. It trusts the

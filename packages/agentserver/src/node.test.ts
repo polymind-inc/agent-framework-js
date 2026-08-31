@@ -7,6 +7,7 @@ import { serve } from './node.js';
 import { writeWebResponse } from './node-internals.js';
 import type { HandlerContext } from './server.js';
 import { ResponsesServer } from './server.js';
+import { InMemoryResponseProvider } from './store/memory.js';
 import type { CreateResponseRequest, ResponseEvent, ResponseObject } from './wire.js';
 
 /** A minimal echo agent, over a real socket. */
@@ -34,7 +35,7 @@ let running: RunningServer;
 let base: string;
 
 beforeAll(async () => {
-  running = await serve(new ResponsesServer({ handler: echo }), {
+  running = await serve(new ResponsesServer({ handler: echo, store: new InMemoryResponseProvider() }), {
     port: 0,
     host: '127.0.0.1',
     handleSignals: false,
@@ -168,11 +169,14 @@ describe('node adapter', () => {
       sigterm: process.listenerCount('SIGTERM'),
       sigint: process.listenerCount('SIGINT'),
     };
-    const signalled = await serve(new ResponsesServer({ handler: echo }), {
-      port: 0,
-      host: '127.0.0.1',
-      observability: false,
-    });
+    const signalled = await serve(
+      new ResponsesServer({ handler: echo, store: new InMemoryResponseProvider() }),
+      {
+        port: 0,
+        host: '127.0.0.1',
+        observability: false,
+      },
+    );
     try {
       expect(process.listenerCount('SIGTERM')).toBe(before.sigterm + 1);
       expect(process.listenerCount('SIGINT')).toBe(before.sigint + 1);

@@ -24,10 +24,22 @@ const workspaceAliases = {
   '@polymind-inc/agent-framework-a2a': source('a2a/src/index.ts'),
 };
 
-/** Shared source aliases and test discovery for a package's unit tests. */
-export function definePackageTests() {
+/**
+ * Shared source aliases and test discovery for a package's unit tests.
+ *
+ * `setupFiles` names the package's own setup files; the shared state-root isolation always runs
+ * last, so a package setup that clears the environment cannot strip it back off.
+ */
+export function definePackageTests(options: { setupFiles?: string[] } = {}) {
   return defineConfig({
     resolve: { alias: workspaceAliases },
-    test: { include: ['src/**/*.test.ts'], unstubEnvs: true },
+    test: {
+      include: ['src/**/*.test.ts'],
+      unstubEnvs: true,
+      setupFiles: [
+        ...(options.setupFiles ?? []),
+        fileURLToPath(new URL('./test-state-root.ts', import.meta.url)),
+      ],
+    },
   });
 }

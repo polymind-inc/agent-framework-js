@@ -24,14 +24,18 @@ import {
 /**
  * Persists responses as JSON files under a root directory.
  *
- * For local runs that need to survive a restart — `azd ai agent run`, a debugger, a test that
- * exercises `previous_response_id` across processes.
+ * The default store, so a local run survives a restart — `azd ai agent run`, a debugger, a test
+ * that exercises `previous_response_id` across processes. `root` defaults to
+ * `${AGENTSERVER_STATE_ROOT}/responses`, and `AGENTSERVER_STATE_ROOT` itself to
+ * `~/.agentserver`.
  *
  * ## Security considerations
  *
  * Response ids come from the request, so they are treated as untrusted path segments and rejected
  * rather than sanitized (see {@link resolveUnder}). Contents are stored in the clear: a response
  * holds the whole conversation, so the directory needs the same protection the conversation does.
+ * Nothing here expires, rotates or bounds what it has written — retention and cleanup belong to
+ * whoever runs the process. `InMemoryResponseProvider` opts out of the filesystem entirely.
  *
  * The owner is stored *inside* the file rather than used as a directory, because an id is
  * addressable on its own: a caller asks for `caresp_…`, not for `alice/caresp_…`. Reads therefore

@@ -34,8 +34,10 @@ export interface InMemoryResponseProviderConfig {
 /**
  * Keeps responses in process memory.
  *
- * The default for local development. Everything is lost when the process exits, so a hosted
- * container must not use it — a restart between turns would drop the conversation.
+ * The opt-out from the file-backed default: nothing reaches the filesystem, which is what a test
+ * or a short-lived process wants. Everything is lost when the process exits, so a hosted
+ * container must not use it — a restart between turns would drop the conversation, and a local
+ * run loses a `previous_response_id` chain the same way.
  *
  * Cross-user isolation still applies: one process serves every caller, so the owner check is the
  * only thing keeping their conversations apart.
