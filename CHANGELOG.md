@@ -212,6 +212,34 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-core`** — a streamed code-interpreter call now folds back into
+  one item. `coalesceContents`, and with it `mergeUpdates` / `mergeChatUpdates`, previously left
+  every `code_interpreter_tool_call` and `code_interpreter_tool_result` fragment in the transcript,
+  so a provider that streams the code as deltas produced a list of partial calls where the awaited
+  form of the same turn holds one. Fragments are now correlated by their content type together with
+  `callId`, falling back to `additionalProperties.item_id` when the provider streams no call id,
+  and fold into the first fragment with that key — which keeps its position, so narration that
+  arrived between the fragments stays where it was. `inputs` and `outputs` merge the way Python's
+  `_merge_content_item_lists` does: text-only lists collapse to the longer side when one is a
+  prefix of the other (the `done` event repeating the whole code replaces its own deltas instead of
+  being appended to them), disjoint text is joined, and anything else is concatenated;
+  `additionalProperties` merge with the later fragment winning and annotations are concatenated.
+  Fragments naming different calls, a call and a result naming one id, and fragments naming nothing
+  at all are all left exactly as they arrived. The other content types coalesce as before.
+
+- **`@polymind-inc/agent-framework-core`** — the trailing metadata-only update that
+  `chatResponseToUpdates` and `agentResponseToUpdates` append for response-level usage, additional
+  properties or a continuation token no longer repeats the response's `finishReason`. Anything that
+  reads an exploded response as a stream — the function-invocation loop replaying a non-streaming
+  round, a middleware answering a run without invoking the agent, the telemetry client — saw the
+  turn announce a finish reason a second time on an update carrying no message content, a shape no
+  provider stream produces. The message updates carry the reason exactly as before, so folding the
+  sequence back yields the same response, and both reference implementations agree: .NET's
+  `ChatResponse.ToChatResponseUpdates` builds its trailing update from `AdditionalProperties` and
+  usage alone, and Go's `Response.ToUpdates` is asserted to leave that update's finish reason empty.
+  One consequence, shared with both of them: a response that has no messages at all — where the
+  trailing update is the only one — no longer reports a finish reason to whoever folds the sequence.
+
 - **`@polymind-inc/agent-framework-core`** — a tool that stops for a human without naming anything
   a human could settle now reports `exception: "UserInputRequiredException"` on the
   `function_result` it hands the model, instead of `"UserInputRequiredError"`. The marker is

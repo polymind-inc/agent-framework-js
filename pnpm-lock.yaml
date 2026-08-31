@@ -13,8 +13,8 @@ catalogs:
       specifier: 4.1.11
       version: 4.1.11
     openai:
-      specifier: ^7.5.0
-      version: 7.5.0
+      specifier: ^7.8.0
+      version: 7.8.0
     tsdown:
       specifier: ^0.22.14
       version: 0.22.14
@@ -36,8 +36,8 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.5.9
-        version: 2.5.9
+        specifier: ^2.5.11
+        version: 2.5.11
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
@@ -117,8 +117,8 @@ importers:
   examples/04-a2a:
     dependencies:
       '@a2a-js/sdk':
-        specifier: ^1.0.1
-        version: 1.0.1(@grpc/grpc-js@1.14.4)(express@5.2.1(supports-color@7.2.0))
+        specifier: ^1.1.0
+        version: 1.1.0(@grpc/grpc-js@1.14.4)(express@5.2.1(supports-color@7.2.0))
       '@polymind-inc/agent-framework':
         specifier: workspace:^
         version: link:../../packages/meta
@@ -142,14 +142,14 @@ importers:
   examples/05-browser:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.120.0
-        version: 0.120.0(zod@4.4.3)
+        specifier: ^0.122.0
+        version: 0.122.0(zod@4.4.3)
       '@polymind-inc/agent-framework':
         specifier: workspace:^
         version: link:../../packages/meta
       openai:
         specifier: 'catalog:'
-        version: 7.5.0(zod@4.4.3)
+        version: 7.8.0(zod@4.4.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -167,8 +167,8 @@ importers:
   packages/a2a:
     dependencies:
       '@a2a-js/sdk':
-        specifier: ^1.0.1
-        version: 1.0.1(@grpc/grpc-js@1.14.4)(express@5.2.1(supports-color@7.2.0))
+        specifier: ^1.1.0
+        version: 1.1.0(@grpc/grpc-js@1.14.4)(express@5.2.1(supports-color@7.2.0))
       '@polymind-inc/agent-framework-core':
         specifier: workspace:^
         version: link:../core
@@ -238,8 +238,8 @@ importers:
   packages/anthropic:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.120.0
-        version: 0.120.0(zod@4.4.3)
+        specifier: ^0.122.0
+        version: 0.122.0(zod@4.4.3)
       '@polymind-inc/agent-framework-core':
         specifier: workspace:^
         version: link:../core
@@ -304,7 +304,7 @@ importers:
         version: link:../openai
       openai:
         specifier: 'catalog:'
-        version: 7.5.0(zod@4.4.3)
+        version: 7.8.0(zod@4.4.3)
     devDependencies:
       '@opentelemetry/api':
         specifier: ^1.9.1
@@ -400,7 +400,7 @@ importers:
         version: link:../core
       openai:
         specifier: 'catalog:'
-        version: 7.5.0(zod@4.4.3)
+        version: 7.8.0(zod@4.4.3)
     devDependencies:
       tsdown:
         specifier: 'catalog:'
@@ -445,8 +445,8 @@ importers:
 
 packages:
 
-  '@a2a-js/sdk@1.0.1':
-    resolution: {integrity: sha512-CJQdh3Wzwo8qIx5UUkSJ7+7BEI16PB+MXMHHNSmx8JQsQed2HlQgvx1ENOiKUfYA3PlcEvxIwv14dBblhDuPmw==}
+  '@a2a-js/sdk@1.1.0':
+    resolution: {integrity: sha512-/Mhzw9C6VW7pFbY2Rq0pnrjT0Fy9PV0c46A7Gx1ppRlYq2u/6OV/bNRIoVBKChb8UZ8bE0WzzCc0pIr2CdmG+w==}
     engines: {node: '>=20'}
     peerDependencies:
       '@bufbuild/protobuf': ^2.10.2
@@ -460,8 +460,8 @@ packages:
       express:
         optional: true
 
-  '@anthropic-ai/sdk@0.120.0':
-    resolution: {integrity: sha512-ZlvmNFT/iIF6JD13rxbbMWD8nvGR0RaUp6yMQnoc+4Af0YjVVe/bIdW1XSQQsoxXAtg1NaT6Vak0LKFlJ4d37Q==}
+  '@anthropic-ai/sdk@0.122.0':
+    resolution: {integrity: sha512-GGPNftt0caaz9MDlmNQGHX8855Ojaduyy5pm9Sm1h7HalCn0cWNb5/bweadJF+4yzbal+QL6ztBa09WAAOzLmQ==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -550,59 +550,59 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@biomejs/biome@2.5.9':
-    resolution: {integrity: sha512-KkgCvdHB4IhtpHpF564plA9jo6fDOwWGQ/3jvreLzgOtRLEDoPqr7QO9qejNA8jKwDsSkAKr77hqBHnyUbIw4g==}
+  '@biomejs/biome@2.5.11':
+    resolution: {integrity: sha512-Tj0dnkLPdW0ASjHfj2D/ZkkvPU2wrFmnE1jWTD2xzV1ycapV1DutbYXk4NDnR3rYTi1ZCbNFD4G2gRMEY65WaA==}
     engines: {node: '>=14.21.3'}
     hasBin: true
 
-  '@biomejs/cli-darwin-arm64@2.5.9':
-    resolution: {integrity: sha512-am22pX2aBqznqq1eMyIj/bZ++riF3Lk6ct7cbv+gQK0csFhr+d8O0RkOi2FF2qSgFgANbqNkIZ0/PxlnW2pLFg==}
+  '@biomejs/cli-darwin-arm64@2.5.11':
+    resolution: {integrity: sha512-6SGZxoKbXvUjMn1t6A98HqWISPnGNbYs0R/Rt2JarmXBSev+lva4QxUMWEBX9lX1Wo1XTJ78uk5xVDtG58SRZg==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [darwin]
 
-  '@biomejs/cli-darwin-x64@2.5.9':
-    resolution: {integrity: sha512-l44KWDHLDvEnD0N/XcrVs7VXb3A18xL7QS3WB0eL93wbmk529ffIG55vleGCqaunpRUjLrdnjK05Qki1dsjylg==}
+  '@biomejs/cli-darwin-x64@2.5.11':
+    resolution: {integrity: sha512-nYkXY7tLBEgnGbYapDKAyKzgt44ZEyG+AKalvTXtCWKYgepI9dw327q+cVgedxm+Udi1ZzHKUyZrIusHi/KQbw==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [darwin]
 
-  '@biomejs/cli-linux-arm64-musl@2.5.9':
-    resolution: {integrity: sha512-7ImVPwBLCtkmpR5esd8RHhTqW94f0JLJQum6AneYcy94jRm18TaPPm7slaigGzFhfgt3QiD1Vj52LKmBAnKizA==}
+  '@biomejs/cli-linux-arm64-musl@2.5.11':
+    resolution: {integrity: sha512-qhyZUMyCbWYFV2bAwRNVvfMVZ+hv7WYl6mossGrxC+uiQQXhvsuWWU8zz6jYX0mChZd9MgQZbm4vozTmG/5iGw==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@biomejs/cli-linux-arm64@2.5.9':
-    resolution: {integrity: sha512-ICaK+IYaVZvKbBxX2rwrPT0DdUDMnE9Vm3nQGe+mltQPmUg19pONzkPWGdY4FCsoreDETWDynvdt4ysCbF5gNQ==}
+  '@biomejs/cli-linux-arm64@2.5.11':
+    resolution: {integrity: sha512-3PVLSTD9RR73rvVPt5G3T1gc+ycggWEGfTD7RvzzbtcDPD27NxgxBbAFfpm7DXJKW6VLHWE1lLMGvFt2Qxjcow==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@biomejs/cli-linux-x64-musl@2.5.9':
-    resolution: {integrity: sha512-RXGaD0o1/pTTguYw1aeDJh9ad6Lfrui0fI7mBderTyGr7WuUJkBIttgLkR3XJyoxOkkgfBDspaUT8wXArTqLZw==}
+  '@biomejs/cli-linux-x64-musl@2.5.11':
+    resolution: {integrity: sha512-oRRlrchG5EfrEL/EmtT1qUjSNHk3/5LGeZhQqADBBAJF1b1ET6964xEKe7aGlGARzDfza8H/seEsFJl7S6Ql9w==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@biomejs/cli-linux-x64@2.5.9':
-    resolution: {integrity: sha512-z22Q/zFYSvbIJfW1CbfZPu4X8PddS6Qd2ORbc6h+aT6EcwAxUF3m6fA4HjNvA3TU4X0dTJRwNPB165ES3PJXzg==}
+  '@biomejs/cli-linux-x64@2.5.11':
+    resolution: {integrity: sha512-JOytptlsgM33B2MMFUg8iBrb4IKpbD5JnJrSeYiaFEeAj4vuXx0iQSQZ4qK7sqyMtfjZxxPdNdMZZVL4y/mFyA==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@biomejs/cli-win32-arm64@2.5.9':
-    resolution: {integrity: sha512-nHK+/HHC+D0ogAHUxomgoSTdjImb6fmNNVTKmf0tyu4eDL1DqPKIHc+i+UL8+b0RnAu8224qo8F2tCVnaT0A3w==}
+  '@biomejs/cli-win32-arm64@2.5.11':
+    resolution: {integrity: sha512-e49E6K9hzH/ohJNx8Y26mY8HaV4I4ZViIeoqhKsmoXLKHhQnMeBAVqCgsGf2Wa3lXlS7RkporDXMHHWkzvZzFw==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [win32]
 
-  '@biomejs/cli-win32-x64@2.5.9':
-    resolution: {integrity: sha512-Yiq0H56LjXSSw/hd9YkXgSLQfzyDJzbzU2TezozxyNw+uKWAqOtqGVvBfzKRRDiaFF5avGAhHdWKx7LtDOShUw==}
+  '@biomejs/cli-win32-x64@2.5.11':
+    resolution: {integrity: sha512-QSQr/KjOgXA7OzXJUWS+oguKyAZ3Q0l/lnlDGbu397eKo83atuWUjBPJrsqbKNF6CARGw8XXJLGzpHC8Ryhd4Q==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
@@ -1860,6 +1860,9 @@ packages:
     resolution: {integrity: sha512-HGYWWS/ehqTV3xN10i23tkPkpH46MLCIMFNCaaKNavAXTF1RkqxawEPtnjnGZ6XKSInBKkiOA5BKS+aZiY3AvA==}
     engines: {node: '>=8'}
 
+  jose@6.2.10:
+    resolution: {integrity: sha512-iiW7J9qRFlGxvCOIBDBDxFePQSn7ZMAnrYGhrrOo6siO/MIqwfyilLR27pkfDgUk+raLuzADS8A3S/KLBisc0g==}
+
   jose@6.2.5:
     resolution: {integrity: sha512-2E5L2yRp03FnwreJLJX8/r7mHiZICCf8kG7fAsTWkSQTDAcc46NIZoQLKy+EJ8sPoJlxyS4OQR5H70LjIZZlIQ==}
 
@@ -2045,14 +2048,15 @@ packages:
     resolution: {integrity: sha512-YgBpdJHPyQ2UE5x+hlSXcnejzAvD0b22U2OuAP+8OnlJT+PjWPxtgmGqKKc+RgTM63U9gN0YzrYc71R2WT/hTA==}
     engines: {node: '>=18'}
 
-  openai@7.5.0:
-    resolution: {integrity: sha512-ZbDBz8FSB8Mv8fFYIUvzTFMdV5vl93/octp1MdtK2lfYepSpfv/ewmeugpKz/cwGtFSx+YuUM4NwpZ2P55YiPA==}
+  openai@7.8.0:
+    resolution: {integrity: sha512-/2g9JzdnXNcjX1W/UlSNu+OdSFDAaAVt0n9Onom0kPenH54o59G2WrX/xjTnr26UHNSh6hxcAf58doGYRme2rw==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
       '@smithy/hash-node': '>=4.3.0 <5'
       '@smithy/signature-v4': '>=5.4.0 <6'
-      ws: ^8.18.0
+      undici: '>=5 <9'
+      ws: ^8.21.0
       zod: ^3.25 || ^4.0
     peerDependenciesMeta:
       '@aws-sdk/credential-provider-node':
@@ -2060,6 +2064,8 @@ packages:
       '@smithy/hash-node':
         optional: true
       '@smithy/signature-v4':
+        optional: true
+      undici:
         optional: true
       ws:
         optional: true
@@ -2335,10 +2341,6 @@ packages:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
 
-  uuid@11.1.1:
-    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
-    hasBin: true
-
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
@@ -2478,15 +2480,14 @@ packages:
 
 snapshots:
 
-  '@a2a-js/sdk@1.0.1(@grpc/grpc-js@1.14.4)(express@5.2.1(supports-color@7.2.0))':
+  '@a2a-js/sdk@1.1.0(@grpc/grpc-js@1.14.4)(express@5.2.1(supports-color@7.2.0))':
     dependencies:
-      jose: 6.2.5
-      uuid: 11.1.1
+      jose: 6.2.10
     optionalDependencies:
       '@grpc/grpc-js': 1.14.4
       express: 5.2.1(supports-color@7.2.0)
 
-  '@anthropic-ai/sdk@0.120.0(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.122.0(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -2625,39 +2626,39 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@biomejs/biome@2.5.9':
+  '@biomejs/biome@2.5.11':
     optionalDependencies:
-      '@biomejs/cli-darwin-arm64': 2.5.9
-      '@biomejs/cli-darwin-x64': 2.5.9
-      '@biomejs/cli-linux-arm64': 2.5.9
-      '@biomejs/cli-linux-arm64-musl': 2.5.9
-      '@biomejs/cli-linux-x64': 2.5.9
-      '@biomejs/cli-linux-x64-musl': 2.5.9
-      '@biomejs/cli-win32-arm64': 2.5.9
-      '@biomejs/cli-win32-x64': 2.5.9
+      '@biomejs/cli-darwin-arm64': 2.5.11
+      '@biomejs/cli-darwin-x64': 2.5.11
+      '@biomejs/cli-linux-arm64': 2.5.11
+      '@biomejs/cli-linux-arm64-musl': 2.5.11
+      '@biomejs/cli-linux-x64': 2.5.11
+      '@biomejs/cli-linux-x64-musl': 2.5.11
+      '@biomejs/cli-win32-arm64': 2.5.11
+      '@biomejs/cli-win32-x64': 2.5.11
 
-  '@biomejs/cli-darwin-arm64@2.5.9':
+  '@biomejs/cli-darwin-arm64@2.5.11':
     optional: true
 
-  '@biomejs/cli-darwin-x64@2.5.9':
+  '@biomejs/cli-darwin-x64@2.5.11':
     optional: true
 
-  '@biomejs/cli-linux-arm64-musl@2.5.9':
+  '@biomejs/cli-linux-arm64-musl@2.5.11':
     optional: true
 
-  '@biomejs/cli-linux-arm64@2.5.9':
+  '@biomejs/cli-linux-arm64@2.5.11':
     optional: true
 
-  '@biomejs/cli-linux-x64-musl@2.5.9':
+  '@biomejs/cli-linux-x64-musl@2.5.11':
     optional: true
 
-  '@biomejs/cli-linux-x64@2.5.9':
+  '@biomejs/cli-linux-x64@2.5.11':
     optional: true
 
-  '@biomejs/cli-win32-arm64@2.5.9':
+  '@biomejs/cli-win32-arm64@2.5.11':
     optional: true
 
-  '@biomejs/cli-win32-x64@2.5.9':
+  '@biomejs/cli-win32-x64@2.5.11':
     optional: true
 
   '@emnapi/core@2.0.0-alpha.3':
@@ -3682,6 +3683,8 @@ snapshots:
       html-escaper: 2.0.2
       istanbul-lib-report: 3.0.1
 
+  jose@6.2.10: {}
+
   jose@6.2.5: {}
 
   js-tokens@10.0.0: {}
@@ -3835,7 +3838,7 @@ snapshots:
       is-inside-container: 1.0.0
       wsl-utils: 0.1.0
 
-  openai@7.5.0(zod@4.4.3):
+  openai@7.8.0(zod@4.4.3):
     optionalDependencies:
       zod: 4.4.3
 
@@ -4159,8 +4162,6 @@ snapshots:
   undici-types@7.18.2: {}
 
   unpipe@1.0.0: {}
-
-  uuid@11.1.1: {}
 
   vary@1.1.2: {}
 
