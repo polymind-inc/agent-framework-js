@@ -232,8 +232,10 @@ describe('loading', () => {
         { uri: 'skill://unit-converter/', text: 'namespace root' },
       ]);
       const [skill] = await mcpSkillsSource(connection).getSkills(context());
+      const getResource = skill?.getResource;
+      expect(getResource).toBeTypeOf('function');
 
-      expect(await skill?.getResource?.(name)).toBeUndefined();
+      expect(await getResource?.call(skill, name)).toBeUndefined();
       expect(server.reads).toEqual([INDEX_URI]);
       await connection.close();
     },
@@ -250,22 +252,27 @@ describe('loading', () => {
     };
 
     const [skill] = await mcpSkillsSource(reader).getSkills(context());
-    const results = await Promise.all(['', '   ', '\t\n'].map((name) => skill?.getResource?.(name)));
+    const getResource = skill?.getResource;
+    expect(getResource).toBeTypeOf('function');
+    const results = await Promise.all(['', '   ', '\t\n'].map((name) => getResource?.call(skill, name)));
 
     expect(results).toEqual([undefined, undefined, undefined]);
     expect(uris.filter((uri) => uri !== INDEX_URI)).toEqual([]);
   });
 
   it('reads a name that only looks blank at the edges at the uri the server listed', async () => {
-    // Surrounding whitespace decides nothing but blankness: a name with content in it is requested
-    // exactly as the server listed it, untrimmed.
+    // Surrounding whitespace decides blankness and nothing else: a name with content in it keeps
+    // the spaces around it rather than being trimmed. Backslashes are still normalized, so this
+    // says nothing about a name that carries one.
     const { server, connection } = serverWith([
       indexOf(unitConverterEntry),
       { uri: 'skill://unit-converter/ notes.md ', text: 'notes' },
     ]);
 
     const [skill] = await mcpSkillsSource(connection).getSkills(context());
-    const resource = await skill?.getResource?.(' notes.md ');
+    const getResource = skill?.getResource;
+    expect(getResource).toBeTypeOf('function');
+    const resource = await getResource?.call(skill, ' notes.md ');
 
     expect(server.reads).toContain('skill://unit-converter/ notes.md ');
     expect(await resource?.read({ skill: skill as Skill, callId: 'c1' })).toBe('notes');

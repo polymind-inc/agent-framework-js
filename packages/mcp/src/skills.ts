@@ -258,8 +258,8 @@ function skillRootUri(url: string): string {
  *
  * A name that is empty or only whitespace names nothing. Appending it to the skill root would
  * request the root itself, so it is refused here rather than answered with whatever the server
- * happens to serve at that URI. Whitespace decides blankness only: a name with content in it is
- * requested exactly as the server listed it, untrimmed.
+ * happens to serve at that URI. Whitespace decides blankness and nothing else: surrounding spaces
+ * inside a name that has content are kept, not trimmed away.
  *
  * Past that, the server resolves the URI and is the authority on what it will serve, but a name the
  * model composed should not be forwarded when it is visibly an escape attempt: an absolute path, an
