@@ -364,8 +364,19 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
         ) {
           if (isApprovalRequest(content)) {
             requested.push(content);
-            lastRequestPosition.set(content.id, contentPosition);
-            lastRequestPositionByCallId.set(content.functionCall.callId, contentPosition);
+            // A copy replayed while the occurrence is still open does not restart it: only a
+            // result ends one. The first copy keeps the position, so a decision that arrived
+            // between the copies still answers it instead of being read as preceding a request
+            // it never saw. A copy after a result is a genuinely new occurrence and does move it.
+            const closingResult = lastResultPosition.get(content.functionCall.callId) ?? -1;
+            const openedAt = lastRequestPosition.get(content.id);
+            if (openedAt === undefined || openedAt < closingResult) {
+              lastRequestPosition.set(content.id, contentPosition);
+            }
+            const openedAtForCall = lastRequestPositionByCallId.get(content.functionCall.callId);
+            if (openedAtForCall === undefined || openedAtForCall < closingResult) {
+              lastRequestPositionByCallId.set(content.functionCall.callId, contentPosition);
+            }
           } else {
             responses.push(content);
             lastResponsePosition.set(content.id, contentPosition);
