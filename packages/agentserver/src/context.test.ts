@@ -136,6 +136,76 @@ describe('request id resolution', () => {
     },
   );
 
+  // Every field of a traceparent decides whether the value names a trace, not the trace id alone.
+  // A header that breaks the format is not a trace this request belongs to, so it must not displace
+  // the correlation id the caller sent — nor mint one over it.
+  const MALFORMED_TRACEPARENTS: ReadonlyArray<[string, string]> = [
+    ['an all-zero parent id', `00-${TRACE_ID}-0000000000000000-01`],
+    ['a non-hex parent id', `00-${TRACE_ID}-nothexnothexnoth-01`],
+    ['a short parent id', `00-${TRACE_ID}-0123456789abcde-01`],
+    ['a long parent id', `00-${TRACE_ID}-0123456789abcdef0-01`],
+    ['non-hex flags', `00-${TRACE_ID}-${SPAN_ID}-zz`],
+    ['short flags', `00-${TRACE_ID}-${SPAN_ID}-1`],
+    ['long flags', `00-${TRACE_ID}-${SPAN_ID}-011`],
+    ['the reserved version ff', `ff-${TRACE_ID}-${SPAN_ID}-01`],
+    ['a short version', `0-${TRACE_ID}-${SPAN_ID}-01`],
+    ['a long version', `000-${TRACE_ID}-${SPAN_ID}-01`],
+    ['a non-hex version', `zz-${TRACE_ID}-${SPAN_ID}-01`],
+    ['a fifth field on version 00', `00-${TRACE_ID}-${SPAN_ID}-01-extra`],
+  ];
+
+  it.each(MALFORMED_TRACEPARENTS)(
+    'keeps the correlation id the caller sent when the traceparent has %s',
+    async (_label, traceparent) => {
+      // Both paths, because the header read here has to agree with what a propagator extracts:
+      // the calling service cannot see whether this deployment installed an SDK, so the id it
+      // gets back must not depend on that. Registering one exercises the extract path; the second
+      // call leaves the propagation API a no-op and exercises the direct read.
+      registerSdk();
+      const withSdk = await makeServer().handle(
+        post({ input: 'x' }, { traceparent, [HEADERS.requestId]: 'req-123' }),
+      );
+      expect(requestIdOf(withSdk)).toBe('req-123');
+    },
+  );
+
+  it.each(MALFORMED_TRACEPARENTS)(
+    'keeps the correlation id with no SDK registered when the traceparent has %s',
+    async (_label, traceparent) => {
+      const response = await makeServer().handle(
+        post({ input: 'x' }, { traceparent, [HEADERS.requestId]: 'req-123' }),
+      );
+
+      expect(requestIdOf(response)).toBe('req-123');
+    },
+  );
+
+  it.each(MALFORMED_TRACEPARENTS)(
+    'mints an id when the traceparent has %s and no correlation id was sent',
+    async (_label, traceparent) => {
+      registerSdk();
+
+      const response = await makeServer().handle(post({ input: 'x' }, { traceparent }));
+
+      expect(requestIdOf(response)).toMatch(UUID);
+    },
+  );
+
+  it('answers a valid traceparent the same way with and without an SDK', async () => {
+    // The other half of the same property: agreement has to hold for the values that do name a
+    // trace, or the rule above would be satisfied by rejecting everything.
+    const withoutSdk = await makeServer().handle(
+      post({ input: 'x' }, { traceparent: TRACEPARENT, [HEADERS.requestId]: 'req-123' }),
+    );
+    registerSdk();
+    const withSdk = await makeServer().handle(
+      post({ input: 'x' }, { traceparent: TRACEPARENT, [HEADERS.requestId]: 'req-123' }),
+    );
+
+    expect(requestIdOf(withoutSdk)).toBe(TRACE_ID);
+    expect(requestIdOf(withSdk)).toBe(TRACE_ID);
+  });
+
   it('treats an all-zero trace id as no trace at all', async () => {
     registerSdk();
 

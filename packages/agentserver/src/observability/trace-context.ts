@@ -42,18 +42,40 @@ export function extractTraceContext(headers: Headers): Context {
 }
 
 /**
- * The trace-id field of a W3C `traceparent`, when the value carries a usable one.
+ * The W3C `traceparent` grammar: `version-traceid-parentid-flags`, lowercase hex throughout.
  *
- * The format is `version-traceid-parentid-flags`; a later version may append fields, so only the
- * leading four are required.
+ * `ff` is reserved and is never a version. Neither id may be all zeros — that is the value the
+ * format defines as "no trace". A version this build does not know may append further fields, so
+ * the trailing group is allowed and checked against the version below.
+ */
+const TRACEPARENT =
+  /^\s?((?!ff)[\da-f]{2})-((?![0]{32})[\da-f]{32})-(?![0]{16})[\da-f]{16}-[\da-f]{2}(-.*)?\s?$/;
+
+/**
+ * The trace-id field of a W3C `traceparent`, when the whole value is one.
+ *
+ * Every field decides this, not the trace id alone: a header whose parent id is all zeros, whose
+ * flags are not two hex digits, or whose version is the reserved `ff` does not name a trace this
+ * request belongs to, and reading an id out of it would let a malformed header displace the
+ * correlation id the caller sent.
+ *
+ * The rule is the grammar itself, which is also what a conforming propagator applies — so the
+ * answer here and the answer from an extracted context agree on the same header, and that
+ * agreement is what the tests pin rather than the wording of this comment.
  */
 function traceparentTraceId(traceparent: string | null): string | undefined {
   if (traceparent === null) {
     return undefined;
   }
-  const fields = traceparent.trim().split('-');
-  const traceId = fields.length >= 4 ? fields[1] : undefined;
-  return traceId !== undefined && isValidTraceId(traceId) ? traceId : undefined;
+  const match = TRACEPARENT.exec(traceparent);
+  if (match === null) {
+    return undefined;
+  }
+  // Extra fields belong to versions that define them; version `00` is exactly four.
+  if (match[1] === '00' && match[3] !== undefined) {
+    return undefined;
+  }
+  return match[2];
 }
 
 /**
