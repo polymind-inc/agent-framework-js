@@ -174,6 +174,30 @@ describe('code_execution_tool_result variants', () => {
       { type: 'unknown', unknownType: 'future_execution_result', payload: 1, rawRepresentation: inner },
     ]);
   });
+
+  it('keeps a file entry that names no file as unknown content', () => {
+    // An empty `fileId` would be a hosted file nothing can fetch, and the transcript would not say
+    // why. The entry is preserved instead, so a replay still carries it and it stays debuggable.
+    const missing = { type: 'code_execution_output' };
+    const numeric = { type: 'code_execution_output', file_id: 7 };
+    const content = onlyContent({
+      type: 'code_execution_tool_result',
+      tool_use_id: 'c1',
+      content: {
+        type: 'code_execution_result',
+        stdout: '',
+        stderr: '',
+        return_code: 0,
+        content: [missing, numeric, { type: 'code_execution_output', file_id: 'file_1' }],
+      },
+    });
+
+    expect(outputsOf(content)).toEqual([
+      { type: 'unknown', unknownType: 'code_execution_output', rawRepresentation: missing },
+      { type: 'unknown', unknownType: 'code_execution_output', file_id: 7, rawRepresentation: numeric },
+      expect.objectContaining({ type: 'hosted_file', fileId: 'file_1' }),
+    ]);
+  });
 });
 
 describe('bash_code_execution_tool_result variants', () => {

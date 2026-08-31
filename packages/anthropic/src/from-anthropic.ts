@@ -251,7 +251,15 @@ function codeInterpreterInputs(block: AnthropicBlock): Content[] {
   ];
 }
 
-/** The `hosted_file` items a code-execution or bash result lists under `content`. */
+/**
+ * The `hosted_file` items a code-execution or bash result lists under `content`.
+ *
+ * An entry naming no file is not a hosted file: coercing it would put an item with an empty id in
+ * the transcript, where nothing can fetch it and nothing says why. It is kept as unknown content
+ * instead — the same treatment an unrecognized result payload gets — so it round-trips verbatim and
+ * stays visible for whoever has to explain it. Python reads these off a typed SDK model whose
+ * `file_id` is required, so it never meets the case; this reads the wire.
+ */
 function hostedFiles(result: AnthropicBlock): Content[] {
   const files: Content[] = [];
   for (const candidate of Array.isArray(result.content) ? result.content : []) {
@@ -259,7 +267,12 @@ function hostedFiles(result: AnthropicBlock): Content[] {
     if (file === undefined) {
       continue;
     }
-    files.push({ type: 'hosted_file', fileId: String(file.file_id ?? ''), rawRepresentation: file });
+    const fileId = file.file_id;
+    files.push(
+      typeof fileId === 'string' && fileId !== ''
+        ? { type: 'hosted_file', fileId, rawRepresentation: file }
+        : unknownContent(file),
+    );
   }
   return files;
 }
