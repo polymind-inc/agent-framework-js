@@ -101,21 +101,58 @@ describe('streamed tool-call argument handling', () => {
     expect(update?.contents[0]).toMatchObject({ arguments: { city: 'Osaka' } });
   });
 
-  it('drops argument fragments of a server-side call instead of feeding them to the tool loop', () => {
+  it('accumulates the argument fragments of a server-side call instead of feeding them to the tool loop', () => {
+    // The framework never executes this call, so it has no fragment form: nothing is emitted until
+    // the block closes, and then it carries the arguments the fragments spelled out.
     const state = createStreamParseState();
-    parseStreamEvent(
+    const opened = parseStreamEvent(
       {
         type: 'content_block_start',
         content_block: { type: 'server_tool_use', id: 's1', name: 'web_search' },
       },
       state,
     );
+    expect(opened).toBeUndefined();
     expect(
       parseStreamEvent(
         { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"q":' } },
         state,
       ),
     ).toBeUndefined();
+    expect(
+      parseStreamEvent(
+        { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '"x"}' } },
+        state,
+      ),
+    ).toBeUndefined();
+    expect(parseStreamEvent({ type: 'content_block_stop' }, state)?.contents[0]).toMatchObject({
+      type: 'function_call',
+      callId: 's1',
+      name: 'web_search',
+      arguments: { q: 'x' },
+      informationalOnly: true,
+    });
+  });
+
+  it('reports a call left open by a truncated stream when the message ends', () => {
+    const state = createStreamParseState();
+    parseStreamEvent(
+      {
+        type: 'content_block_start',
+        content_block: { type: 'server_tool_use', id: 's1', name: 'web_search', input: {} },
+      },
+      state,
+    );
+    parseStreamEvent(
+      { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"q":' } },
+      state,
+    );
+    // Half a JSON document is not arguments; the opening placeholder is what survives.
+    expect(parseStreamEvent({ type: 'message_stop' }, state)?.contents[0]).toMatchObject({
+      type: 'function_call',
+      callId: 's1',
+      arguments: {},
+    });
   });
 
   it('drops an argument fragment that no call announced', () => {
@@ -142,16 +179,16 @@ describe('streamed tool-call argument handling', () => {
 
   it('tracks a streamed MCP call the same way, defaulting its fields', () => {
     const state = createStreamParseState();
-    const update = parseStreamEvent(
-      { type: 'content_block_start', content_block: { type: 'mcp_tool_use' } },
-      state,
-    );
+    expect(
+      parseStreamEvent({ type: 'content_block_start', content_block: { type: 'mcp_tool_use' } }, state),
+    ).toBeUndefined();
+    const update = parseStreamEvent({ type: 'content_block_stop' }, state);
     expect(update?.contents[0]).toMatchObject({
       type: 'mcp_server_tool_call',
       callId: '',
       toolName: '',
       serverName: '',
-      arguments: '',
+      arguments: {},
     });
   });
 });

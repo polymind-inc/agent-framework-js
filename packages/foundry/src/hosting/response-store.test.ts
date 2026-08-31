@@ -347,8 +347,12 @@ describe('FoundryResponseStore request headers', () => {
 });
 
 describe('default store selection', () => {
-  it('keeps a local run in memory', () => {
-    expect(defaultStore(false).constructor.name).toBe('InMemoryResponseProvider');
+  it('persists a local run to the filesystem, so a restart can be continued', () => {
+    // Both reference servers make the same local choice — .NET registers `FileResponsesProvider`
+    // for a non-hosted host, Python's host falls through to `FileResponseStore`. Transcripts land
+    // in the clear under `${AGENTSERVER_STATE_ROOT}/responses`; `new InMemoryResponseProvider()`
+    // is the documented opt-out.
+    expect(defaultStore(false).constructor.name).toBe('FileResponseProvider');
   });
 
   it('activates the Foundry storage service in a container, the way Python does', () => {

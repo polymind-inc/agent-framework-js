@@ -51,6 +51,22 @@ Known limitations:
   service and the background replay log beside the sandbox state — the storage service has no
   events API — so stream replay after a sandbox recycle fails closed rather than resuming.
 
+## Where a local run stores responses
+
+`ResponsesHostServer` outside a container writes responses to
+`${AGENTSERVER_STATE_ROOT}/responses` (`~/.agentserver/responses` by default), so restarting
+`node main.ts` does not break a `previous_response_id` chain. Transcripts land there as plain
+JSON: nothing encrypts, expires or bounds them, so retention and cleanup are yours, and the
+directory needs the protection the conversations do. Point `AGENTSERVER_STATE_ROOT` elsewhere to
+move it, or opt out entirely:
+
+```ts
+new ResponsesHostServer({ agent, store: new InMemoryResponseProvider() });
+```
+
+A hosted container is unchanged: the Foundry storage service when the platform injects the
+project endpoint, the sandbox filesystem when it somehow does not.
+
 ---
 
 Part of [Agent Framework for TypeScript](https://github.com/polymind-inc/agent-framework-js) — an

@@ -107,6 +107,75 @@ contain breaking changes**; patch releases are fixes only.
   `getTools()` now rejects and names both remote tools and the name they collide on, rather than
   silently shadowing one of them.
 
+- **`@polymind-inc/agent-framework-core`** — a run that exhausts `maxIterations` no longer ends on
+  a tool call nobody will make. The final, over-budget request already withdrew the local function
+  declarations; it now also sends `toolChoice: 'none'` (previously `'auto'`), and a local
+  `function_call` or local `function_approval_request` the provider emits anyway is removed from
+  that round instead of being returned unexecuted — in both awaited and streamed form, which fold
+  to the same messages. Filtering is per update, so everything an update keeps is still forwarded
+  the moment it arrives; text, reasoning, response metadata, raw representation, hosted content,
+  provider-hosted approvals and `informationalOnly` call/result pairs are untouched, and an update
+  left with metadata but no content stays visible. When finalization leaves no non-blank
+  user-visible answer and no hosted approval, the run ends on the fixed sentence
+  `Function invocation limit reached before a final answer could be produced.`, matching Python's
+  `_ensure_function_invocation_limit_fallback_response`; content that survived is never displaced
+  to make room for it. Requesting structured output from a run that ends this way now raises the
+  ordinary "not valid JSON" error rather than silently returning `value: undefined`, because the
+  response is no longer a suspended one.
+
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`, `@polymind-inc/agent-framework-foundry`**
+  — a server built without an explicit `store` now persists responses to the **filesystem** rather
+  than to memory. `new ResponsesServer({ handler })` and a non-hosted `ResponsesHostServer` both
+  default to `FileResponseProvider` under `${AGENTSERVER_STATE_ROOT}/responses`
+  (`~/.agentserver/responses` when that variable is unset), so a `previous_response_id` chain
+  survives a restart instead of answering 404 — the local default both reference servers already
+  make (.NET registers `FileResponsesProvider` for a non-hosted host; Python's
+  `ResponsesAgentServerHost` falls through to `FileResponseStore`, under the same state root).
+  A hosted `ResponsesHostServer` is unchanged: the Foundry storage service when the platform
+  injects the project endpoint, the sandbox filesystem when it does not.
+
+  **Migration.** Nothing to do to keep the new behaviour, but two consequences are worth a
+  decision. First, the process now writes to disk where it previously did not: it needs write
+  access to the state root, and a read-only or ephemeral filesystem wants
+  `AGENTSERVER_STATE_ROOT` pointed somewhere writable. Second, **transcripts are persisted in the
+  clear** — each file is plain JSON holding a whole conversation, readable by anything running as
+  the same account, and nothing in this package expires, rotates or bounds them. Retention,
+  cleanup and the directory's permissions are the operator's responsibility. To keep the previous
+  process-local behaviour, pass the store explicitly:
+
+  ```ts
+  new ResponsesServer({ handler, store: new InMemoryResponseProvider() });
+  ```
+
+  Tests are the other place this shows up: a suite that builds a server without naming a store now
+  writes into `~/.agentserver` unless it pins `AGENTSERVER_STATE_ROOT` to a temporary directory —
+  this repository's own suites pass an in-memory store explicitly and pin the root regardless.
+
+- **`@polymind-inc/agent-framework-anthropic`** — the code-execution beta's blocks are read as the
+  typed content the framework already models instead of falling through the generic rules. The beta
+  is requested by default, but a `tool_use` / `server_tool_use` whose name identifies code execution
+  arrived as an ordinary function call and every result block arrived as unknown content. A code
+  execution call is now a `code_interpreter_tool_call` carrying its call id and its input;
+  `code_execution_tool_result` becomes a `code_interpreter_tool_result` whose outputs are the run's
+  stdout (plain or encrypted) as text, its stderr as an error, and its files as `hosted_file` items;
+  `bash_code_execution_tool_result` becomes a `shell_tool_result` holding one
+  `shell_command_output` with stdout, stderr, exit code and a `timedOut` flag set for
+  `execution_time_exceeded`, with the run's files reported beside it; and
+  `text_editor_code_execution_tool_result` becomes a `function_result` whose items are the error,
+  the viewed text, the replaced lines or the create flag, annotated with the line spans the wire
+  reported. Each mapping matches Python's shape and keeps the provider block on
+  `rawRepresentation`, so fields the framework does not model survive. Ordinary tool calls are
+  untouched, and a block — or a result payload — of a kind this build does not model still becomes
+  unknown content that round-trips verbatim. Provider-executed calls are also no longer emitted
+  before their arguments arrive: while streaming, a `server_tool_use`, an `mcp_tool_use` or a code
+  execution call is converted once its block closes, so the accumulated `input_json_delta`
+  fragments reach the folded transcript instead of being dropped — a streamed hosted call used to
+  land with empty arguments. A local `tool_use` still streams its arguments as before. Replaying an
+  exchange that used code execution sends the provider's own blocks back on the assistant turn that
+  produced them, the rule unknown content already followed, so typing them costs the conversation
+  nothing on its next turn. No new exports, tool declaration factory or request-side field: the
+  contents produced are the ones core already defines and serializes.
+
 - **`@polymind-inc/agent-framework-core`** — chat spans and the two chat metrics
   (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration`) now carry `server.address`,
   naming the endpoint the model call went to. The key was already on the metric dimension
