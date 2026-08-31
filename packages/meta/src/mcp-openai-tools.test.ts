@@ -27,8 +27,8 @@ describe('MCP tools through the OpenAI request conversion', () => {
     const listTools = vi.spyOn(McpConnection.prototype, 'listTools').mockResolvedValue({
       tools: [{ name: 'search docs!', description: 'Search the docs', inputSchema: { type: 'object' } }],
     } as unknown as ListToolsResult);
+    const mcp = new McpClient({ url: 'https://mcp.example.com/mcp' });
     try {
-      const mcp = new McpClient({ url: 'https://mcp.example.com/mcp' });
       const tools = await mcp.getTools();
       const client = new OpenAIChatClient({ apiKey: 'test-key', model: 'gpt-4o' });
 
@@ -44,6 +44,7 @@ describe('MCP tools through the OpenAI request conversion', () => {
         additionalProperties: false,
       });
     } finally {
+      await mcp.close();
       listTools.mockRestore();
     }
   });
