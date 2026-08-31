@@ -272,9 +272,11 @@ export class OpenAIChatClient
       });
     this.#model = config.model;
     this.#includeReasoningEncryptedContent = config.includeReasoningEncryptedContent ?? true;
+    const baseURL = String(this.#client.baseURL ?? '');
     this.metadata = {
       providerName: detectProviderName(this.#client),
       ...(config.model === undefined ? {} : { modelId: config.model }),
+      ...(baseURL === '' ? {} : { providerUri: baseURL }),
       stableConversationId: isConversationObjectId,
     };
   }

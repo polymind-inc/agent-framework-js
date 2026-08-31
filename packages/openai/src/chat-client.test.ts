@@ -791,6 +791,16 @@ describe('OpenAIChatClient configuration', () => {
     ).toBe('azure.ai.openai');
   });
 
+  it('reports the endpoint so telemetry can name the server it called', () => {
+    // The endpoint verbatim, not its host: `server.address` is derived from this in one place, in
+    // core, so every provider reports that attribute the same way.
+    const client = new OpenAIChatClient({
+      client: fakeClient(vi.fn(), 'https://my-resource.openai.azure.com/openai/v1'),
+      model: 'm',
+    });
+    expect(client.metadata.providerUri).toBe('https://my-resource.openai.azure.com/openai/v1');
+  });
+
   it('recognizes an AzureOpenAI client by type, including subclasses behind a non-Azure gateway', () => {
     // The baseURL deliberately looks nothing like an Azure host: only the client type gives it away.
     const azureOptions = {

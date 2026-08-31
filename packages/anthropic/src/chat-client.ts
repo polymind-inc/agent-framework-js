@@ -144,7 +144,12 @@ export class AnthropicChatClient
       });
     this.#model = config.model;
     this.#defaultMaxTokens = config.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
-    this.metadata = { providerName: 'anthropic', modelId: config.model };
+    const baseURL = String(this.#client.baseURL ?? '');
+    this.metadata = {
+      providerName: 'anthropic',
+      modelId: config.model,
+      ...(baseURL === '' ? {} : { providerUri: baseURL }),
+    };
   }
 
   /** The underlying SDK client, for provider features the framework does not model. */

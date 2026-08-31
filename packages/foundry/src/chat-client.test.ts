@@ -76,6 +76,7 @@ describe('FoundryChatClient', () => {
     expect(deployment.metadata).toEqual({
       providerName: 'azure.ai.foundry',
       modelId: 'gpt-4o',
+      providerUri: `${PROJECT}/openai/v1/`,
       stableConversationId: expect.any(Function),
     });
   });
@@ -122,6 +123,9 @@ describe('FoundryChatClient', () => {
 
     expect(server.baseURL).toBe(`${PROJECT}/agents/support-bot/endpoint/protocols/openai/`);
     expect(server.metadata.modelId).toBeUndefined();
+    // The resolved project endpoint, inherited from the Responses client: telemetry derives
+    // `server.address` from it, so a Foundry span names the project host rather than 'unknown'.
+    expect(server.metadata.providerUri).toBe(server.baseURL);
   });
 
   it('omits model from a server agent request body', () => {

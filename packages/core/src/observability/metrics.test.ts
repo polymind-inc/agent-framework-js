@@ -16,6 +16,7 @@ import { Agent } from '../agent/agent.js';
 import { MockChatClient } from '../client/test-support.js';
 import { tool } from '../tools/tool.js';
 import { textContent } from '../types/content.js';
+import { SERVER } from './attributes.js';
 import {
   GEN_AI_METRICS,
   OPERATION_DURATION_BUCKET_BOUNDARIES,
@@ -100,6 +101,68 @@ describe('chat metrics', () => {
     expect(points[0]?.value.buckets.boundaries).toEqual([...OPERATION_DURATION_BUCKET_BOUNDARIES]);
     // High-cardinality span attributes must not become metric dimensions.
     expect(points[0]?.attributes).not.toHaveProperty('gen_ai.response.id');
+  });
+
+  it('carries the same server.address on both histograms and on the chat span', async () => {
+    const client = new MockChatClient(
+      [
+        {
+          contents: [textContent('hi')],
+          finishReason: 'stop',
+          usage: { inputTokenCount: 1, outputTokenCount: 2 },
+        },
+      ],
+      { providerUri: 'https://api.example.com/openai/v1' },
+    );
+
+    await new Agent({ client }).run('hello');
+
+    const scope = await collect();
+    const dimensionSets = (scope?.metrics ?? [])
+      .flatMap((metric) => metric.dataPoints as Array<DataPoint<Histogram>>)
+      .map((point) => point.attributes[SERVER.address]);
+    // Two token-usage points (input and output) plus one duration point.
+    expect(dimensionSets).toEqual(['api.example.com', 'api.example.com', 'api.example.com']);
+    const chat = spanExporter.getFinishedSpans().find((span) => span.name === 'chat mock-model');
+    expect(chat?.attributes[SERVER.address]).toBe('api.example.com');
+  });
+
+  it("carries server.address 'unknown' on both histograms when the client names no endpoint", async () => {
+    await new Agent({ client: usingClient({ inputTokenCount: 1, outputTokenCount: 2 }) }).run('hello');
+
+    const scope = await collect();
+    const dimensionSets = (scope?.metrics ?? [])
+      .flatMap((metric) => metric.dataPoints as Array<DataPoint<Histogram>>)
+      .map((point) => point.attributes[SERVER.address]);
+    expect(dimensionSets).toEqual(['unknown', 'unknown', 'unknown']);
+  });
+
+  it('carries no server.port dimension, even when the endpoint names a port', async () => {
+    const client = new MockChatClient(
+      [
+        {
+          contents: [textContent('hi')],
+          finishReason: 'stop',
+          usage: { inputTokenCount: 1, outputTokenCount: 2 },
+        },
+      ],
+      { providerUri: 'https://api.example.com:8443/v1' },
+    );
+
+    await new Agent({ client }).run('hello');
+
+    const scope = await collect();
+    const points = (scope?.metrics ?? []).flatMap(
+      (metric) => metric.dataPoints as Array<DataPoint<Histogram>>,
+    );
+    expect(points).toHaveLength(3);
+    // Deliberate: nothing produces a value for this key, so no histogram series is split by it.
+    // It stays in the dimension allowlist as a forward declaration — `metricDimensions` skips a
+    // key with no value — and emitting it is a separate decision from `server.address`.
+    for (const point of points) {
+      expect(point.attributes).not.toHaveProperty(SERVER.port);
+      expect(point.attributes[SERVER.address]).toBe('api.example.com');
+    }
   });
 
   it('carries error.type on the duration of a failed call', async () => {

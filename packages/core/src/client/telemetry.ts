@@ -1,6 +1,6 @@
 import type { Attributes, Span } from '@opentelemetry/api';
 import { errorTypeOf } from '../errors.js';
-import { GEN_AI, GEN_AI_OPERATION } from '../observability/attributes.js';
+import { GEN_AI, GEN_AI_OPERATION, SERVER, serverAddress } from '../observability/attributes.js';
 import { recordChatMetrics } from '../observability/metrics.js';
 import {
   addMessageEvents,
@@ -24,6 +24,9 @@ function requestAttributes(metadata: ChatClientMetadata, options: ChatOptions | 
   const attributes: Attributes = {
     [GEN_AI.operation]: GEN_AI_OPERATION.chat,
     [GEN_AI.providerName]: metadata.providerName,
+    // Set here rather than on the span alone: this object is also the source of the metric
+    // dimensions, so span and histograms report one value for one call by construction.
+    [SERVER.address]: serverAddress(metadata.providerUri),
   };
   const model = options?.model ?? metadata.modelId;
   if (model !== undefined) attributes[GEN_AI.requestModel] = model;
@@ -157,8 +160,8 @@ export function withChatTelemetry<TOptions extends ChatOptions>(
               metricAttributes[GEN_AI.responseModel] = response.model;
             }
             if (failure === undefined && span !== undefined) {
-              finishChatSpan(span, response);
               const finishReason = responseFinishReason(response);
+              finishChatSpan(span, response, finishReason);
               addMessageEvents(span, {
                 providerName: client.metadata.providerName,
                 messages: response.messages,

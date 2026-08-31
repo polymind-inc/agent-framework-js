@@ -24,6 +24,13 @@ export interface MockTurn {
    * awaited call, and as a trailing `usage` content while streaming.
    */
   usage?: UsageDetails;
+  /**
+   * The provider object behind this turn, for tests about the fields a response only carries there.
+   *
+   * Some providers report a finish reason on the wire object and leave the normalized field empty;
+   * a turn that sets this can drive the code that reads it back.
+   */
+  rawRepresentation?: unknown;
 }
 
 /** A recorded call to {@link MockChatClient.getResponse}. */
@@ -44,14 +51,16 @@ export interface RecordedCall {
  * in {@link MockChatClient.calls} for assertions on what reached the client.
  */
 export class MockChatClient implements ChatClient<ChatOptions> {
-  readonly metadata: ChatClientMetadata = { providerName: 'mock', modelId: 'mock-model' };
+  readonly metadata: ChatClientMetadata;
   /** Every call received so far, in order. */
   readonly calls: RecordedCall[] = [];
   #index = 0;
   readonly #turns: MockTurn[];
 
-  constructor(turns: MockTurn[]) {
+  /** `metadata` overrides the defaults, for tests that assert on provider-derived telemetry. */
+  constructor(turns: MockTurn[], metadata?: Partial<ChatClientMetadata>) {
     this.#turns = turns;
+    this.metadata = { providerName: 'mock', modelId: 'mock-model', ...metadata };
   }
 
   /** Shorthand for `calls.length`. */
@@ -82,6 +91,7 @@ export class MockChatClient implements ChatClient<ChatOptions> {
             responseId,
             ...(turn.finishReason === undefined ? {} : { finishReason: turn.finishReason }),
             ...(turn.usage === undefined ? {} : { usageDetails: turn.usage }),
+            ...(turn.rawRepresentation === undefined ? {} : { rawRepresentation: turn.rawRepresentation }),
           });
           return arrayToStream(chatResponseToUpdates(direct));
         }

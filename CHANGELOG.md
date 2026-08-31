@@ -176,6 +176,42 @@ contain breaking changes**; patch releases are fixes only.
   nothing on its next turn. No new exports, tool declaration factory or request-side field: the
   contents produced are the ones core already defines and serializes.
 
+- **`@polymind-inc/agent-framework-core`** — chat spans and the two chat metrics
+  (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration`) now carry `server.address`,
+  naming the endpoint the model call went to. The key was already on the metric dimension
+  allowlist but nothing produced a value, so no span or histogram ever reported it. The value is
+  the host of the client's endpoint (`api.openai.com`), the form the semantic conventions define
+  for this key and the one MCP spans already emit, and it is `unknown` when the client names no
+  endpoint — so a dashboard grouping by `server.address` sees one dimension set across every
+  provider. `ChatClientMetadata` gains an optional `providerUri` for a client to declare that
+  endpoint; the OpenAI, Anthropic and Foundry clients fill it from their SDK's base URL. No
+  existing attribute changed type or shape, and `server.port` is still not emitted. The
+  `invoke_agent` span does not carry the address: it describes the agent, not a connection.
+
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — the parts inside `gen_ai.input.messages`
+  and `gen_ai.output.messages` are named with the semantic conventions' vocabulary instead of the
+  framework's own content types, and the `chat` span's final output message now carries a
+  `finish_reason`. **Dashboard migration:** a query that filters or groups on a part's `type` must
+  be updated — `text_reasoning` → `reasoning`, `data` → `blob`, `function_call` → `tool_call`,
+  `function_result` → `tool_call_response`. `text` and `uri` already matched and are unchanged, as
+  is every part kind the conventions do not name, which keeps its framework type on both sides.
+  The old spellings were internal names that appeared in no other implementation's traces: Python's
+  `_to_otel_part_latest_experimental` and .NET's `OtelMessageSerializer` both emit the four names
+  above, so one query now reads message parts from a TypeScript, Python or .NET trace alike. The
+  new `finish_reason` sits beside `role` and `parts` on the **last** output message of the `chat`
+  span only, carrying the same normalized value as `gen_ai.response.finish_reasons` (`tool_calls`
+  becomes `tool_call`) — the position and the span Python stamps it in; the `invoke_agent` span's
+  output messages are unchanged. Nothing was added to a part's payload: parts stay compact
+  (`text` carries its `content`, every other part is its `type` alone), so tool-call ids, names and
+  arguments, tool-result ids and responses, blob bytes, URIs, mime types and modalities are still
+  deliberately absent from spans — they belong to the transcript, and a rendered image attachment
+  alone would grow one message list past the size at which a backend truncates the attribute and
+  the whole list is lost. That trade-off, the fields it drops, and the cross-implementation
+  differences in `gen_ai.response.finish_reasons` (an array of strings here, JSON text in Python
+  and .NET, absent in Go) are now documented on the `GEN_AI` attribute constants. `server.port` is
+  still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
+  is now pinned by tests.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
