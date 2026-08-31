@@ -1298,13 +1298,15 @@ describe('withFunctionInvocation UserInputRequiredError', () => {
     expect(inner.callCount).toBe(2);
     expect(response.text).toBe('handled');
     const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    // Exact, whole-content match: with detailed errors off the two strings are fixed, so nothing
+    // derived from the thrown error may leak into either of them.
     expect(results).toEqual([
-      expect.objectContaining({
+      {
         type: 'function_result',
         callId: 'c1',
         result: 'Tool requires user input but no request details were provided.',
-        exception: 'UserInputRequiredError',
-      }),
+        exception: 'UserInputRequiredException',
+      },
     ]);
     // Nothing is handed to the caller: there is no request a human could answer.
     expect(
@@ -1330,7 +1332,38 @@ describe('withFunctionInvocation UserInputRequiredError', () => {
       'Tool requires user input but no request details were provided. ' +
         'Exception: Tool requires user input to proceed.',
     );
-    expect(results[0]?.exception).toBe('UserInputRequiredError');
+    // The detail rides on `result`; the marker stays the fixed literal either way.
+    expect(results[0]?.exception).toBe('UserInputRequiredException');
+  });
+
+  it('marks the empty-contents result with the wire literal, not the thrown error name', async () => {
+    // The marker is wire-visible, so it names Python's exception type rather than the class that
+    // was thrown here. A subclass raised under a different `name` must not change what is emitted.
+    class RenamedUserInputRequiredError extends UserInputRequiredError {
+      constructor() {
+        super([]);
+        this.name = 'DifferentlyNamedError';
+      }
+    }
+    const renamed = tool({
+      name: 'needs_input',
+      description: 'needs a human',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        throw new RenamedUserInputRequiredError();
+      },
+    });
+    const inner = new MockChatClient([
+      { contents: [call('c1', 'needs_input')], finishReason: 'tool_calls' },
+      { contents: [textContent('handled')], finishReason: 'stop' },
+    ]);
+
+    const response = await withFunctionInvocation(inner).getResponse([], {
+      tools: [renamed],
+    } as ChatOptions);
+
+    const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    expect(results[0]?.exception).toBe('UserInputRequiredException');
   });
 
   it('counts an empty-contents raise toward the consecutive-error budget', async () => {

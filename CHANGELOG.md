@@ -212,6 +212,19 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-core`** — a tool that stops for a human without naming anything
+  a human could settle now reports `exception: "UserInputRequiredException"` on the
+  `function_result` it hands the model, instead of `"UserInputRequiredError"`. The marker is
+  wire-visible and was being derived from the thrown error's class name, so a consumer branching on
+  `function_result.exception` — or a transcript compared against another implementation — saw a
+  string no other implementation emits; Python's `_execute_single_function_call` writes
+  `exception="UserInputRequiredException"` for the same case. The marker is now a fixed literal
+  rather than the error's `name`, so subclassing or renaming `UserInputRequiredError` cannot change
+  it. Everything else about this path is unchanged: the model-facing text is still
+  `Tool requires user input but no request details were provided.`, `includeDetailedErrors` still
+  appends ` Exception: <message>` to that text and nothing else, the round still counts against the
+  consecutive-error budget, and the run still continues.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
