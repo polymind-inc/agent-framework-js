@@ -176,7 +176,10 @@ export class AnthropicChatClient
   buildRequest(messages: Message[], options?: AnthropicChatOptions): Record<string, unknown> {
     const converted = toAnthropicMessages(messages);
     if (converted.length === 0) {
-      // The API rejects an empty message list with an opaque 400; Python raises up front too.
+      // A deliberate divergence, not parity: the reference implementation sends the empty list and
+      // lets the service answer with a 400 that names nothing the caller can act on. Failing here
+      // instead saves that round trip and says which call was empty, while changing no request the
+      // service would have accepted.
       throw new ChatClientError('Messages are required: the request would carry no messages.');
     }
 
@@ -253,9 +256,11 @@ export class AnthropicChatClient
     if (mcp_servers !== undefined) {
       request.mcp_servers = mcp_servers;
     }
-    if (tools !== undefined || mcp_servers !== undefined) {
-      setIfDefined(request, 'tool_choice', toAnthropicToolChoice(options?.toolChoice));
-    }
+    // The choice travels on the option alone, never gated on what this request declares. The
+    // function-calling loop's final round withdraws local declarations while pinning the choice to
+    // `'none'`, so gating would drop the instruction on exactly the request that exists to send it.
+    // Python and Go build it from the option alone too; it is omitted only when none was configured.
+    setIfDefined(request, 'tool_choice', toAnthropicToolChoice(options?.toolChoice));
 
     Object.assign(request, options?.additionalProperties ?? {});
 
