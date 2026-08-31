@@ -212,6 +212,20 @@ contain breaking changes**; patch releases are fixes only.
   still deliberately emitted by nothing, on spans and on metric dimensions alike, and its absence
   is now pinned by tests.
 
+- **`@polymind-inc/agent-framework-mcp`** — the failure text of a tool result that reports
+  `isError` now puts each text block on its own line. The blocks of a failed call are separate
+  messages — a summary and its detail, or one line per item that failed — and concatenating them
+  without a separator ran them together as `...rejected itretry after 30s`, in the
+  `ToolInvocationError` the model is told about and in the `tools/call` span's status message
+  alike. Both are now assembled by one rule: text blocks only, in order, joined with a newline,
+  with empty blocks contributing nothing rather than a blank line, and `structuredContent` keeping
+  its place as the last line of a call that reported both. A result whose blocks carry no text at
+  all still falls back to the generic `MCP tool "<name>" reported an error.` message. The shared
+  `textOfContents` is untouched and stays a verbatim concatenation — it answers what a message
+  said, where a streamed response splits text at arbitrary token boundaries. The equivalent
+  assembly in `FoundryToolbox` is unchanged for now; it diverges in more than the separator and is
+  tracked separately.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
