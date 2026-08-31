@@ -53,6 +53,25 @@ contain breaking changes**; patch releases are fixes only.
   `{ "type": "item_reference", "id": "x" }`; to send a message, give it a `role` and `content`.
   Items of every other type are unaffected.
 
+- **`@polymind-inc/agent-framework-mcp`** — an MCP server's tool names and input schemas are
+  normalized before they reach a provider, and `McpClientConfig.toolNamePrefix` is new. MCP puts no
+  restriction on a tool name while providers accept only `[A-Za-z0-9_.-]` in a function name, and a
+  zero-argument tool declared as a bare `{ "type": "object" }` is rejected by OpenAI for having no
+  `properties` — both were passed through unchanged, so a valid server could produce a request the
+  provider refused or a tool the model could not name. The exposed name now replaces every other
+  character with `-` (`search docs!` becomes `search-docs-`), the reference implementations' rule
+  in Python's `_normalize_mcp_name` and Go's `normalizeMCPName`; an object schema gains
+  `properties: {}` when it has none, and a missing schema becomes
+  `{ "type": "object", "properties": {} }` — on a copy, so the server's own declaration is never
+  modified. The remote name is what still goes out on `tools/call`, and what `allowedTools`, the
+  `approvalMode` callback and error messages speak in. `toolNamePrefix` exposes tools as
+  `<prefix>_<name>`, so two servers that both advertise `search` can be told apart; the prefix is
+  normalized the same way, loses trailing `_.-`, and is ignored when nothing is left of it, as
+  Python's `tool_name_prefix` does. Prefixes are the only thing that separates clients — none
+  infers another's namespace. When two of one server's tools would be exposed under the same name,
+  `getTools()` now rejects and names both remote tools and the name they collide on, rather than
+  silently shadowing one of them.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

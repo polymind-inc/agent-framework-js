@@ -17,6 +17,7 @@ import {
 import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { McpClient } from './client.js';
+import { McpConnection } from './connection.js';
 import { fromMcpContent } from './content.js';
 import type { TestTool } from './test-server.js';
 import { SlowStartServer, TestMcpServer } from './test-server.js';
@@ -158,6 +159,162 @@ describe('tool enumeration', () => {
     expect(() => new McpClient({ transportFactory: server, headers: { authorization: 'secret' } })).toThrow(
       ConfigurationError,
     );
+  });
+});
+
+describe('tool schema normalization', () => {
+  it('gives a zero-argument object schema an empty properties map', async () => {
+    // The shape a real server sends for a tool that takes no arguments. OpenAI rejects an object
+    // schema without `properties` with a 400, so the declaration cannot be passed through as is.
+    const mcp = new McpClient({
+      transport: new TestMcpServer([
+        { name: 'ping', inputSchema: { type: 'object' }, call: () => ({ content: [] }) },
+      ]),
+    });
+
+    const [ping] = await mcp.getTools();
+
+    expect(ping?.jsonSchema).toEqual({ type: 'object', properties: {} });
+    await mcp.close();
+  });
+
+  it('supplies an object schema when the server declares none', async () => {
+    // `listTools` is stubbed on purpose: the MCP SDK validates a `tools/list` response and rejects
+    // a tool whose `inputSchema` is absent or is not `type: "object"`, so the two guards below
+    // cannot be reached through a transport. They exist for the same reason Python's do — a
+    // non-conforming server, or a caller driving McpClient over its own McpConnection.
+    const listTools = vi
+      .spyOn(McpConnection.prototype, 'listTools')
+      .mockResolvedValue({ tools: [{ name: 'ping' }] } as unknown as Awaited<
+        ReturnType<McpConnection['listTools']>
+      >);
+    try {
+      const [ping] = await new McpClient({ transport: server() }).getTools();
+      expect(ping?.jsonSchema).toEqual({ type: 'object', properties: {} });
+    } finally {
+      listTools.mockRestore();
+    }
+  });
+
+  it('leaves a non-object schema unchanged', async () => {
+    const listTools = vi.spyOn(McpConnection.prototype, 'listTools').mockResolvedValue({
+      tools: [{ name: 'ping', inputSchema: { type: 'string', description: 'raw' } }],
+    } as unknown as Awaited<ReturnType<McpConnection['listTools']>>);
+    try {
+      const [ping] = await new McpClient({ transport: server() }).getTools();
+      expect(ping?.jsonSchema).toEqual({ type: 'string', description: 'raw' });
+    } finally {
+      listTools.mockRestore();
+    }
+  });
+
+  it('does not mutate the schema object it was handed', async () => {
+    const declaredSchema: Record<string, unknown> = { type: 'object' };
+    const listTools = vi
+      .spyOn(McpConnection.prototype, 'listTools')
+      .mockResolvedValue({ tools: [{ name: 'ping', inputSchema: declaredSchema }] } as unknown as Awaited<
+        ReturnType<McpConnection['listTools']>
+      >);
+    try {
+      const [ping] = await new McpClient({ transport: server() }).getTools();
+
+      expect(declaredSchema).toEqual({ type: 'object' });
+      expect(Object.hasOwn(declaredSchema, 'properties')).toBe(false);
+      expect(ping?.jsonSchema).not.toBe(declaredSchema);
+    } finally {
+      listTools.mockRestore();
+    }
+  });
+});
+
+describe('tool name normalization', () => {
+  function namedServer(...names: string[]): TestMcpServer {
+    return new TestMcpServer(
+      names.map((name) => ({
+        name,
+        inputSchema: { type: 'object' },
+        call: () => ({ content: [{ type: 'text', text: `called:${name}` }] }),
+      })),
+    );
+  }
+
+  it('exposes a provider-safe name and calls the server with the remote one', async () => {
+    const transport = namedServer('search docs!');
+    const mcp = new McpClient({ transport });
+
+    const [search] = await mcp.getTools();
+
+    expect(search?.name).toBe('search-docs-');
+    await search?.execute?.({}, { callId: 'call_1' });
+    expect(transport.calls).toEqual([{ name: 'search docs!', arguments: {} }]);
+    await mcp.close();
+  });
+
+  it('rejects when two remote names collide on one exposed name', async () => {
+    const mcp = new McpClient({ transport: namedServer('a b', 'a-b') });
+
+    // Deterministic rather than a silent shadowing or a list-order-dependent suffix: both remote
+    // names and the exposed name they collide on are in the message.
+    await expect(mcp.getTools()).rejects.toThrow(/"a b".*"a-b"|"a-b".*"a b"/);
+    await expect(mcp.getTools()).rejects.toThrow('a-b');
+    await mcp.close();
+  });
+
+  it('keeps the allowlist and the approval policy on the remote names', async () => {
+    const seen: string[] = [];
+    const mcp = new McpClient({
+      transport: namedServer('search docs!', 'other tool'),
+      allowedTools: ['search docs!'],
+      approvalMode: (name) => {
+        seen.push(name);
+        return name === 'search docs!' ? 'always_require' : 'never_require';
+      },
+    });
+
+    const tools = await mcp.getTools();
+
+    expect(tools.map((entry) => entry.name)).toEqual(['search-docs-']);
+    expect(tools[0]?.approvalMode).toBe('always_require');
+    expect(seen).toEqual(['search docs!']);
+    await mcp.close();
+  });
+
+  it('namespaces two servers with toolNamePrefix and routes each call to its own server', async () => {
+    const githubTransport = namedServer('search');
+    const jiraTransport = namedServer('search');
+    const github = new McpClient({ transport: githubTransport, toolNamePrefix: 'github' });
+    const jira = new McpClient({ transport: jiraTransport, toolNamePrefix: 'jira' });
+
+    const [githubSearch] = await github.getTools();
+    const [jiraSearch] = await jira.getTools();
+
+    expect(githubSearch?.name).toBe('github_search');
+    expect(jiraSearch?.name).toBe('jira_search');
+    await githubSearch?.execute?.({}, { callId: 'call_1' });
+    await jiraSearch?.execute?.({}, { callId: 'call_2' });
+    expect(githubTransport.calls).toEqual([{ name: 'search', arguments: {} }]);
+    expect(jiraTransport.calls).toEqual([{ name: 'search', arguments: {} }]);
+    await github.close();
+    await jira.close();
+  });
+
+  it('normalizes the prefix and trims the separators around the join', async () => {
+    const exposed = async (toolNamePrefix: string, remoteName: string): Promise<string | undefined> => {
+      const mcp = new McpClient({ transport: namedServer(remoteName), toolNamePrefix });
+      const [only] = await mcp.getTools();
+      await mcp.close();
+      return only?.name;
+    };
+
+    expect(await exposed('git hub!', 'search')).toBe('git-hub_search');
+    expect(await exposed('github__', 'search')).toBe('github_search');
+    expect(await exposed('github', '__search')).toBe('github_search');
+    // A prefix that normalizes away entirely leaves the name as it was.
+    expect(await exposed('', 'search docs!')).toBe('search-docs-');
+    expect(await exposed('_.-', 'search docs!')).toBe('search-docs-');
+    expect(await exposed('!!!', 'search docs!')).toBe('search-docs-');
+    // A name that trims away entirely leaves the prefix standing on its own.
+    expect(await exposed('github', '___')).toBe('github');
   });
 });
 
