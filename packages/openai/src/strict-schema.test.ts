@@ -217,6 +217,9 @@ describe('toStrictJsonSchema', () => {
         described: { type: 'string', description: 'A value', default: 'fallback' },
         bare: { type: 'integer', default: 7 },
         nulled: { type: 'string', description: null, default: 'x' },
+        // A declared `default: null` is a default like any other — "absent" is spelled by leaving
+        // the keyword out, so the null has to survive as prose rather than be read as no default.
+        nullDefault: { type: ['string', 'null'], default: null },
       },
     });
 
@@ -224,6 +227,7 @@ describe('toStrictJsonSchema', () => {
       described: { type: 'string', description: 'A value (Default value: "fallback")' },
       bare: { type: 'integer', description: 'Default value: 7' },
       nulled: { type: 'string', description: 'Default value: "x"' },
+      nullDefault: { type: ['string', 'null'], description: 'Default value: null' },
     });
   });
 

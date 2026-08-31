@@ -10,7 +10,7 @@ import type { AnyFunctionTool, Tool, ToolContext } from '../tools/tool.js';
 import { isFunctionTool } from '../tools/tool.js';
 import { textContent } from '../types/content.js';
 import { SKILL_TOOL_NAMES, skillsProvider } from './provider.js';
-import type { Skill } from './skill.js';
+import type { Skill, SkillScriptArguments } from './skill.js';
 import { inlineSkill, skillResource, skillScript } from './skill.js';
 import type { SkillLoadFailure, SkillsSource } from './source.js';
 
@@ -193,6 +193,79 @@ describe('skillsProvider tools', () => {
         args: { value: 2, factor: 3 },
       }),
     ).toBe(6);
+  });
+
+  it('publishes the exact run_skill_script parameter schema', async () => {
+    // The whole schema, not a spot check: it is public surface the model reads, so any drift in a
+    // description or a keyword should fail here rather than change how a model calls the tool.
+    const contribution = await runProvider(skillsProvider([unitConverter]));
+
+    expect(toolNamed(contribution, SKILL_TOOL_NAMES.runSkillScript).jsonSchema).toEqual({
+      type: 'object',
+      properties: {
+        skill_name: { type: 'string', description: 'The name of the skill.' },
+        script_name: {
+          type: 'string',
+          description:
+            'The name of the script to run as listed in the skill, preserving any directory ' +
+            'prefix exactly as shown. Do not add or remove path prefixes.',
+        },
+        args: {
+          oneOf: [
+            {
+              type: 'object',
+              additionalProperties: true,
+              description: 'Named arguments as key-value pairs (e.g. {"length": 24, "uppercase": true}).',
+            },
+            {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Positional CLI arguments as a string array (e.g. ["input.docx", "--output", "result.idx"]).',
+            },
+            { type: 'null' },
+          ],
+          default: null,
+          description:
+            'Arguments to pass to the script. Use an array of strings for CLI-style positional ' +
+            'arguments (e.g. ["input.docx", "--output", "result.idx"]), or an object for named ' +
+            'parameters (e.g. {"length": 24, "uppercase": true}). How these values are mapped to ' +
+            'the underlying script is determined by the script implementation or configured runner.',
+        },
+      },
+      required: ['skill_name', 'script_name'],
+    });
+  });
+
+  it('hands the script exactly what the model sent for args, never the advertised default', async () => {
+    // `default` tells the model what omitting `args` means; it is not a value the tool substitutes.
+    // A script therefore still sees `undefined` for an omitted argument and `null` for an explicit
+    // one, and can tell the two apart.
+    const seen: unknown[] = [];
+    const probe = inlineSkill({
+      name: 'probe-skill',
+      description: 'Records the arguments a script was handed.',
+      instructions: 'Run probe.',
+      scripts: [
+        {
+          name: 'probe',
+          run: (args: SkillScriptArguments): string => {
+            seen.push(args);
+            return 'recorded';
+          },
+        },
+      ],
+    });
+    const contribution = await runProvider(skillsProvider([probe]));
+
+    for (const input of [
+      { skill_name: 'probe-skill', script_name: 'probe' },
+      { skill_name: 'probe-skill', script_name: 'probe', args: null },
+      { skill_name: 'probe-skill', script_name: 'probe', args: ['--json'] },
+    ]) {
+      expect(await invoke(contribution, SKILL_TOOL_NAMES.runSkillScript, input)).toBe('recorded');
+    }
+    expect(seen).toStrictEqual([undefined, null, ['--json']]);
   });
 
   it.each([

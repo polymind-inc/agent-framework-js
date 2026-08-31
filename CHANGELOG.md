@@ -291,6 +291,16 @@ contain breaking changes**; patch releases are fixes only.
   Whitespace decides blankness alone: a name with content in it is still requested exactly as the
   server listed it, untrimmed and undecoded.
 
+- **`@polymind-inc/agent-framework-core`** — the `run_skill_script` tool now declares
+  `"default": null` on its `args` parameter and says that how the arguments reach the script is
+  "determined by the script implementation or configured runner". Both are model-visible schema
+  text: without the default, a model reading the schema had no statement that omitting `args`
+  is a supported call, and the description named only the in-process case even though a
+  file-based script is run by the `scriptRunner` its source was given. The default is advertised,
+  not applied — a script still receives `undefined` for an omitted `args` and `null` for an
+  explicit one, so nothing about execution changes. The whole published schema is now pinned by an
+  exact assertion.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry
