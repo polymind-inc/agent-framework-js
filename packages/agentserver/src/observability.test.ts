@@ -358,7 +358,7 @@ describe('setupHostObservability', () => {
     vi.resetModules();
     const { serve } = await import('./node.js');
     const { ResponsesServer } = await import('./server.js');
-    const server = new ResponsesServer({ handler: minimalHandler() });
+    const server = new ResponsesServer({ handler: minimalHandler(), store: new InMemoryResponseProvider() });
 
     // The message, not the class: the fresh generation has its own class identity.
     await expect(serve(server, { port: 0, host: '127.0.0.1', handleSignals: false })).rejects.toThrow(

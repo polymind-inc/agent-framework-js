@@ -19,8 +19,9 @@ export interface ResponsesHostServerConfig
   /**
    * Where responses live. Defaults to {@link defaultStore}.
    *
-   * Supply one to override the default — {@link FileResponseProvider} to keep a deployed container
-   * off the storage service, or {@link InMemoryResponseProvider} for a self-contained test.
+   * Supply one to override the default — {@link FileResponseProvider} with an explicit `root` to
+   * move the files, or {@link InMemoryResponseProvider} to keep a local run process-local and off
+   * the filesystem entirely.
    */
   store?: ResponseProvider;
 }
@@ -30,9 +31,15 @@ export interface ResponsesHostServerConfig
  *
  * In a container: the Foundry storage service, the way Python's `ResponsesHostServer` activates
  * its provider when hosted — responses then survive sandbox recycling and conversations can move
- * between sandboxes. Locally: memory, so nothing outlives the process. A hosted container that
- * somehow lacks the platform-injected project endpoint falls back to the sandbox filesystem
- * rather than refusing to start.
+ * between sandboxes. Locally: the filesystem under `${AGENTSERVER_STATE_ROOT}/responses`
+ * (`~/.agentserver/responses` by default), so a `previous_response_id` chain survives a restart —
+ * both reference servers make the same local choice. A hosted container that somehow lacks the
+ * platform-injected project endpoint falls back to the sandbox filesystem rather than refusing to
+ * start.
+ *
+ * The local default writes whole transcripts to disk **in the clear** and expires nothing:
+ * retention and cleanup belong to whoever runs the process, and the directory needs the
+ * protection the conversations do. Pass `new InMemoryResponseProvider()` to opt out.
  *
  * The storage service requires the hosted-agent credential and the platform call id on every
  * write, and an `agent_reference` on every persisted response (all measured against the live
@@ -45,8 +52,10 @@ export interface ResponsesHostServerConfig
  */
 export function defaultStore(hosted: boolean): ResponseProvider {
   if (!hosted) {
-    // A local run is self-contained; nothing should outlive the process.
-    return new InMemoryResponseProvider();
+    // The sandbox filesystem, not memory: a local run that restarts can still be continued with
+    // `previous_response_id`. .NET registers `FileResponsesProvider` for the non-hosted host and
+    // Python's host falls through to `FileResponseStore`, both under the same state root.
+    return new FileResponseProvider();
   }
   const endpoint = projectEndpoint();
   if (endpoint === undefined) {

@@ -123,6 +123,34 @@ contain breaking changes**; patch releases are fixes only.
   ordinary "not valid JSON" error rather than silently returning `value: undefined`, because the
   response is no longer a suspended one.
 
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`, `@polymind-inc/agent-framework-foundry`**
+  — a server built without an explicit `store` now persists responses to the **filesystem** rather
+  than to memory. `new ResponsesServer({ handler })` and a non-hosted `ResponsesHostServer` both
+  default to `FileResponseProvider` under `${AGENTSERVER_STATE_ROOT}/responses`
+  (`~/.agentserver/responses` when that variable is unset), so a `previous_response_id` chain
+  survives a restart instead of answering 404 — the local default both reference servers already
+  make (.NET registers `FileResponsesProvider` for a non-hosted host; Python's
+  `ResponsesAgentServerHost` falls through to `FileResponseStore`, under the same state root).
+  A hosted `ResponsesHostServer` is unchanged: the Foundry storage service when the platform
+  injects the project endpoint, the sandbox filesystem when it does not.
+
+  **Migration.** Nothing to do to keep the new behaviour, but two consequences are worth a
+  decision. First, the process now writes to disk where it previously did not: it needs write
+  access to the state root, and a read-only or ephemeral filesystem wants
+  `AGENTSERVER_STATE_ROOT` pointed somewhere writable. Second, **transcripts are persisted in the
+  clear** — each file is plain JSON holding a whole conversation, readable by anything running as
+  the same account, and nothing in this package expires, rotates or bounds them. Retention,
+  cleanup and the directory's permissions are the operator's responsibility. To keep the previous
+  process-local behaviour, pass the store explicitly:
+
+  ```ts
+  new ResponsesServer({ handler, store: new InMemoryResponseProvider() });
+  ```
+
+  Tests are the other place this shows up: a suite that builds a server without naming a store now
+  writes into `~/.agentserver` unless it pins `AGENTSERVER_STATE_ROOT` to a temporary directory —
+  this repository's own suites pass an in-memory store explicitly and pin the root regardless.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

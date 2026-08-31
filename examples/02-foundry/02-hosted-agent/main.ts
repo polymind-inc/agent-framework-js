@@ -53,7 +53,9 @@ const agent = new Agent({
 });
 
 // In a container the store defaults to the Foundry storage service, so responses survive sandbox
-// recycling; pass `store: new FileResponseProvider()` to keep a deployment off it — see README.md.
+// recycling; pass `store: new FileResponseProvider()` to keep a deployment off it. Run locally,
+// the default writes transcripts as plain JSON under `${AGENTSERVER_STATE_ROOT}/responses`
+// (`~/.agentserver/responses`), which nothing cleans up for you — see README.md.
 const server = new ResponsesHostServer({ agent });
 
 const { port } = await serve(server);

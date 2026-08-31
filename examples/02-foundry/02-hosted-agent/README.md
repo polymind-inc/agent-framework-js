@@ -136,6 +136,13 @@ keep a deployment on its sandbox filesystem instead, pass the store explicitly:
 new ResponsesHostServer({ agent, store: new FileResponseProvider() });
 ```
 
+Running the same file locally stores responses on **your own filesystem**, under
+`${AGENTSERVER_STATE_ROOT}/responses` — `~/.agentserver/responses` unless you set that variable —
+so restarting the process does not break a `previous_response_id` chain. They are plain JSON
+holding whole conversations: nothing expires them, so clearing them out is your job, and the
+directory needs the protection the conversations do. `store: new InMemoryResponseProvider()` opts
+out and keeps everything in the process.
+
 Two service behaviours worth knowing, both measured against a live project: storage writes are
 gated on the **hosted-agent credential**, so `FoundryResponseStore` works from inside a deployed
 container and answers an opaque `500` from a workstation login; and every write must carry an

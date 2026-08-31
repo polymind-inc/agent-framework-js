@@ -453,6 +453,7 @@ describe('streamed replay', () => {
     const hold1 = Promise.withResolvers<void>();
     const hold2 = Promise.withResolvers<void>();
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* (_request: CreateResponseRequest, context: HandlerContext) {
         const response = (status: ResponseObject['status']): ResponseObject => ({
           ...context.response,
@@ -1084,6 +1085,7 @@ describe('the background registry survives a reused id', () => {
     // during its own setup, before there is a run to hand the id to.
     let attempts = 0;
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: (request, context) => {
         attempts += 1;
         if (attempts === 1) {
@@ -1254,6 +1256,7 @@ describe('draining background runs', () => {
 
   it('settles the wait when the handler throws before its first event', async () => {
     const server = new ResponsesServer({
+      store: new InMemoryResponseProvider(),
       handler: async function* () {
         throw new Error('exploded before created');
         // biome-ignore lint/correctness/noUnreachable: never runs; the yield only makes this function a generator
