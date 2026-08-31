@@ -137,6 +137,34 @@ describe('chat metrics', () => {
     expect(dimensionSets).toEqual(['unknown', 'unknown', 'unknown']);
   });
 
+  it('carries no server.port dimension, even when the endpoint names a port', async () => {
+    const client = new MockChatClient(
+      [
+        {
+          contents: [textContent('hi')],
+          finishReason: 'stop',
+          usage: { inputTokenCount: 1, outputTokenCount: 2 },
+        },
+      ],
+      { providerUri: 'https://api.example.com:8443/v1' },
+    );
+
+    await new Agent({ client }).run('hello');
+
+    const scope = await collect();
+    const points = (scope?.metrics ?? []).flatMap(
+      (metric) => metric.dataPoints as Array<DataPoint<Histogram>>,
+    );
+    expect(points).toHaveLength(3);
+    // Deliberate: nothing produces a value for this key, so no histogram series is split by it.
+    // It stays in the dimension allowlist as a forward declaration — `metricDimensions` skips a
+    // key with no value — and emitting it is a separate decision from `server.address`.
+    for (const point of points) {
+      expect(point.attributes).not.toHaveProperty(SERVER.port);
+      expect(point.attributes[SERVER.address]).toBe('api.example.com');
+    }
+  });
+
   it('carries error.type on the duration of a failed call', async () => {
     const failing = {
       metadata: { providerName: 'mock' },

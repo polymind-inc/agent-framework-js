@@ -16,7 +16,7 @@ import { message } from '../types/message.js';
 import { agentResponse } from '../types/response.js';
 import { GEN_AI, MCP, SERVER } from './attributes.js';
 import { configureObservability, getTracer } from './settings.js';
-import { addMessageEvents, responseFinishReason, startAgentRunSpan } from './tracing.js';
+import { addMessageEvents, responseFinishReason, setMessageContent, startAgentRunSpan } from './tracing.js';
 
 const exporter = new InMemorySpanExporter();
 /** Names of spans that were *started*, whether or not they were ended. */
@@ -697,6 +697,211 @@ describe('v1.36.0 message events', () => {
     const chat = spans().find((span) => span.name === 'chat mock-model');
     assert.exists(chat);
     expect(chat.events.map((event) => event.name)).toEqual(['gen_ai.user.message']);
+  });
+});
+
+describe('gen_ai.response.finish_reasons', () => {
+  /**
+   * The four implementations disagree on this attribute's encoding, so its exact value is pinned
+   * here rather than left to the shape assertions above: Python emits the JSON text
+   * `'["tool_calls"]'`, .NET emits `'["toolcalls"]'`, and this implementation emits the native
+   * string array the semantic conventions define, with the convention's `tool_call` spelling.
+   */
+  const stopTurn = { contents: [textContent('hi')], finishReason: 'stop' };
+  /**
+   * A call the service already ran (`informationalOnly`), so the loop has nothing to execute and
+   * the run ends on the round that reported `tool_calls` — the only way both spans of one run
+   * carry the reason that needs normalizing.
+   */
+  const toolCallTurn = {
+    contents: [
+      {
+        type: 'function_call' as const,
+        callId: 'c1',
+        name: 'lookup',
+        arguments: '{}',
+        informationalOnly: true,
+      },
+    ],
+    finishReason: 'tool_calls',
+  };
+
+  async function drain(stream: AsyncIterable<unknown>): Promise<void> {
+    for await (const _ of stream) {
+      // Consume.
+    }
+  }
+
+  it('records a native string array on the chat span of an awaited run', async () => {
+    await new Agent({ client: new MockChatClient([stopTurn]), name: 'bot' }).run('q');
+    expect(byName('chat mock-model')?.attributes[GEN_AI.finishReasons]).toEqual(['stop']);
+
+    exporter.reset();
+    await new Agent({ client: new MockChatClient([toolCallTurn]), name: 'bot' }).run('q');
+    expect(byName('chat mock-model')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
+  });
+
+  it('records a native string array on the chat span of a streamed run', async () => {
+    await drain(new Agent({ client: new MockChatClient([stopTurn]), name: 'bot' }).run('q'));
+    expect(byName('chat mock-model')?.attributes[GEN_AI.finishReasons]).toEqual(['stop']);
+
+    exporter.reset();
+    await drain(new Agent({ client: new MockChatClient([toolCallTurn]), name: 'bot' }).run('q'));
+    expect(byName('chat mock-model')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
+  });
+
+  it('records a native string array on the invoke_agent span of an awaited run', async () => {
+    await new Agent({ client: new MockChatClient([stopTurn]), name: 'bot' }).run('q');
+    expect(byName('invoke_agent bot')?.attributes[GEN_AI.finishReasons]).toEqual(['stop']);
+
+    exporter.reset();
+    await new Agent({ client: new MockChatClient([toolCallTurn]), name: 'bot' }).run('q');
+    expect(byName('invoke_agent bot')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
+  });
+
+  it('records a native string array on the invoke_agent span of a streamed run', async () => {
+    await drain(new Agent({ client: new MockChatClient([stopTurn]), name: 'bot' }).run('q'));
+    expect(byName('invoke_agent bot')?.attributes[GEN_AI.finishReasons]).toEqual(['stop']);
+
+    exporter.reset();
+    await drain(new Agent({ client: new MockChatClient([toolCallTurn]), name: 'bot' }).run('q'));
+    expect(byName('invoke_agent bot')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
+  });
+});
+
+describe('message-content attributes', () => {
+  /** One transcript carrying every part kind the convention names. */
+  const transcript = [
+    message('user', [
+      textContent('hello'),
+      { type: 'text_reasoning' as const, text: 'deliberating' },
+      { type: 'data' as const, uri: 'data:image/png;base64,QUFBQQ==', mediaType: 'image/png' },
+      { type: 'uri' as const, uri: 'https://example.test/photo.png', mediaType: 'image/png' },
+    ]),
+    message('assistant', [
+      {
+        type: 'function_call' as const,
+        callId: 'c1',
+        name: 'lookup',
+        arguments: '{"token":"s3cr3t"}',
+        informationalOnly: true,
+      },
+    ]),
+    message('tool', [{ type: 'function_result' as const, callId: 'c1', result: 'confidential answer' }]),
+  ];
+
+  it('names the parts with the convention vocabulary rather than the framework content types', async () => {
+    configureObservability({ captureMessageContent: true });
+    const mock = new MockChatClient([{ contents: [textContent('ok')], finishReason: 'stop' }]);
+
+    await new Agent({ client: mock, name: 'bot' }).run(transcript);
+
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
+    expect(JSON.parse(String(chat.attributes[GEN_AI.inputMessages]))).toEqual([
+      {
+        role: 'user',
+        parts: [{ type: 'text', content: 'hello' }, { type: 'reasoning' }, { type: 'blob' }, { type: 'uri' }],
+      },
+      { role: 'assistant', parts: [{ type: 'tool_call' }] },
+      { role: 'tool', parts: [{ type: 'tool_call_response' }] },
+    ]);
+    // The same vocabulary reaches the agent span, which serializes the same messages.
+    expect(JSON.parse(String(byName('invoke_agent bot')?.attributes[GEN_AI.inputMessages]))).toEqual(
+      JSON.parse(String(chat.attributes[GEN_AI.inputMessages])),
+    );
+  });
+
+  it('keeps tool payloads, blob bytes and URIs out of the serialized parts', async () => {
+    configureObservability({ captureMessageContent: true });
+    const mock = new MockChatClient([{ contents: [textContent('ok')], finishReason: 'stop' }]);
+
+    await new Agent({ client: mock, name: 'bot' }).run(transcript);
+
+    // What the compact form deliberately drops: a dashboard reads these from the transcript, not
+    // from a trace, so credentials inside tool arguments never reach a span.
+    const serialized = String(byName('chat mock-model')?.attributes[GEN_AI.inputMessages]);
+    expect(serialized).not.toContain('s3cr3t');
+    expect(serialized).not.toContain('confidential answer');
+    expect(serialized).not.toContain('QUFBQQ==');
+    expect(serialized).not.toContain('example.test');
+    expect(serialized).not.toContain('image/png');
+    expect(serialized).not.toContain('c1');
+    expect(serialized).not.toContain('lookup');
+  });
+
+  it('stamps the finish reason on the final output message of the chat span only', async () => {
+    configureObservability({ captureMessageContent: true });
+    const mock = new MockChatClient([{ contents: [textContent('done')], finishReason: 'tool_calls' }]);
+
+    await new Agent({ client: mock, name: 'bot' }).run('q');
+
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
+    expect(JSON.parse(String(chat.attributes[GEN_AI.outputMessages]))).toEqual([
+      { role: 'assistant', parts: [{ type: 'text', content: 'done' }], finish_reason: 'tool_call' },
+    ]);
+    // Input messages describe what was sent, so they never carry one.
+    for (const input of JSON.parse(String(chat.attributes[GEN_AI.inputMessages]))) {
+      expect(input).not.toHaveProperty('finish_reason');
+    }
+    // The agent span leaves it off: the reference implementations pass the reason to the chat
+    // serialization alone.
+    expect(JSON.parse(String(byName('invoke_agent bot')?.attributes[GEN_AI.outputMessages]))).toEqual([
+      { role: 'assistant', parts: [{ type: 'text', content: 'done' }] },
+    ]);
+  });
+
+  it('stamps the finish reason on the last message only', () => {
+    configureObservability({ captureMessageContent: true });
+    const span = getTracer().startSpan('chat test');
+    setMessageContent(
+      span,
+      GEN_AI.outputMessages,
+      [message('assistant', [textContent('a')]), message('assistant', [textContent('b')])],
+      'stop',
+    );
+    span.end();
+
+    expect(JSON.parse(String(byName('chat test')?.attributes[GEN_AI.outputMessages]))).toEqual([
+      { role: 'assistant', parts: [{ type: 'text', content: 'a' }] },
+      { role: 'assistant', parts: [{ type: 'text', content: 'b' }], finish_reason: 'stop' },
+    ]);
+  });
+
+  it('omits the message attributes on the chat span until capture is opted in', async () => {
+    const mock = new MockChatClient([{ contents: [textContent('secret answer')], finishReason: 'stop' }]);
+
+    await new Agent({ client: mock, name: 'bot' }).run('secret question');
+
+    const chat = byName('chat mock-model');
+    assert.exists(chat);
+    expect(chat.attributes[GEN_AI.inputMessages]).toBeUndefined();
+    expect(chat.attributes[GEN_AI.outputMessages]).toBeUndefined();
+    expect(chat.attributes[GEN_AI.systemInstructions]).toBeUndefined();
+  });
+});
+
+describe('server.port', () => {
+  it('is emitted by no span this framework starts', async () => {
+    const mock = new MockChatClient([{ contents: [textContent('hi')], finishReason: 'stop' }], {
+      providerUri: 'https://api.example.com:8443/v1',
+    });
+
+    await new Agent({ client: mock, name: 'bot' }).run('hello');
+
+    // Deliberate: the endpoint's port is not reported anywhere, on any span, even when the
+    // endpoint names one. The key stays in the metric dimension allowlist as a forward
+    // declaration, and `metricDimensions` skips a key with no value.
+    //
+    // Known non-conformance: the semantic conventions make `server.port` conditionally required
+    // once `server.address` is present. Emitting it is a separate decision, because the port is
+    // also a histogram dimension and the reference implementations disagree on whether to report
+    // it at all.
+    for (const span of spans()) {
+      expect(span.attributes[SERVER.port]).toBeUndefined();
+    }
+    expect(byName('chat mock-model')?.attributes[SERVER.address]).toBe('api.example.com');
   });
 });
 

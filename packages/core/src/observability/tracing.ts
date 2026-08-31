@@ -42,24 +42,55 @@ export function setResponseAttributes(
   setUsageAttributes(span, response.usageDetails);
 }
 
+/**
+ * The `type` the convention gives a part, for the framework content types it names.
+ *
+ * The framework's own content vocabulary is not the convention's: `text_reasoning`, `data`,
+ * `function_call` and `function_result` are internal spellings, and a dashboard querying parts by
+ * type has to see the same word here as it does in a Python or .NET trace. Anything the convention
+ * does not name keeps its framework type, which is what both reference implementations do with
+ * their generic parts.
+ */
+const OTEL_PART_TYPE: Readonly<Record<string, string>> = {
+  text: 'text',
+  text_reasoning: 'reasoning',
+  data: 'blob',
+  uri: 'uri',
+  function_call: 'tool_call',
+  function_result: 'tool_call_response',
+};
+
 /** One part of the sensitive-data serialization: only the field the convention asks for. */
 function spanPart(content: Content): { type: string; content?: string } {
-  return content.type === 'text' ? { type: 'text', content: content.text } : { type: content.type };
+  const type = OTEL_PART_TYPE[content.type] ?? content.type;
+  return content.type === 'text' ? { type, content: content.text } : { type };
 }
 
 /** One message of the sensitive-data serialization, as a JSON object string. */
-function serializeMessageForSpan(msg: Message): string {
-  return JSON.stringify({ role: msg.role, parts: msg.contents.map(spanPart) });
+function serializeMessageForSpan(msg: Message, finishReason: string | undefined): string {
+  return JSON.stringify({
+    role: msg.role,
+    parts: msg.contents.map(spanPart),
+    ...(finishReason === undefined || finishReason === ''
+      ? {}
+      : { finish_reason: otelFinishReason(finishReason) }),
+  });
 }
 
 /**
- * Serializes messages for the sensitive-data attributes.
+ * Serializes messages for the sensitive-data attributes, stamping `finishReason` on the last one.
  *
  * Only the fields the convention asks for, so a span does not carry provider objects or base64
  * payloads: those belong in the transcript, not in a trace.
+ *
+ * The reason goes on the final message alone, the position Python stamps it in — it describes how
+ * the response ended, not how each message did.
  */
-function serializeMessagesForSpan(messages: readonly Message[]): string {
-  return `[${messages.map(serializeMessageForSpan).join(',')}]`;
+function serializeMessagesForSpan(messages: readonly Message[], finishReason: string | undefined): string {
+  const last = messages.length - 1;
+  return `[${messages
+    .map((msg, index) => serializeMessageForSpan(msg, index === last ? finishReason : undefined))
+    .join(',')}]`;
 }
 
 /**
@@ -80,12 +111,22 @@ export function capturesContent(span: Span): boolean {
  * emitted solely on the `chat` span, while this attribute form goes on both the `invoke_agent`
  * and `chat` spans — the split the reference implementations settled on for their message
  * telemetry.
+ *
+ * `finishReason` is stamped on the last message, normalized the same way
+ * `gen_ai.response.finish_reasons` is. Only the `chat` span passes one: the reference
+ * implementations hand the reason to the model call's serialization and leave the agent span's
+ * output messages without it.
  */
-export function setMessageContent(span: Span, key: string, messages: readonly Message[]): void {
+export function setMessageContent(
+  span: Span,
+  key: string,
+  messages: readonly Message[],
+  finishReason?: string,
+): void {
   if (messages.length === 0 || !capturesContent(span)) {
     return;
   }
-  span.setAttribute(key, serializeMessagesForSpan(messages));
+  span.setAttribute(key, serializeMessagesForSpan(messages, finishReason));
 }
 
 /**
@@ -550,9 +591,15 @@ export function startAgentRunSpan(
   };
 }
 
-/** Records the outcome of a chat call on its span. */
-export function finishChatSpan(span: Span, response: ChatResponse<unknown>): void {
+/**
+ * Records the outcome of a chat call on its span.
+ *
+ * `finishReason` is the value {@link responseFinishReason} resolved for this response; the caller
+ * passes it in so the output messages, the message events and `gen_ai.response.finish_reasons` all
+ * report one reading of one response.
+ */
+export function finishChatSpan(span: Span, response: ChatResponse<unknown>, finishReason?: string): void {
   setResponseAttributes(span, response);
   setAttr(span, GEN_AI.conversationId, response.conversationId);
-  setMessageContent(span, GEN_AI.outputMessages, response.messages);
+  setMessageContent(span, GEN_AI.outputMessages, response.messages, finishReason);
 }

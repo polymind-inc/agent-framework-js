@@ -160,8 +160,8 @@ export function withChatTelemetry<TOptions extends ChatOptions>(
               metricAttributes[GEN_AI.responseModel] = response.model;
             }
             if (failure === undefined && span !== undefined) {
-              finishChatSpan(span, response);
               const finishReason = responseFinishReason(response);
+              finishChatSpan(span, response, finishReason);
               addMessageEvents(span, {
                 providerName: client.metadata.providerName,
                 messages: response.messages,
