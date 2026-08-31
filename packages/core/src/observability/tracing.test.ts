@@ -767,6 +767,19 @@ describe('gen_ai.response.finish_reasons', () => {
     await drain(new Agent({ client: new MockChatClient([toolCallTurn]), name: 'bot' }).run('q'));
     expect(byName('invoke_agent bot')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
   });
+
+  it('reads a reason the provider reported only on its wire object', async () => {
+    // The resolution that finds it there also feeds the output messages and the choice events, so
+    // the attribute has to come from the same reading — otherwise one response is described by a
+    // reason on two surfaces and by nothing on the third.
+    const wireOnly = {
+      contents: [textContent('hi')],
+      rawRepresentation: { finish_reason: 'tool_calls' },
+    };
+    await new Agent({ client: new MockChatClient([wireOnly]), name: 'bot' }).run('q');
+
+    expect(byName('chat mock-model')?.attributes[GEN_AI.finishReasons]).toEqual(['tool_call']);
+  });
 });
 
 describe('message-content attributes', () => {

@@ -600,6 +600,13 @@ export function startAgentRunSpan(
  */
 export function finishChatSpan(span: Span, response: ChatResponse<unknown>, finishReason?: string): void {
   setResponseAttributes(span, response);
+  // Restated from the resolved reason, which `setResponseAttributes` cannot see: it reads the
+  // response field, while a provider that reports the reason only on its wire object is exactly
+  // what the resolution exists for. Without this the messages below and the choice events would
+  // name a reason this attribute never mentioned.
+  if (finishReason !== undefined && finishReason !== '') {
+    span.setAttribute(GEN_AI.finishReasons, [otelFinishReason(finishReason)]);
+  }
   setAttr(span, GEN_AI.conversationId, response.conversationId);
   setMessageContent(span, GEN_AI.outputMessages, response.messages, finishReason);
 }
