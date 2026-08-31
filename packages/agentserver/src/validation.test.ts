@@ -146,6 +146,22 @@ describe('input items without an explicit type', () => {
     expect(detailParams({ input: [{ id: 'x' }] })).toEqual(['$.input[0].role', '$.input[0].content']);
   });
 
+  it('holds an item that names message to the same rules as one that omits the type', () => {
+    // Writing the discriminator out must not buy a laxer check than leaving it off, or the message
+    // rules could be skipped by naming the very shape they belong to.
+    expect(detailParams({ input: [{ type: 'message', id: 'x' }] })).toEqual([
+      '$.input[0].role',
+      '$.input[0].content',
+    ]);
+    expect(detailParams({ input: [{ type: 'message', role: 'user' }] })).toEqual(['$.input[0].content']);
+  });
+
+  it('leaves an item of another type to its own shape', () => {
+    expect(detailParams({ input: [{ type: 'function_call_output', call_id: 'c1', output: 'x' }] })).toEqual(
+      [],
+    );
+  });
+
   it.each([
     [{ content: 'hi' }, ['$.input[0].role']],
     [{ role: 42, content: 'hi' }, ['$.input[0].role']],

@@ -101,7 +101,7 @@ describe('routes', () => {
   it('gets, lists input items for, and deletes a response', async () => {
     const server = makeServer();
     const created = (await (
-      await server.handle(post({ input: [{ type: 'message', id: 'in_1' }] }))
+      await server.handle(post({ input: [{ type: 'message', id: 'in_1', role: 'user', content: 'one' }] }))
     ).json()) as ResponseObject;
 
     const fetched = await server.handle(new Request(`http://localhost:8088/responses/${created.id}`));
@@ -267,9 +267,9 @@ describe('routes', () => {
   it('lists input items newest-first by default, and accepts order case-insensitively', async () => {
     const server = makeServer();
     const input = [
-      { type: 'message', id: 'in_1' },
-      { type: 'message', id: 'in_2' },
-      { type: 'message', id: 'in_3' },
+      { type: 'message', id: 'in_1', role: 'user', content: 'one' },
+      { type: 'message', id: 'in_2', role: 'user', content: 'two' },
+      { type: 'message', id: 'in_3', role: 'user', content: 'three' },
     ];
     const created = (await (await server.handle(post({ input }))).json()) as ResponseObject;
 
@@ -319,10 +319,15 @@ describe('routes', () => {
     });
 
     const first = (await (
-      await server.handle(post({ input: [{ type: 'message', id: 'in_1' }] }))
+      await server.handle(post({ input: [{ type: 'message', id: 'in_1', role: 'user', content: 'one' }] }))
     ).json()) as ResponseObject;
     const second = (await (
-      await server.handle(post({ input: [{ type: 'message', id: 'in_2' }], previous_response_id: first.id }))
+      await server.handle(
+        post({
+          input: [{ type: 'message', id: 'in_2', role: 'user', content: 'two' }],
+          previous_response_id: first.id,
+        }),
+      )
     ).json()) as ResponseObject;
 
     // A new conversation starts empty; the follow-up replays the first turn's input *and* output.
@@ -368,7 +373,9 @@ describe('cross-user isolation', () => {
       yield { type: 'response.completed', response: { ...context.response, status: 'completed' } };
     });
 
-    const mine = await createFor(server, alice, { input: [{ type: 'message', id: 'secret_1' }] });
+    const mine = await createFor(server, alice, {
+      input: [{ type: 'message', id: 'secret_1', role: 'user', content: 'secret' }],
+    });
     const stolen = await server.handle(post({ input: 'x', previous_response_id: mine.id }, mallory));
 
     // 404 rather than 403: whether the id exists is itself Alice's business.
@@ -384,7 +391,7 @@ describe('cross-user isolation', () => {
     });
 
     await createFor(server, alice, {
-      input: [{ type: 'message', id: 'secret_1' }],
+      input: [{ type: 'message', id: 'secret_1', role: 'user', content: 'secret' }],
       conversation: { id: `caresp_${'c'.repeat(18)}${'d'.repeat(32)}` },
     });
     const stolen = await server.handle(
@@ -755,7 +762,12 @@ describe('request limits', () => {
       handler: lifecycleHandler({ echo: true }),
       limits: { maxInputItems: 2 },
     });
-    const items = Array.from({ length: 3 }, (_, i) => ({ type: 'message', id: `in_${i}` }));
+    const items = Array.from({ length: 3 }, (_, i) => ({
+      type: 'message',
+      id: `in_${i}`,
+      role: 'user',
+      content: `item ${i}`,
+    }));
 
     const response = await server.handle(post({ input: items }));
 

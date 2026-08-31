@@ -43,6 +43,16 @@ contain breaking changes**; patch releases are fixes only.
   `$.input[i].role` and `$.input[i].content` rather than only `$.input[i]`, and referencing a
   stored item still needs the explicit `item_reference` discriminator.
 
+- **[BREAKING] `@polymind-inc/agent-framework-agentserver`** — an input item that names
+  `type: "message"` is held to the message rules, the same ones an item that omits its `type`
+  answers for. Both reference servers dispatch the two spellings to one validator — Python's
+  `_validate_OpenAI_ItemMessage` requires `role` and `content` whether the discriminator was
+  written out or defaulted — so writing `"type": "message"` no longer buys a laxer check than
+  leaving it off. `{ "type": "message", "id": "x" }` was accepted before and is now a 400 naming
+  `$.input[i].role` and `$.input[i].content`. To point at a stored item, use
+  `{ "type": "item_reference", "id": "x" }`; to send a message, give it a `role` and `content`.
+  Items of every other type are unaffected.
+
 ## 0.4.0
 
 A hardening and consolidation release: ten breaking changes tighten types, credentials, telemetry

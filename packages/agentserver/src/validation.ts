@@ -96,6 +96,8 @@ function isPlainObject(value: unknown): value is JsonObject {
  * default from its custom `ResolveDefaultDiscriminator`, Python's reads `value.get("type",
  * "message")`. The default is what makes the item *dispatch* to the message rules; it does not
  * excuse them, so `role` and `content` are still required and an id-only object is still refused.
+ * An item that names `message` itself dispatches to exactly the same rules — one shape, one set of
+ * requirements, whether the caller wrote the discriminator or left it out.
  */
 const DEFAULT_ITEM_TYPE = 'message';
 
@@ -142,12 +144,18 @@ function schemaDetails(request: JsonObject): ApiErrorDetail[] {
       if (Object.hasOwn(item, 'type')) {
         // Present but not a string — `null` included — is a broken discriminator, not an absent
         // one, and taking the default for it would silently reinterpret the item.
-        if (typeof item.type !== 'string') wrong(path, "an object with a string 'type'");
-        return;
+        if (typeof item.type !== 'string') {
+          wrong(path, "an object with a string 'type'");
+          return;
+        }
+        // Any other discriminator names a shape this pass does not model.
+        if (item.type !== DEFAULT_ITEM_TYPE) return;
       }
-      // Absent: the item is a message, so it answers for the two fields a message must carry.
-      // Reported per field, the way the reference validators name them, so a caller learns which
-      // half of `{ role, content }` is missing rather than only that the item was refused.
+      // A message, whether it said so or was resolved to one, answers for the two fields a message
+      // must carry. Both spellings reach the same rules, the way the reference validators dispatch
+      // them, so naming the discriminator explicitly cannot buy a laxer check than omitting it.
+      // Reported per field so a caller learns which half of `{ role, content }` is missing rather
+      // than only that the item was refused.
       if (typeof item.role !== 'string') wrong(`${path}.role`, 'a string');
       if (typeof item.content !== 'string' && !Array.isArray(item.content)) {
         wrong(`${path}.content`, 'a string or an array');
