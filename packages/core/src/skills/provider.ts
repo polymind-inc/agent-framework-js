@@ -316,6 +316,11 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
       if (script === undefined) {
         return `Error: Script '${scriptName}' not found in skill '${skillName}'.`;
       }
+      // The cast is wider than the truth: the schema's null branch means a model can send an
+      // explicit `null`, which reaches the script even though the declared type excludes it. The
+      // test driving all three shapes through this call pins that. Reconciling the two — widening
+      // the type or folding `null` into `undefined` — changes the published surface or what a
+      // script observes, so it is decided separately rather than here.
       return await script.run(input.args as SkillScriptArguments, invocationContext(skill, toolCtx));
     },
   });
