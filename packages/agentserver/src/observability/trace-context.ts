@@ -8,11 +8,13 @@
  * deliberate choice on both sides (.NET `ResponsesActivitySource`, Python
  * `TraceContextMiddleware`).
  *
- * With no SDK registered, `propagation` is a no-op and everything here returns the root context.
+ * With no SDK registered, `propagation` is a no-op and every context built here is the root
+ * context. {@link inboundTraceId} is the exception: what it answers reaches the caller on a
+ * response header, so it reads the inbound `traceparent` itself rather than going quiet.
  */
 
 import type { Context, TextMapGetter } from '@opentelemetry/api';
-import { propagation, ROOT_CONTEXT } from '@opentelemetry/api';
+import { isValidTraceId, context as otelContext, propagation, ROOT_CONTEXT, trace } from '@opentelemetry/api';
 
 const HEADERS_GETTER: TextMapGetter<Headers> = {
   get(carrier: Headers, key: string): string | undefined {
@@ -37,6 +39,74 @@ export function extractTraceContext(headers: Headers): Context {
     extracted = propagation.setBaggage(extracted, bag.setEntry('x_request_id', { value: requestId }));
   }
   return extracted;
+}
+
+/**
+ * The W3C `traceparent` grammar: `version-traceid-parentid-flags`, lowercase hex throughout.
+ *
+ * `ff` is reserved and is never a version. Neither id may be all zeros — that is the value the
+ * format defines as "no trace". A version this build does not know may append further fields, so
+ * the trailing group is allowed and checked against the version below.
+ *
+ * Exact, with no allowance for surrounding whitespace: the header API has already stripped it by
+ * the time a value is read, on this path and on the propagator's alike, so tolerating it here would
+ * only widen the grammar past what it says.
+ */
+const TRACEPARENT = /^((?!ff)[\da-f]{2})-((?![0]{32})[\da-f]{32})-(?![0]{16})[\da-f]{16}-[\da-f]{2}(-.*)?$/;
+
+/**
+ * The trace-id field of a W3C `traceparent`, when the whole value is one.
+ *
+ * Every field decides this, not the trace id alone: a header whose parent id is all zeros, whose
+ * flags are not two hex digits, or whose version is the reserved `ff` does not name a trace this
+ * request belongs to, and reading an id out of it would let a malformed header displace the
+ * correlation id the caller sent.
+ *
+ * The rule is the grammar itself, which is also what a conforming propagator applies — so the
+ * answer here and the answer from an extracted context agree on the same header, and that
+ * agreement is what the tests pin rather than the wording of this comment.
+ */
+function traceparentTraceId(traceparent: string | null): string | undefined {
+  if (traceparent === null) {
+    return undefined;
+  }
+  const match = TRACEPARENT.exec(traceparent);
+  if (match === null) {
+    return undefined;
+  }
+  // Extra fields belong to versions that define them; version `00` is exactly four.
+  if (match[1] === '00' && match[3] !== undefined) {
+    return undefined;
+  }
+  return match[2];
+}
+
+/**
+ * The trace this request already belongs to, or `undefined` when it belongs to none.
+ *
+ * Three sources, in priority order: the span active around the call — an outer instrumentation's
+ * server span, when the host created one — then the context a registered propagator extracts from
+ * the request, which is what carries a non-W3C format, and finally the `traceparent` header read
+ * directly.
+ *
+ * That last source is what keeps the answer the same whether or not an OTel SDK was ever
+ * registered: with none, the propagation API is a no-op. A value the caller reads back off the
+ * response is part of the contract with that caller, so it must not change because of a
+ * telemetry choice made inside this process.
+ *
+ * A trace id that is not 32 hex digits, or is all zeros — the value W3C reserves for "no trace",
+ * which a broken instrumentation does emit — names no trace and is rejected at every source.
+ */
+export function inboundTraceId(headers: Headers): string | undefined {
+  const active = trace.getSpanContext(otelContext.active())?.traceId;
+  if (active !== undefined && isValidTraceId(active)) {
+    return active;
+  }
+  const extracted = trace.getSpanContext(propagation.extract(ROOT_CONTEXT, headers, HEADERS_GETTER))?.traceId;
+  if (extracted !== undefined && isValidTraceId(extracted)) {
+    return extracted;
+  }
+  return traceparentTraceId(headers.get('traceparent'));
 }
 
 /**

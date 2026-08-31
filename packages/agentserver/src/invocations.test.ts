@@ -293,6 +293,17 @@ describe('header contract', () => {
     expect(requestId).toMatch(UUID);
   });
 
+  it('resolves the request id the same way the Responses protocol does', async () => {
+    // Both protocols sit behind one container contract, so the correlation id a caller reads back
+    // must not depend on which route it asked for. See `context.test.ts` for the full precedence.
+    const traceId = '0123456789abcdef0123456789abcdef';
+    const response = await makeServer().handle(
+      invoke('x', { traceparent: `00-${traceId}-0123456789abcdef-01`, [HEADERS.requestId]: 'req-1' }),
+    );
+
+    expect(response.headers.get(HEADERS.requestId)).toBe(traceId);
+  });
+
   it('hands the platform identity to the handler through the request context', async () => {
     const server = makeServer({
       handler: (_request, context) =>

@@ -588,8 +588,10 @@ export class ResponsesServer {
       responseId,
       conversationId,
       streaming: created.stream === true,
-      // The header as sent, not `context.requestId`: that falls back to a generated id, and the
-      // reference sets this entry only when the caller actually supplied one.
+      // The header as sent, not `context.requestId`: this entry records what the caller supplied,
+      // and the resolved id is a different value — it prefers the trace id and otherwise mints
+      // one. A span already carries its trace, so stamping that back on as baggage would say
+      // nothing, while an entry present on every turn could not be told from a real one.
       requestId: request.headers.get(HEADERS.requestId) ?? undefined,
     });
 
