@@ -176,7 +176,10 @@ export class AnthropicChatClient
   buildRequest(messages: Message[], options?: AnthropicChatOptions): Record<string, unknown> {
     const converted = toAnthropicMessages(messages);
     if (converted.length === 0) {
-      // The API rejects an empty message list with an opaque 400; Python raises up front too.
+      // A deliberate divergence, not parity: the reference implementation sends the empty list and
+      // lets the service answer with a 400 that names nothing the caller can act on. Failing here
+      // instead costs a round trip and says which call was empty, while changing no request the
+      // service would have accepted.
       throw new ChatClientError('Messages are required: the request would carry no messages.');
     }
 
