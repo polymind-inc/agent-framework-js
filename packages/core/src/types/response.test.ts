@@ -1,10 +1,12 @@
 import { assert, describe, expect, it } from 'vitest';
 import { decodeBase64 } from './base64.js';
 import { coalesceContents } from './coalesce.js';
+import type { Content } from './content.js';
 import { dataContent, textContent, unknownContent } from './content.js';
 import type { AgentResponseUpdate, ChatResponseUpdate } from './response.js';
 import {
   agentResponse,
+  agentResponseToUpdates,
   agentResponseUpdate,
   chatResponse,
   chatResponseToUpdates,
@@ -185,6 +187,97 @@ describe('chatResponseToUpdates', () => {
     );
     expect(updates).toEqual([]);
     expect(mergeChatUpdates(updates).messages).toEqual([]);
+  });
+
+  it('emits no trailing update for a usage record whose every counter is zero', () => {
+    const updates: ChatResponseUpdate[] = chatResponseToUpdates(
+      chatResponse<undefined>({
+        messages: [{ role: 'assistant', contents: [textContent('hi')], messageId: 'm1' }],
+        usageDetails: { inputTokenCount: 0, outputTokenCount: 0 },
+      }),
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.messageId).toBe('m1');
+  });
+
+  it('finishes every message update and leaves the trailing metadata update unfinished', () => {
+    const original = chatResponse<undefined>({
+      messages: [
+        { role: 'assistant', contents: [textContent('hi')], messageId: 'm1' },
+        { role: 'assistant', contents: [textContent(' there')], messageId: 'm2' },
+      ],
+      responseId: 'resp_1',
+      conversationId: 'conv_1',
+      model: 'gpt-4o',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      finishReason: 'content_filter',
+      usageDetails: { inputTokenCount: 4, outputTokenCount: 6 },
+      additionalProperties: { tenant: 'contoso' },
+      continuationToken: { responseId: 'resp_1' },
+    });
+
+    const updates: ChatResponseUpdate[] = chatResponseToUpdates(original);
+
+    expect(updates.map((u) => u.finishReason)).toEqual(['content_filter', 'content_filter', undefined]);
+    const trailing = updates[2];
+    assert.exists(trailing);
+    expect(trailing.contents).toEqual([
+      { type: 'usage', usageDetails: { inputTokenCount: 4, outputTokenCount: 6 } },
+    ]);
+    expect(trailing.additionalProperties).toEqual({ tenant: 'contoso' });
+    expect(trailing.continuationToken).toEqual({ responseId: 'resp_1' });
+    expect(trailing.responseId).toBe('resp_1');
+    expect(trailing.conversationId).toBe('conv_1');
+    expect(trailing.model).toBe('gpt-4o');
+    expect(trailing.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    // The message updates keep the response-level finish reason, so folding still recovers it.
+    expect(mergeChatUpdates<undefined>(updates).finishReason).toBe('content_filter');
+  });
+});
+
+describe('agentResponseToUpdates', () => {
+  it('finishes every message update and leaves the trailing metadata update unfinished', () => {
+    const original = agentResponse<undefined>({
+      messages: [
+        { role: 'assistant', contents: [textContent('hi')], messageId: 'm1' },
+        { role: 'assistant', contents: [textContent(' there')], messageId: 'm2' },
+      ],
+      responseId: 'resp_1',
+      agentId: 'agent_1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      finishReason: 'stop',
+      usageDetails: { inputTokenCount: 4, outputTokenCount: 6 },
+      additionalProperties: { tenant: 'contoso' },
+      continuationToken: { responseId: 'resp_1' },
+    });
+
+    const updates: AgentResponseUpdate[] = agentResponseToUpdates(original);
+
+    expect(updates.map((u) => u.finishReason)).toEqual(['stop', 'stop', undefined]);
+    const trailing = updates[2];
+    assert.exists(trailing);
+    expect(trailing.contents).toEqual([
+      { type: 'usage', usageDetails: { inputTokenCount: 4, outputTokenCount: 6 } },
+    ]);
+    expect(trailing.additionalProperties).toEqual({ tenant: 'contoso' });
+    expect(trailing.continuationToken).toEqual({ responseId: 'resp_1' });
+    expect(trailing.responseId).toBe('resp_1');
+    expect(trailing.agentId).toBe('agent_1');
+    expect(trailing.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(mergeUpdates<undefined>(updates).finishReason).toBe('stop');
+  });
+
+  it('emits a metadata-only update carrying no finish reason when the response has no messages', () => {
+    const updates: AgentResponseUpdate[] = agentResponseToUpdates(
+      agentResponse<undefined>({
+        messages: [],
+        finishReason: 'stop',
+        usageDetails: { inputTokenCount: 4 },
+      }),
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.finishReason).toBeUndefined();
   });
 });
 
@@ -401,6 +494,158 @@ describe('coalesceContents', () => {
     expect(merged).toEqual([
       { type: 'text_reasoning', id: 'rs_1', text: 'ab' },
       { type: 'text_reasoning', id: 'rs_2', text: 'c' },
+    ]);
+  });
+
+  it('replaces code-interpreter deltas with the later full value for the same call', () => {
+    // The streamed shape a Responses-style provider emits: argument deltas followed by a `done`
+    // event repeating the whole code. Concatenating them would run `print(print(1))`. The merged
+    // item keeps the first fragment's raw representation, the object the call was first seen as.
+    const merged = coalesceContents([
+      {
+        type: 'code_interpreter_tool_call',
+        callId: 'ci_1',
+        inputs: [textContent('print(')],
+        rawRepresentation: { event: 'delta' },
+      },
+      {
+        type: 'code_interpreter_tool_call',
+        callId: 'ci_1',
+        inputs: [textContent('print(1)')],
+        rawRepresentation: { event: 'done' },
+      },
+    ]);
+    expect(merged).toEqual([
+      {
+        type: 'code_interpreter_tool_call',
+        callId: 'ci_1',
+        inputs: [textContent('print(1)')],
+        rawRepresentation: { event: 'delta' },
+      },
+    ]);
+  });
+
+  it('merges code-interpreter fragments separated by other content at the first occurrence', () => {
+    const merged = coalesceContents([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('pri')] },
+      textContent('running it now'),
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('nt(1)')] },
+    ]);
+    expect(merged).toEqual([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('print(1)')] },
+      textContent('running it now'),
+    ]);
+  });
+
+  it('keeps code-interpreter fragments apart when the type or the id differs', () => {
+    const merged = coalesceContents([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('a')] },
+      { type: 'code_interpreter_tool_call', callId: 'ci_2', inputs: [textContent('b')] },
+      // Same id as the first fragment, but a result is not a call: the key is the pair.
+      { type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('c')] },
+    ]);
+    expect(merged).toEqual([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('a')] },
+      { type: 'code_interpreter_tool_call', callId: 'ci_2', inputs: [textContent('b')] },
+      { type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('c')] },
+    ]);
+  });
+
+  it('keys a code-interpreter fragment by its item id when it carries no call id', () => {
+    const merged = coalesceContents([
+      {
+        type: 'code_interpreter_tool_result',
+        outputs: [textContent('one')],
+        additionalProperties: { item_id: 'ci_1', sequence_number: 1 },
+      },
+      {
+        type: 'code_interpreter_tool_result',
+        outputs: [textContent(' two')],
+        additionalProperties: { item_id: 'ci_1', sequence_number: 2 },
+      },
+    ]);
+    expect(merged).toEqual([
+      {
+        type: 'code_interpreter_tool_result',
+        outputs: [textContent('one two')],
+        additionalProperties: { item_id: 'ci_1', sequence_number: 2 },
+      },
+    ]);
+  });
+
+  it('leaves keyless code-interpreter fragments untouched', () => {
+    // Nothing names these calls, so folding them together would invent a correlation. Each pair
+    // shares the same absent key, which is what a rule that keyed on `undefined`, on `''` or on a
+    // non-string `item_id` would happily merge.
+    const fragments: Content[] = [
+      { type: 'code_interpreter_tool_call', inputs: [textContent('a')] },
+      { type: 'code_interpreter_tool_call', inputs: [textContent('b')] },
+      { type: 'code_interpreter_tool_call', callId: '', inputs: [textContent('c')] },
+      { type: 'code_interpreter_tool_call', callId: '', inputs: [textContent('d')] },
+      {
+        type: 'code_interpreter_tool_call',
+        additionalProperties: { item_id: 7 },
+        inputs: [textContent('e')],
+      },
+      {
+        type: 'code_interpreter_tool_call',
+        additionalProperties: { item_id: 7 },
+        inputs: [textContent('f')],
+      },
+    ];
+    const merged = coalesceContents(fragments);
+    expect(merged).toEqual(fragments);
+    expect(merged[0]).toBe(fragments[0]);
+  });
+
+  it('merges annotated code-interpreter fragments, combining their annotations', () => {
+    // The offset rule that keeps annotated text apart does not reach here: these items hold no
+    // text of their own, so Python merges them and concatenates the annotations.
+    const merged = coalesceContents([
+      {
+        type: 'code_interpreter_tool_result',
+        callId: 'ci_1',
+        outputs: [textContent('out')],
+        annotations: [{ type: 'citation', title: 'first' }],
+      },
+      {
+        type: 'code_interpreter_tool_result',
+        callId: 'ci_1',
+        outputs: [{ type: 'data', uri: 'data:image/png;base64,AAA=', mediaType: 'image/png' }],
+        annotations: [{ type: 'citation', title: 'second' }],
+      },
+    ]);
+    expect(merged).toEqual([
+      {
+        type: 'code_interpreter_tool_result',
+        callId: 'ci_1',
+        outputs: [
+          textContent('out'),
+          { type: 'data', uri: 'data:image/png;base64,AAA=', mediaType: 'image/png' },
+        ],
+        annotations: [
+          { type: 'citation', title: 'first' },
+          { type: 'citation', title: 'second' },
+        ],
+      },
+    ]);
+  });
+
+  it('folds streamed code-interpreter fragments through mergeUpdates', () => {
+    const response = mergeUpdates([
+      update({
+        contents: [{ type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('1+')] }],
+      }),
+      update({
+        contents: [{ type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('1+1')] }],
+      }),
+      update({
+        contents: [{ type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('2')] }],
+      }),
+    ]);
+    expect(response.messages[0]?.contents).toEqual([
+      { type: 'code_interpreter_tool_call', callId: 'ci_1', inputs: [textContent('1+1')] },
+      { type: 'code_interpreter_tool_result', callId: 'ci_1', outputs: [textContent('2')] },
     ]);
   });
 });

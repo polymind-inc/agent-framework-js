@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^1.0.1",
+    "@a2a-js/sdk": "^1.1.0",
     "@polymind-inc/agent-framework": "workspace:^"
   },
   "devDependencies": {

@@ -107,6 +107,15 @@ describe('construction', () => {
 });
 
 describe('request mapping', () => {
+  it('refuses a request that would carry no messages', () => {
+    // A divergence this build chooses: the reference implementation sends the empty list and lets
+    // the service answer. Pinned so the divergence stays deliberate rather than drifting back.
+    const { client, messages } = clientWith([message('hi')]);
+
+    expect(() => client.buildRequest([])).toThrow(ChatClientError);
+    expect(messages.requests).toHaveLength(0);
+  });
+
   it('maps the framework options onto the Messages API request', () => {
     const { client } = clientWith([message('hi')]);
 
