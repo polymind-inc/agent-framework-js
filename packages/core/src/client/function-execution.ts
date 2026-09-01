@@ -40,6 +40,16 @@ const USER_INPUT_UNAVAILABLE_RESULT_TEXT = 'Tool requires user input but no requ
 const USER_INPUT_REQUIRED_EXCEPTION = 'UserInputRequiredException';
 /** What a rejected call reports back to the model. Matches Python's `_tools.py` wording. */
 const REJECTED_RESULT_TEXT = 'Error: Tool call invocation was rejected by user.';
+/**
+ * What an argument parse or validation failure reports back to the model, in place of the generic
+ * execution-failure text.
+ *
+ * The two failures call for opposite responses — a schema violation is worth retrying with
+ * corrected arguments, a tool body that threw usually is not — so collapsing them would remove the
+ * signal the model acts on. The wording matches Python's `_tools.py`, the reference implementation
+ * whose loop parses and validates arguments itself the way this one does.
+ */
+const ARGUMENT_FAILURE_REPORT: ExceptionReport = { result: 'Error: Argument parsing failed.' };
 
 type InvocationStatus = 'completed' | 'not_found' | 'exception';
 
@@ -79,8 +89,9 @@ type SettledInvocation = Invocation<string | Content[]>;
 interface ExceptionReport {
   /** Replaces the generic `Error: Function failed.` text. */
   result: string;
-  /** Replaces the thrown error's message in `FunctionResultContent.exception`. */
-  exception: string;
+  /** Replaces the thrown error's message in `FunctionResultContent.exception`. Absent when the
+   * marker should stay the thrown error's own message, as it does for an argument failure. */
+  exception?: string;
 }
 
 /**
@@ -298,7 +309,7 @@ async function executeWithMiddleware(
 ): Promise<InvocationResult> {
   const args = await resolveArguments(call, target);
   if (!args.ok) {
-    return { status: 'exception', call, error: args.error };
+    return argumentFailure(call, args.error);
   }
 
   const ctx: FunctionMiddlewareContext = {
@@ -396,9 +407,20 @@ async function executeOne(
 ): Promise<InvocationResult> {
   const args = await resolveArguments(call, target);
   if (!args.ok) {
-    return { status: 'exception', call, error: args.error };
+    return argumentFailure(call, args.error);
   }
   return runTool(call, target, args.value, env);
+}
+
+/**
+ * The invocation outcome for a call whose arguments failed to parse or validate.
+ *
+ * One builder for both execution paths, so the model-facing text cannot drift between them. The
+ * `exception` marker stays the resolution error's own message — the validation detail a caller
+ * branches on — while the result text identifies the failure class.
+ */
+function argumentFailure(call: FunctionCallContent, error: ToolInvocationError): SettledInvocation {
+  return { status: 'exception', call, error, errorReport: ARGUMENT_FAILURE_REPORT };
 }
 
 /** Parses the model's argument JSON and validates it against the tool's schema. */
