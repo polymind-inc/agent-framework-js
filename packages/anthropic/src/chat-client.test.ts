@@ -516,9 +516,10 @@ describe('message conversion', () => {
       expect(converted).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
     });
 
-    it('drops a call with an empty callId even when an empty-id result exists', () => {
+    it('drops both halves of an empty-callId exchange', () => {
       // An empty id is not an identity: the OpenAI conversion refuses to treat two '' as a pair,
-      // and this conversion follows the same rule.
+      // and this conversion follows the same rule — for the result as much as the call, since a
+      // `tool_result` whose call was omitted is the same unpairable shape from the other side.
       const converted = toAnthropicMessages([
         {
           role: 'assistant',
@@ -529,6 +530,7 @@ describe('message conversion', () => {
 
       const blocks = converted.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
       expect(blocks).not.toContainEqual(expect.objectContaining({ type: 'tool_use' }));
+      expect(blocks).not.toContainEqual(expect.objectContaining({ type: 'tool_result' }));
     });
 
     it('does not mutate the transcript it filters', () => {

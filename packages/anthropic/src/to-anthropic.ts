@@ -239,6 +239,12 @@ function appendContent(blocks: AnthropicBlock[], content: Content, answered: Rea
       return;
     }
     case 'function_result': {
+      // The same grounds the empty-id call is dropped on: an empty id is not a pairable
+      // identity, and with its call omitted above this `tool_result` would answer nothing —
+      // exactly the shape the API refuses from the other direction.
+      if (content.callId === '') {
+        return;
+      }
       blocks.push({
         type: 'tool_result',
         tool_use_id: content.callId,
