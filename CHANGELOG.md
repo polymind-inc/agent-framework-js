@@ -6,6 +6,14 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-core`** — the function-calling loop decides the next round from
+  the conversation id the round that just finished **reported**, not from the id the request
+  happened to carry. A run that started without one and was handed one mid-flight kept resending
+  the whole transcript for the rest of its tool rounds; it now chains from the second round on and
+  carries only the tool results, which is what Python's `_prepare_messages_for_next_iteration` does
+  and what the session-level adoption already assumed. The anchor a provider declares stable is
+  still held. Nothing changes when no id is ever reported, including under `store: false`.
+
 - **[BREAKING] `@polymind-inc/agent-framework-core`** — a session now takes the conversation id the
   first response reports, which hands the transcript to the service. From the next turn the request
   carries that id instead of the whole history, the framework's own history provider stands down,

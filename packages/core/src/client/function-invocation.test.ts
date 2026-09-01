@@ -1431,17 +1431,23 @@ describe('conversation chaining between rounds', () => {
   function chainingClient(
     roundIds: [string, string],
     metadata: ChatClientMetadata,
-  ): { client: ChatClient<ChatOptions>; requests: Array<ChatOptions | undefined> } {
+  ): {
+    client: ChatClient<ChatOptions>;
+    requests: Array<ChatOptions | undefined>;
+    sent: Message[][];
+  } {
     const turns: Array<{ contents: Content[]; conversationId: string }> = [
       { contents: [call('c1', 'echo', '{"value":"x"}')], conversationId: roundIds[0] },
       { contents: [textContent('done')], conversationId: roundIds[1] },
     ];
     let index = 0;
     const requests: Array<ChatOptions | undefined> = [];
+    const sent: Message[][] = [];
     const client: ChatClient<ChatOptions> = {
       metadata,
-      getResponse: (_messages, options) => {
+      getResponse: (messages, options) => {
         requests.push(options);
+        sent.push(messages);
         const turn = turns[Math.min(index++, turns.length - 1)] ?? { contents: [], conversationId: '' };
         return createResponseStream({
           start: () =>
@@ -1456,8 +1462,43 @@ describe('conversation chaining between rounds', () => {
         });
       },
     };
-    return { client, requests };
+    return { client, requests, sent };
   }
+
+  it('chains from the id the round reported, even when the request carried none', async () => {
+    // The service stored this round, so it holds the request and the response: the next round
+    // continues from that id and carries only the tool results. Keying the decision off the id the
+    // *request* carried instead would leave the rest of a run that was promoted mid-flight
+    // resending the whole transcript.
+    const { client, requests, sent } = chainingClient(['resp_r1', 'resp_r2'], { providerName: 'mock' });
+
+    await withFunctionInvocation(client).getResponse([{ role: 'user', contents: [textContent('go')] }], {
+      tools: [echo],
+    } as ChatOptions);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.conversationId).toBeUndefined();
+    expect(requests[1]?.conversationId).toBe('resp_r1');
+
+    // Only the tool results. The user turn and the model's call are already service-side, and
+    // sending them again is how one turn ends up in the conversation twice.
+    const second = sent[1];
+    assert.exists(second);
+    expect(second.map((message) => message.role)).toEqual(['tool']);
+  });
+
+  it('keeps resending the transcript when no id is ever reported', async () => {
+    const { client, requests, sent } = chainingClient(['', ''], { providerName: 'mock' });
+
+    await withFunctionInvocation(client).getResponse([{ role: 'user', contents: [textContent('go')] }], {
+      tools: [echo],
+    } as ChatOptions);
+
+    expect(requests[1]?.conversationId).toBeUndefined();
+    const second = sent[1];
+    assert.exists(second);
+    expect(second.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+  });
 
   it('holds the conversation anchor the provider declares stable', async () => {
     // The provider says which ids are stable service-side anchors; a round that reports a

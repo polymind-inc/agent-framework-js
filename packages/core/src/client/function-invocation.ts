@@ -246,9 +246,11 @@ function limitFallbackUpdate(response: ChatResponse<unknown>): ChatResponseUpdat
  *   answers by fetching the existing response rather than posting a new one. Carried into round
  *   two, the provider would keep re-fetching the response that asked for the tools instead of
  *   receiving their results, and the loop would spin to `maxIterations` empty-handed;
- * - a service-managed `conversationId` advances to the id of the round that just finished, so the
- *   next request continues from the newest turn rather than from the first one (Python
- *   `_tools.py`, Go `responses.go` `SetServiceID`).
+ * - the `conversationId` becomes whatever id the round that just finished reported, so the next
+ *   request continues from the newest turn rather than from the first one (Python `_tools.py`, Go
+ *   `responses.go` `SetServiceID`). A round that reports an id is a round the service stored, and
+ *   it stored the request along with the response — so a run whose first round carried no id
+ *   chains from the second round on, rather than resending a transcript the service already has.
  *
  * @param roundConversationId - The `conversationId` of the response this round produced.
  * @param stableConversationId - The provider's declaration of which ids are stable anchors
@@ -271,15 +273,11 @@ function optionsForNextIteration<TOptions extends ChatOptions>(
 
   const current = options.conversationId;
   if (
-    // Only a request that *already* uses service-side storage chains: adopting an id here would
-    // silently move a framework-managed transcript to the provider.
-    current !== undefined &&
-    current !== '' &&
     // An id the provider declares stable is an anchor the service resolves across responses;
     // displacing it with a round's reported id would unhook the run from the stored conversation
     // (the provider-side guard Go keeps in `keepConversationID`). Which ids are stable is the
     // provider's knowledge, so the loop only asks — it never inspects the id itself.
-    stableConversationId?.(current) !== true &&
+    (current === undefined || current === '' || stableConversationId?.(current) !== true) &&
     roundConversationId !== undefined &&
     roundConversationId !== '' &&
     roundConversationId !== current
@@ -843,17 +841,21 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
         return;
       }
 
-      // When the service owns the transcript it already holds this round's request and response,
-      // so the next round carries nothing but the tool results (Python
-      // `_prepare_messages_for_next_iteration`). Sending the rest again is how the same turn ends
-      // up in the conversation twice.
-      const serviceOwnsTranscript = current.conversationId !== undefined && current.conversationId !== '';
-      history = serviceOwnsTranscript ? [toolMessage] : [...history, ...roundResponse.messages, toolMessage];
-      current = optionsForNextIteration(
+      // Both halves of the next round follow one signal: the id it will actually carry. When the
+      // service owns the transcript it already holds this round's request and response, so the
+      // next round carries nothing but the tool results (Python
+      // `_prepare_messages_for_next_iteration`, which reads the id off the *response* for exactly
+      // this reason). Deciding from the id the last request carried instead would split the two —
+      // a run promoted mid-flight would send the id and the whole transcript, which is how the
+      // same turn ends up in the conversation twice.
+      const next = optionsForNextIteration(
         current,
         roundResponse.conversationId,
         client.metadata.stableConversationId,
       );
+      const serviceOwnsTranscript = next.conversationId !== undefined && next.conversationId !== '';
+      history = serviceOwnsTranscript ? [toolMessage] : [...history, ...roundResponse.messages, toolMessage];
+      current = next;
     }
   }
 
