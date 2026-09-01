@@ -354,12 +354,31 @@ describe('telemetry', () => {
     for (const span of spans) {
       expect(span.kind).toBe(SpanKind.CLIENT);
       expect(span.attributes['server.address']).toBe('mcp.example.com');
-      expect(span.attributes['server.port']).toBe('8443');
+      // The semantic conventions define `server.port` as an int, and the key is stable: a backend
+      // that types it numerically rejects or coerces a string, and numeric filters break on one.
+      expect(span.attributes['server.port']).toBe(8443);
     }
     const call = spans.find((s) => s.name === 'tools/call echo');
     expect(call?.attributes['mcp.method.name']).toBe('tools/call');
     expect(call?.attributes['gen_ai.tool.name']).toBe('echo');
     expect(call?.attributes['gen_ai.tool.type']).toBe('mcp');
+  });
+
+  it('omits server.port when the URL does not state one explicitly', async () => {
+    // `URL.port` is the empty string for a default-scheme port, so `https://…/mcp` reports no
+    // port. The convention allows the omission; inventing 443 here would claim knowledge the URL
+    // never stated.
+    const connection = new McpConnection({
+      transport: () => new TestMcpServer([echoTool()]),
+      url: 'https://mcp.example.com/mcp',
+    });
+    await connection.listTools();
+    await connection.close();
+
+    for (const span of exporter.getFinishedSpans()) {
+      expect(span.attributes['server.address']).toBe('mcp.example.com');
+      expect('server.port' in span.attributes).toBe(false);
+    }
   });
 
   it('marks an isError result tool_error even though the result is returned', async () => {
