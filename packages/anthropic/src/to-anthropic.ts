@@ -43,24 +43,41 @@ const ASSISTANT_BLOCKS = new Set(['tool_use', 'mcp_tool_use', 'server_tool_use']
 /** Blocks that only make sense on a user turn. */
 const USER_BLOCKS = new Set(['tool_result', 'mcp_tool_result']);
 
-/** Messages API wants `input` as an object, so a string payload is parsed back. */
+/**
+ * The object the Messages API wants as `tool_use.input`.
+ *
+ * Anything that is not an object is carried under a single `raw` key rather than erased. A
+ * transcript reaches this function from places the model never wrote — an interrupted stream, a
+ * restored session, arguments another provider produced — and there an empty object is not the
+ * safe reading: a tool whose parameters are all optional receives `{}` as a legitimately valid
+ * call, so erasing a corrupted payload turns it into a different invocation that nothing
+ * downstream can tell apart from the real one. Keeping the payload makes the corruption visible
+ * to whoever reads the transcript, and the API accepts the extra key: it does not validate a
+ * replayed `tool_use.input` against the tool's schema, not even with `strict` and
+ * `additionalProperties: false`.
+ *
+ * A tool that declares `raw` as a parameter of its own is the one case where this is ambiguous to
+ * the model. That is a naming collision in what the model reads, not a transport error.
+ *
+ * The empty string maps to `{}` because a call with no arguments at all is not corrupted. Every
+ * other unparseable text keeps its original characters, untrimmed.
+ */
 function toolInput(args: Record<string, unknown> | string): Record<string, unknown> {
-  if (typeof args !== 'string') {
-    return args;
+  if (typeof args === 'string') {
+    if (args === '') {
+      return {};
+    }
+    try {
+      const parsed: unknown = JSON.parse(args);
+      return isRecord(parsed) ? parsed : { raw: parsed };
+    } catch {
+      return { raw: args };
+    }
   }
-  const trimmed = args.trim();
-  if (trimmed === '') {
-    return {};
-  }
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    // Arrays and scalars are valid JSON but not a valid `input`; they degrade the same way.
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    // A half-streamed fragment can reach here after a fold; an empty object is closer to the
-    // model's intent than a 400 from the API.
-    return {};
-  }
+  // The declared type says this is already an object, but nothing validates it: a session
+  // deserialized from JSON can hold an array or a number here, and the API answers a non-object
+  // `input` with 400 `Input should be an object`.
+  return isRecord(args) ? args : { raw: args };
 }
 
 /** The base64 payload of a `data:` URI, or `undefined` when it is not base64-encoded. */
