@@ -150,6 +150,26 @@ describe('a failure travels out through the middleware around it', () => {
     expect((seen[0] as Error).message).toBe('tool body failed');
   });
 
+  it('leaves `ctx.error` unset when the failure came from another middleware', async () => {
+    // `ctx.error` answers "was it the tool?", not "did something fail?". A middleware's throw
+    // unwinds without passing through the tool seam, so nothing sets it on the way out.
+    const seen: unknown[] = [];
+    const observer = functionMiddleware(async (ctx, next) => {
+      try {
+        await next();
+      } catch {
+        seen.push(ctx.error);
+      }
+    });
+    const thrower = functionMiddleware(async () => {
+      throw new Error('middleware failed');
+    });
+
+    await run(callThen('quiet', 'ok'), [observer, thrower]);
+
+    expect(seen).toEqual([undefined]);
+  });
+
   it('lets a middleware recover by assigning a result', async () => {
     const recovering = functionMiddleware(async (ctx, next) => {
       try {
