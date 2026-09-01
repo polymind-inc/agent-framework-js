@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { Agent } from '../agent/agent.js';
 import type { AgentSession } from '../agent/session.js';
-import { tool } from '../index.js';
+import { functionMiddleware, tool, withMiddleware } from '../index.js';
 import { textContent } from '../types/content.js';
 import type { ChatClient, ChatOptions, ChatResponseStream, SessionScopedChatClient } from './chat-client.js';
 import { MockChatClient } from './test-support.js';
@@ -133,6 +133,25 @@ describe('SessionScopedChatClient', () => {
     await agent.run('two', { session: restored });
 
     expect(client.stamps).toEqual([undefined, 'ticket-s4']);
+  });
+
+  it('survives being wrapped with withMiddleware, which the agent still collects from', async () => {
+    // `withMiddleware` is the documented way to wrap any client, and the agent reads both the
+    // middleware and this capability off the client it was handed. A wrapper that carried only the
+    // first would turn a session-scoped provider into an ordinary one with nothing to say so.
+    const client = new StampingClient(twoRounds());
+    const seen: string[] = [];
+    const observer = functionMiddleware(async (ctx, next) => {
+      seen.push(ctx.tool.name);
+      await next();
+    });
+    const agent = new Agent({ client: withMiddleware(client, [observer]), tools: [echo] });
+    const session = agent.createSession({ sessionId: 'w1' });
+
+    await agent.run('go', { session });
+
+    expect(client.stamps).toEqual([undefined, 'ticket-w1']);
+    expect(seen).toEqual(['echo']);
   });
 
   it('leaves a client without the capability on the layer prepared once', async () => {

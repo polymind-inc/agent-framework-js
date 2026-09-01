@@ -341,11 +341,16 @@ export function withMiddleware<TOptions extends ChatOptions>(
   const existing = (client as { middleware?: readonly Middleware[] }).middleware ?? [];
   // The hosted-tool capability protocol is duck-typed on method presence, so the wrapper
   // has to carry the underlying client's capability methods or `supportsMcp` and friends would
-  // report a capable client as incapable after wrapping.
+  // report a capable client as incapable after wrapping. `forSession` is a different capability
+  // with the same hazard: `Agent` reads it off the client it was handed, so a wrapper that drops
+  // it turns a session-scoped provider into an ordinary one with nothing to say so.
   const capabilities: Record<string, unknown> = {};
-  for (const method of HOSTED_TOOL_CAPABILITY_METHODS) {
+  for (const method of [...HOSTED_TOOL_CAPABILITY_METHODS, 'forSession']) {
     const fn = (client as unknown as Record<string, unknown>)[method];
     if (typeof fn === 'function') {
+      // Bound to the wrapped client, which loses nothing: this wrapper's `getResponse` only
+      // delegates, and the middleware it carries travels on `middleware` for the agent to collect,
+      // not through the call.
       capabilities[method] = fn.bind(client);
     }
   }
