@@ -365,8 +365,8 @@ function hasToolUse(msg: AnthropicMessage): boolean {
  * Converts the framework transcript into the Messages API `messages` array.
  *
  * A leading system message is *not* included: it belongs in the `system` request parameter (see
- * {@link toAnthropicSystem}). A local `function_call` no result in the transcript answers is
- * omitted — see the `function_call` case in {@link appendContent}. A conversation that would end
+ * {@link toAnthropicSystem}). A local `function_call` that no `function_result` in the transcript
+ * answers is omitted — see the `function_call` case in {@link appendContent}. A conversation that would end
  * on an assistant turn gets a synthetic `"Continue"` user turn, because Messages API requires the
  * last message to be a user one — unless that turn still holds a `tool_use` block (a hosted or
  * raw-replayed call), where appending would break the call/result pairing (Python

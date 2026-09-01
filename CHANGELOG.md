@@ -14,7 +14,7 @@ contain breaking changes**; patch releases are fixes only.
   tool answered after the session was saved — and the OpenAI conversion already filters them the
   same way, so one rule now governs both providers. A call answered in a later message is kept, a
   call with an empty `callId` is always omitted, and `FunctionCallContent` and serialized sessions
-  are never rewritten — the call stays in the transcript and only leaves the wire. A request that
+  are never rewritten — the call stays in the transcript; it just never goes on the wire. A request that
   used to fail with the 400 above now goes through without the dangling call.
 
 - **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
