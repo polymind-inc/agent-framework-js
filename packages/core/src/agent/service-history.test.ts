@@ -31,12 +31,15 @@ class StoringClient implements ChatClient<ChatOptions> {
     const conversationId = this.#conversationIds[Math.min(this.#turn, this.#conversationIds.length - 1)];
     assert.exists(conversationId);
     this.#turn++;
+    // A provider reports a conversation id only when it kept the turn, so `store: false` reports
+    // none — the same rule every provider mapping applies.
+    const kept = options?.store !== false;
     const update = chatResponseUpdate({
       contents: [textContent(`answer ${this.calls.length}`)],
       role: 'assistant',
       messageId: `msg_${this.calls.length}`,
       finishReason: 'stop',
-      conversationId,
+      ...(kept ? { conversationId } : {}),
     });
     return createResponseStream<ChatResponseUpdate, ChatResponse<undefined>>({
       start: async function* () {
@@ -100,7 +103,7 @@ describe('service-managed history', () => {
     expect(session.serviceSessionId).toBe('stable_1');
   });
 
-  it('keeps the framework transcript when the session is not service-managed', async () => {
+  it('adopts the conversation id the first response reports', async () => {
     const client = new StoringClient(['resp_1', 'resp_2']);
     const agent = new Agent({ client });
     const session = agent.createSession();
@@ -108,10 +111,26 @@ describe('service-managed history', () => {
     await agent.run('first', { session });
     await agent.run('second', { session });
 
-    // The second call replays the whole conversation locally…
+    // Turn one has nothing to continue from and sends its own input…
+    expect(client.calls[0]?.conversationId).toBeUndefined();
+    // …and from turn two the service holds the history, so only the new input is sent.
+    expect(client.calls[1]?.conversationId).toBe('resp_1');
+    expect(client.calls[1]?.messages).toHaveLength(1);
+    expect(session.serviceSessionId).toBe('resp_2');
+  });
+
+  it('keeps the framework transcript when the caller asks the provider not to store', async () => {
+    // `store: false` is the switch for a caller who needs the framework to stay in charge of
+    // history: nothing is kept service-side, so no id is reported and none is adopted.
+    const client = new StoringClient(['resp_1', 'resp_2']);
+    const agent = new Agent({ client, defaultOptions: { store: false } });
+    const session = agent.createSession();
+
+    await agent.run('first', { session });
+    await agent.run('second', { session });
+
     expect(client.calls[1]?.messages).toHaveLength(3);
     expect(client.calls[1]?.conversationId).toBeUndefined();
-    // …and the response id is never adopted behind the caller's back.
     expect(session.serviceSessionId).toBeUndefined();
   });
 
@@ -166,11 +185,26 @@ describe('service-managed history', () => {
   });
 
   it('still stores locally when nothing promoted the session', async () => {
-    const agent = new Agent({ client: new StoringClient(['resp_1']) });
+    const agent = new Agent({
+      client: new StoringClient(['resp_1']),
+      defaultOptions: { store: false },
+    });
     const session = agent.createSession();
 
     await agent.run('hi', { session });
 
     expect(historyOf(session)).toHaveLength(2);
+  });
+
+  it('stops storing locally from the turn that hands the transcript to the service', async () => {
+    // The run that adopts the id retires the local store for that same run: appending there too
+    // would make the next request replay messages the service is already sending.
+    const agent = new Agent({ client: new StoringClient(['resp_1']) });
+    const session = agent.createSession();
+
+    await agent.run('hi', { session });
+
+    expect(session.serviceSessionId).toBe('resp_1');
+    expect(historyOf(session)).toHaveLength(0);
   });
 });

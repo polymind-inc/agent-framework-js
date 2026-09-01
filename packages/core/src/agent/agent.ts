@@ -775,33 +775,37 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     const agentId = this.id;
 
     /**
-     * Keeps a service-managed session pointing at the newest turn.
+     * Points the session at the conversation the service is keeping, and keeps it on the newest
+     * turn from then on.
      *
      * Runs per update rather than at the end (Python `_propagate_conversation_id`) so a caller
      * who abandons a stream still holds a session that can continue the conversation.
      *
-     * A session that is *not* already service-managed is never promoted here: with `store`
-     * defaulting to on, every response carries an id, and adopting one would silently move the
-     * transcript from the framework to the provider. Handing the framework a conversation id is
-     * the caller's decision to make.
+     * A session with no conversation id yet takes the first one a response reports, which hands
+     * the transcript to the service: from the next turn the request carries the id instead of the
+     * whole history, the framework's own history provider stands down, and the provider's prompt
+     * cache — which only ever sees a stable prefix this way — starts paying off.
+     *
+     * Nothing is adopted when nothing is reported, which is the case for a provider that keeps no
+     * conversation at all. `store: false` is how a caller arranges the same thing deliberately: it
+     * tells the provider not to keep the turn, so there is no stored conversation to report an id
+     * for, and the framework stays in charge of the transcript. That is the switch to reach for
+     * when it has to stay in charge — a message filter, a summarizing provider, a persisted local
+     * transcript — and it is what a hosted agent sets, since the hosting platform replays the
+     * transcript itself.
      */
     const stableConversationId = this.#client.metadata.stableConversationId;
     const propagateConversationId = (update: ChatResponseUpdate): void => {
       const conversationId = update.conversationId;
       const current = session.serviceSessionId;
-      if (
-        conversationId === undefined ||
-        conversationId === '' ||
-        current === undefined ||
-        current === conversationId
-      ) {
+      if (conversationId === undefined || conversationId === '' || current === conversationId) {
         return;
       }
       // An anchor the provider declares stable stays the session's id: a per-response id
       // reported mid-run must not unhook the session from the stored conversation. The same
       // guard the function-calling loop applies between tool rounds, applied where the
       // reference puts it — on the session update itself (Go `updateConversationID`).
-      if (stableConversationId?.(current) === true) {
+      if (current !== undefined && stableConversationId?.(current) === true) {
         return;
       }
       session.serviceSessionId = conversationId;
