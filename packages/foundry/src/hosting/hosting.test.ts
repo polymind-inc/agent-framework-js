@@ -1,5 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
   CreateResponseRequest,
@@ -49,6 +48,10 @@ import { OutputBuilder } from './output.js';
 import { FoundryResponseStore } from './response-store.js';
 import { ResponsesHostServer } from './server.js';
 import { FileSystemAgentSessionStore, InMemoryAgentSessionStore } from './session-store.js';
+import { scratchRoot } from './test-scratch.js';
+
+/** Every on-disk fixture of this file lives under one root, removed when its tests finish. */
+const scratch = scratchRoot('afjs-fdry');
 
 function say(text: string): MockTurn {
   return { contents: [textContent(text)], finishReason: 'stop' };
@@ -399,7 +402,7 @@ describe('hosted agent over the protocol', () => {
   });
 
   it('partitions session files by user and rejects a traversal key', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'af-sessions-'));
+    const root = await scratch.dir();
     const sessionStore = new FileSystemAgentSessionStore({ root });
     const app = server({ client: new MockChatClient([say('a')]), sessionStore });
 
@@ -721,44 +724,36 @@ describe('environment defaults', () => {
   it('persists a local run’s responses to the state root, so a restart can be continued', async () => {
     // The composition, not just `defaultStore(false)`: what a caller gets from
     // `new ResponsesHostServer({ agent })` with no `store` is what the matrix is about.
-    const root = await mkdtemp(join(tmpdir(), 'afjs-host-store-'));
+    const root = await scratch.dir();
     vi.stubEnv('AGENTSERVER_STATE_ROOT', root);
-    try {
-      const app = new ResponsesHostServer({
-        agent: new Agent({ client: new MockChatClient([say('Hello there')]), instructions: 'Be helpful.' }),
-        sessionStore: new InMemoryAgentSessionStore(),
-        approvalStorage: new InMemoryApprovalStorage(),
-        hosted: false,
-      });
+    const app = new ResponsesHostServer({
+      agent: new Agent({ client: new MockChatClient([say('Hello there')]), instructions: 'Be helpful.' }),
+      sessionStore: new InMemoryAgentSessionStore(),
+      approvalStorage: new InMemoryApprovalStorage(),
+      hosted: false,
+    });
 
-      const created = (await (await app.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
+    const created = (await (await app.handle(post({ input: 'Hi' }))).json()) as ResponseObject;
 
-      // Clear text on disk, under the documented root — the transcript is readable by anyone who
-      // can read the directory, and nothing here ever removes it.
-      expect(await readFile(join(root, 'responses', `${created.id}.json`), 'utf8')).toContain('Hello there');
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    // Clear text on disk, under the documented root — the transcript is readable by anyone who
+    // can read the directory, and nothing here ever removes it.
+    expect(await readFile(join(root, 'responses', `${created.id}.json`), 'utf8')).toContain('Hello there');
   });
 
   it('keeps an explicitly in-memory local run off the filesystem', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'afjs-host-store-'));
+    const root = await scratch.dir();
     vi.stubEnv('AGENTSERVER_STATE_ROOT', root);
-    try {
-      const app = new ResponsesHostServer({
-        agent: new Agent({ client: new MockChatClient([say('Hello there')]), instructions: 'Be helpful.' }),
-        sessionStore: new InMemoryAgentSessionStore(),
-        approvalStorage: new InMemoryApprovalStorage(),
-        hosted: false,
-        store: new InMemoryResponseProvider(),
-      });
+    const app = new ResponsesHostServer({
+      agent: new Agent({ client: new MockChatClient([say('Hello there')]), instructions: 'Be helpful.' }),
+      sessionStore: new InMemoryAgentSessionStore(),
+      approvalStorage: new InMemoryApprovalStorage(),
+      hosted: false,
+      store: new InMemoryResponseProvider(),
+    });
 
-      await app.handle(post({ input: 'Hi' }));
+    await app.handle(post({ input: 'Hi' }));
 
-      await expect(readdir(join(root, 'responses'))).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    await expect(readdir(join(root, 'responses'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 
@@ -1710,7 +1705,7 @@ describe('background execution with the Foundry store', () => {
         getToken: async () => ({ token: 'mi-token', expiresOnTimestamp: Date.now() + 3_600_000 }),
       }),
       fetch: service.fetch,
-      replayRoot: await mkdtemp(join(tmpdir(), 'afjs-fdry-')),
+      replayRoot: await scratch.dir(),
       retry: { baseDelayMs: 0 },
     });
     const app = new ResponsesServer({
@@ -2299,7 +2294,7 @@ describe('streamed event sequences for provider tool items', () => {
 
 describe('file approval storage concurrency', () => {
   it('keeps both approvals when two saves race', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'af-approvals-'));
+    const root = await scratch.dir();
     const storage = new FileApprovalStorage({ root });
     const request = (id: string): FunctionApprovalRequestContent => ({
       type: 'function_approval_request',

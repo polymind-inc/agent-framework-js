@@ -192,14 +192,20 @@ export class McpConnection {
   }
 
   /** Attributes every span of this connection carries. */
-  #spanAttributes(): Record<string, string> {
+  #spanAttributes(): Record<string, string | number> {
     if (this.#url === undefined) {
       return {};
     }
     const url = new URL(String(this.#url));
+    // `server.port` is an int in the semantic conventions, so the WHATWG URL's string port is
+    // converted. A URL that states no explicit port reports none — `URL.port` is the empty string
+    // for a default-scheme port, and inventing the default would claim what the URL never said.
+    // The parser only admits digits in a port, so the finite check is a guard against emitting a
+    // broken value, not a branch a valid URL can reach.
+    const port = Number(url.port);
     return {
       [MCP.serverAddress]: url.hostname,
-      ...(url.port === '' ? {} : { [MCP.serverPort]: url.port }),
+      ...(url.port === '' || !Number.isFinite(port) ? {} : { [MCP.serverPort]: port }),
     };
   }
 

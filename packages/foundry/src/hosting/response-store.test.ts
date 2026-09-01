@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AccessToken, TokenCredential } from '@azure/identity';
 import type { ResponseObject } from '@polymind-inc/agent-framework-agentserver';
@@ -13,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { FoundryResponseStore } from './response-store.js';
 import { defaultStore } from './server.js';
+import { scratchRoot } from './test-scratch.js';
 
 const PROJECT = 'https://my-resource.services.ai.azure.com/api/projects/my-project';
 
@@ -31,8 +31,15 @@ interface Call {
   reply?: Response;
 }
 
-/** One shared scratch directory per test file run; each store() call gets its own subdirectory. */
-const replayScratch = await mkdtemp(join(tmpdir(), 'afjs-replay-'));
+/**
+ * One shared scratch root per test file run; each store() call names its own subdirectory.
+ *
+ * Nothing under the root exists until a test writes there — the store's own writes create their
+ * directory recursively, and the tests that plant fixtures call `mkdir` themselves — so the root
+ * is a name, not a directory, until then, and the whole tree is removed after the file's tests.
+ */
+const scratch = scratchRoot('afjs-replay');
+const replayScratch = scratch.root;
 let replayDirCount = 0;
 
 /** A store whose every request is recorded, with scripted replies. */
@@ -623,7 +630,7 @@ describe('replay mirror integrity', () => {
   });
 
   it('keeps a remote delete a success when the mirror cannot be cleaned', async () => {
-    const blockedRoot = join(replayScratch, `blocked-del-${replayDirCount++}`);
+    const blockedRoot = join(await scratch.ensureRoot(), `blocked-del-${replayDirCount++}`);
     await writeFile(blockedRoot, 'a file where the directory should be');
     const { store: subject } = store([{ status: 204 }], { replayRoot: blockedRoot });
 
@@ -651,7 +658,7 @@ describe('replay mirror integrity', () => {
   it('keeps remote persistence a success when the local mirror cannot be written', async () => {
     // The mirror is auxiliary: replay becomes unavailable (fail closed), but the response is
     // durably stored and the turn must not be reported as a storage failure.
-    const blockedRoot = join(replayScratch, `blocked-${replayDirCount++}`);
+    const blockedRoot = join(await scratch.ensureRoot(), `blocked-${replayDirCount++}`);
     await writeFile(blockedRoot, 'a file where the directory should be');
     const { store: subject } = store(
       [

@@ -17,6 +17,13 @@ contain breaking changes**; patch releases are fixes only.
   are never rewritten — the call stays in the transcript; it just never goes on the wire. A request that
   used to fail with the 400 above now goes through without the dangling call.
 
+- **`@polymind-inc/agent-framework-mcp`** — MCP client spans emit `server.port` as an integer, as
+  the OpenTelemetry semantic conventions define the attribute, instead of the string the WHATWG URL
+  API reports. **Dashboard migration:** a query that compared the attribute as a string
+  (`server.port = "8443"`) must compare it as a number; numeric filters and range aggregations that
+  silently matched nothing now work. A URL that does not state an explicit port still reports no
+  `server.port` at all, and `server.address` is unchanged.
+
 - **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
   arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
   advertised default — and that value used to be handed to `SkillScript.run` even though the
