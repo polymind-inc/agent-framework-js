@@ -403,9 +403,10 @@ describe('beta namespace routing', () => {
 });
 
 describe('message conversion', () => {
-  it('coerces non-object tool arguments to an empty input object', () => {
+  it('carries non-object tool arguments under `raw` instead of erasing them', () => {
     // `tool_use.input` must be a JSON object on the wire; a replayed transcript can carry a
-    // stringified array or scalar, and neither may pass through as `input`.
+    // stringified array or scalar, and neither may pass through as `input`. Sending `{}` in their
+    // place would read as a valid no-argument call for any tool whose parameters are optional.
     const calls: Message = {
       role: 'assistant',
       contents: [
@@ -418,8 +419,8 @@ describe('message conversion', () => {
       {
         role: 'assistant',
         content: [
-          { type: 'tool_use', id: 'c1', name: 'search', input: {} },
-          { type: 'tool_use', id: 'c2', name: 'search', input: {} },
+          { type: 'tool_use', id: 'c1', name: 'search', input: { raw: [] } },
+          { type: 'tool_use', id: 'c2', name: 'search', input: { raw: 'text' } },
         ],
       },
     ]);

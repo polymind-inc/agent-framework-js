@@ -6,6 +6,24 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **[BREAKING] `@polymind-inc/agent-framework-anthropic`** — tool arguments that are not an object
+  are sent to the Messages API under a single `raw` key instead of being replaced with `{}`. A
+  JSON scalar, array or `null` becomes `{ raw: <value> }`, and text JSON cannot parse becomes
+  `{ raw: "<the original characters>" }`, untrimmed; only an empty string still maps to `{}`. This
+  matches Python, whose Anthropic client sends `parse_arguments()` straight through as
+  `tool_use.input`. Normal responses are unaffected — the fallback is reached by interrupted
+  streams, restored or hand-built transcripts, and arguments another provider produced. Erasing
+  them was measurably worse than keeping them: for a tool whose parameters are all optional, `{}`
+  is byte-for-byte a valid no-argument call, so a corrupted payload became a different, plausible
+  invocation that nothing downstream could detect, and the API does not catch it either — it does
+  not validate a replayed `tool_use.input` against the tool's schema, not even with `strict` and
+  `additionalProperties: false`. A tool that declares a `raw` parameter of its own now sees a name
+  collision in what the model reads; rename that parameter if the ambiguity matters. Separately, a
+  value that is neither a string nor an object — reachable from a session restored from JSON,
+  which is not validated — no longer passes through to the wire, where the API rejected it with
+  `400 tool_use.input: Input should be an object`. `FunctionCallContent.arguments` and serialized
+  sessions are unchanged.
+
 - **[BREAKING] `@polymind-inc/agent-framework-a2a`** — a remote task's status message becomes a
   response message only when the task is waiting for input (`input-required`). Previously an
   awaited `run()` also materialized the status message of a `completed`, `failed`, `canceled` or

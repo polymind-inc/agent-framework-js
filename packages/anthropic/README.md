@@ -29,6 +29,37 @@ const response = await agent.run('Summarize the Messages API in one sentence.');
 console.log(response.text);
 ```
 
+## Tool arguments that are not an object
+
+The Messages API requires `tool_use.input` to be a JSON object. A normal response always produces
+one, but a transcript can reach the conversion from elsewhere — an interrupted stream, a restored
+or hand-built history, arguments another provider wrote — and carry a scalar, an array, or text
+that is not valid JSON.
+
+Those are sent as `{ raw: … }` rather than replaced with `{}`, matching Python. What lands under
+`raw` depends on whether the text was JSON at all — valid JSON is parsed first, and anything else
+keeps its original characters, untrimmed, so a truncated payload can still be read back as it
+arrived:
+
+| `arguments` | `tool_use.input` |
+| --- | --- |
+| `'{"city":"Osaka"}'` | `{ city: 'Osaka' }` |
+| `''` | `{}` |
+| `'42'` / `'null'` / `'[1,2]'` | `{ raw: 42 }` / `{ raw: null }` / `{ raw: [1, 2] }` |
+| `'{"city":"Os'` | `{ raw: '{"city":"Os' }` |
+| `'   '` | `{ raw: '   ' }` |
+
+Preserving them keeps the corruption visible: for a tool whose parameters are all optional, `{}` is
+byte-for-byte a valid no-argument call, and the API does not validate a replayed `tool_use.input`
+against the tool's schema, so an erased payload becomes a plausible invocation that nothing
+downstream can detect.
+
+If one of your tools declares a parameter named `raw`, a corrupted call for that tool will look to
+the model like a call with `raw` set. Rename the parameter if that ambiguity matters.
+
+`FunctionCallContent.arguments` and serialized sessions are never rewritten — this applies only to
+what goes on the wire.
+
 ---
 
 Part of [Agent Framework for TypeScript](https://github.com/polymind-inc/agent-framework-js) — an

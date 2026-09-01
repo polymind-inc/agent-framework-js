@@ -32,17 +32,41 @@ describe('tool_use input parsing', () => {
     expect(inputOf({ city: 'Osaka' })).toEqual({ city: 'Osaka' });
   });
 
-  it('maps empty and blank argument strings to an empty object', () => {
+  it('maps an empty argument string to an empty object', () => {
     expect(inputOf('')).toEqual({});
-    expect(inputOf('   ')).toEqual({});
   });
 
-  it('maps a JSON scalar to an empty object rather than sending a non-object input', () => {
-    expect(inputOf('"just a string"')).toEqual({});
+  it('preserves a JSON scalar, array or null under `raw`', () => {
+    expect(inputOf('"just a string"')).toEqual({ raw: 'just a string' });
+    expect(inputOf('42')).toEqual({ raw: 42 });
+    expect(inputOf('true')).toEqual({ raw: true });
+    expect(inputOf('null')).toEqual({ raw: null });
+    expect(inputOf('[1,2]')).toEqual({ raw: [1, 2] });
   });
 
-  it('maps a half-streamed fragment to an empty object instead of a 400', () => {
-    expect(inputOf('{"city":"Os')).toEqual({});
+  it('preserves text JSON cannot parse under `raw`, unchanged', () => {
+    // A half-streamed fragment and a blank string are both corrupted calls, and both keep their
+    // original text: trimming or erasing them would make the corruption unreadable.
+    expect(inputOf('{"city":"Os')).toEqual({ raw: '{"city":"Os' });
+    expect(inputOf('   ')).toEqual({ raw: '   ' });
+  });
+
+  it('never sends a non-object input, whatever the transcript holds', () => {
+    // `arguments` is typed `Record<string, unknown> | string`, but a session restored from JSON is
+    // not validated: an array or a number satisfies that type at compile time only. The Messages
+    // API rejects a non-object `tool_use.input` with 400 `Input should be an object`.
+    for (const value of [[1, 2], 42, true] as unknown[]) {
+      const input = inputOf(value as Record<string, unknown>);
+      expect(Array.isArray(input)).toBe(false);
+      expect(typeof input).toBe('object');
+      expect(input).toEqual({ raw: value });
+    }
+  });
+
+  it('leaves the source content untouched', () => {
+    const content = { type: 'function_call', callId: 'c1', name: 'f', arguments: '[1,2]' } as const;
+    blocksOf([{ ...content }]);
+    expect(content.arguments).toBe('[1,2]');
   });
 });
 
