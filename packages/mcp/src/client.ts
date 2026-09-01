@@ -14,7 +14,7 @@ import {
 } from '@polymind-inc/agent-framework-core';
 import { errorMessageOf } from '@polymind-inc/agent-framework-core/internal';
 import { McpConnection } from './connection.js';
-import { fromMcpContents, mcpErrorText, mcpMetaProperties } from './content.js';
+import { callToolFailure, contentsOfCallToolResult, mcpMetaProperties } from './content.js';
 import type { McpHeaderProvider } from './headers.js';
 import type { McpSkillsSourceConfig } from './skills.js';
 import { mcpSkillsSource } from './skills.js';
@@ -348,32 +348,23 @@ export class McpClient {
             (input ?? {}) as Record<string, unknown>,
             ctx.signal === undefined ? undefined : { signal: ctx.signal },
           );
-          const meta = (result as { _meta?: unknown })._meta;
-          const contents = fromMcpContents(result.content as unknown[] | undefined, meta);
-          if (result.structuredContent !== undefined && result.structuredContent !== null) {
-            // A structured-only server would otherwise yield an empty result. The reference
-            // implementation surfaces it as a JSON text content (`_parse_tool_result_from_mcp`
-            // in Python's `_mcp.py`), placed before the isError check so an error's text
-            // includes it too. It is the one item Python builds *without* the `_meta` stamp;
-            // the asymmetry is preserved rather than tidied up.
-            contents.push({ type: 'text', text: JSON.stringify(result.structuredContent) });
-          }
+          const contents = contentsOfCallToolResult(result);
           if (result.isError === true) {
             // MCP reports a tool failure in the payload rather than by rejecting. Returning it
             // as a success would tell the model the call worked and hand it the error text as
             // the answer; throwing routes it through the loop's error handling instead. The
             // connection has already marked the span with `error.type = tool_error`.
-            const text = mcpErrorText(contents);
-            throw new ToolInvocationError(
-              declared.name,
-              text === '' ? `MCP tool "${declared.name}" reported an error.` : text,
-            );
+            throw callToolFailure(declared.name, contents);
           }
           if (contents.length === 0) {
             // Python parity: a successful call with nothing to say becomes a literal "null"
             // text, so the model sees an answer instead of an absent one. This one *does* carry
             // the result's `_meta`, as Python's fallback does.
-            contents.push({ type: 'text', text: 'null', ...mcpMetaProperties(meta) });
+            contents.push({
+              type: 'text',
+              text: 'null',
+              ...mcpMetaProperties((result as { _meta?: unknown })._meta),
+            });
           }
           return contents;
         } catch (error) {

@@ -6,6 +6,15 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-foundry`** — a Foundry toolbox tool that reports `isError` now
+  assembles its failure text by the same rule the MCP client applies, instead of an independent
+  second implementation that had drifted from it: each text block lands on its own line rather than
+  run together, `structuredContent` reaches the model as the last line rather than being dropped,
+  blocks without text contribute nothing, and a result that says nothing at all names the tool that
+  failed rather than producing an empty message. The rule is now literally shared — the toolbox
+  imports the MCP package's assembly rather than keeping a copy — so the two cannot drift apart
+  again.
+
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryChatClient.createConversation()` creates a
   server-side conversation and returns its id, so a run can start on a conversation that already
   exists — and is already visible in the Foundry Project UI — instead of one the first response

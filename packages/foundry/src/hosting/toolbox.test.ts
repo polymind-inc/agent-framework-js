@@ -7,7 +7,12 @@ import {
   runWithRequestContext,
 } from '@polymind-inc/agent-framework-agentserver';
 import type { ContextProvider, Tool } from '@polymind-inc/agent-framework-core';
-import { AgentSession, ConfigurationError, isFunctionTool } from '@polymind-inc/agent-framework-core';
+import {
+  AgentSession,
+  ConfigurationError,
+  isFunctionTool,
+  ToolInvocationError,
+} from '@polymind-inc/agent-framework-core';
 import { assert, describe, expect, it, vi } from 'vitest';
 import { FoundryProject } from '../project.js';
 import { ToolboxConsentRequiredError } from './consent.js';
@@ -46,6 +51,8 @@ function stubToolbox(
     tools?: StubTool[];
     allowedTools?: string[];
     toolFails?: boolean;
+    /** Answer `tools/call` with exactly this result, verbatim. */
+    toolResult?: Record<string, unknown>;
     failFirstConnect?: boolean;
     /** 1-based `tools/call` indices answered with HTTP 404 — the expired-session signal. */
     dieOnToolCalls?: readonly number[];
@@ -143,9 +150,10 @@ function stubToolbox(
           }
         : request.method === 'tools/list'
           ? { tools }
-          : options.toolFails === true
-            ? { content: [{ type: 'text', text: 'the upstream API rejected it' }], isError: true }
-            : { content: [{ type: 'text', text: 'stub result' }] };
+          : (options.toolResult ??
+            (options.toolFails === true
+              ? { content: [{ type: 'text', text: 'the upstream API rejected it' }], isError: true }
+              : { content: [{ type: 'text', text: 'stub result' }] }));
 
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }), {
       status: 200,
@@ -266,6 +274,72 @@ describe('FoundryToolbox tools', () => {
       /the upstream API rejected it/,
     );
     await toolbox.close();
+  });
+
+  describe('failure text of an isError result', () => {
+    // The rule is the one `McpClient` applies, shared rather than re-implemented: each text block
+    // on its own line, blocks without text contributing nothing, structured content as the last
+    // line, and a fallback naming the tool when the result said nothing. The reference
+    // implementation has no second assembly to drift — its toolbox inherits the plain MCP tool's.
+
+    async function failWith(toolResult: Record<string, unknown>): Promise<unknown> {
+      const { toolbox } = stubToolbox({ toolResult });
+      const [tool] = await toolbox.getTools();
+      try {
+        await tool?.execute?.({ q: 'x' }, { callId: 'c1' });
+        return undefined;
+      } catch (error) {
+        return error;
+      } finally {
+        await toolbox.close();
+      }
+    }
+
+    it('puts each text block on its own line', async () => {
+      const error = await failWith({
+        isError: true,
+        content: [
+          { type: 'text', text: 'the upstream API rejected it' },
+          { type: 'text', text: 'retry after 30s' },
+        ],
+      });
+
+      expect(error).toBeInstanceOf(ToolInvocationError);
+      expect((error as Error).message).toBe('the upstream API rejected it\nretry after 30s');
+    });
+
+    it('skips blocks with no text instead of contributing blank lines', async () => {
+      const error = await failWith({
+        isError: true,
+        content: [
+          { type: 'text', text: 'first' },
+          { type: 'text', text: '' },
+          { type: 'image', data: 'AA==', mimeType: 'image/png' },
+          { type: 'text', text: 'second' },
+        ],
+      });
+
+      expect((error as Error).message).toBe('first\nsecond');
+    });
+
+    it('reports structured content as the last line', async () => {
+      const error = await failWith({
+        isError: true,
+        content: [{ type: 'text', text: 'rate limited' }],
+        structuredContent: { retryAfter: 30 },
+      });
+
+      expect((error as Error).message).toBe('rate limited\n{"retryAfter":30}');
+    });
+
+    it('names the tool when the failure carries no text at all', async () => {
+      const error = await failWith({
+        isError: true,
+        content: [{ type: 'image', data: 'AA==', mimeType: 'image/png' }],
+      });
+
+      expect((error as Error).message).toBe('MCP tool "search_docs" reported an error.');
+    });
   });
 
   it('reconnects and retries once when the server has expired the session', async () => {
