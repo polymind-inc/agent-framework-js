@@ -150,11 +150,13 @@ const PROVIDER_EXECUTED_BLOCKS = new Set([
 /**
  * The block to replay for content describing a call the provider ran itself.
  *
- * These contents model an outcome, not a request the caller can make: there is no block to build
- * from their fields, and the result blocks have to go back on the assistant turn that produced
- * them rather than as a `tool_result` answering a call the transcript no longer contains. The
- * block the API sent is replayed instead — the same forward-compatible rule {@link Content} of
- * type `unknown` follows — so an exchange that used code execution survives the next request.
+ * These contents model an outcome, not a request the caller can make: the result blocks have to
+ * go back on the assistant turn that produced them rather than as a `tool_result` answering a
+ * call the transcript no longer contains. The block the API sent is replayed when it is still
+ * held — it is the exact bytes — and a restored transcript, whose raw representations were
+ * stripped by serialization, falls back to rebuilding the block from the typed contents (the
+ * `code_interpreter_tool_call` … cases below), so an exchange that used code execution survives
+ * the next request either way.
  */
 function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
   if (
@@ -172,6 +174,212 @@ function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
   return raw;
 }
 
+/** The wire names of the code-execution tool family, as `server_tool_use.name` carries them. */
+type CodeExecutionFamily = 'code_execution' | 'bash_code_execution' | 'text_editor_code_execution';
+
+/** What the transcript-wide passes computed for the per-content conversion. */
+interface ConversionContext {
+  /** The `callId`s a `function_result` anywhere in the transcript answers. */
+  answered: ReadonlySet<string>;
+  /** Provider-executed call ids → the tool family inferred from the content answering them. */
+  families: ReadonlyMap<string, CodeExecutionFamily>;
+}
+
+/**
+ * Which code-execution family each provider-executed call belongs to.
+ *
+ * The typed `code_interpreter_tool_call` does not say which of the three code-execution tools
+ * ran — the receive side folds all of them into one content kind — but the kind of the content
+ * answering the call does: a `code_interpreter_tool_result` answers `code_execution`, a
+ * `shell_tool_result` answers `bash_code_execution`, and a `function_result` answers
+ * `text_editor_code_execution`. A call nothing answers reads as plain `code_execution`.
+ */
+function codeExecutionFamilies(messages: readonly Message[]): Map<string, CodeExecutionFamily> {
+  const families = new Map<string, CodeExecutionFamily>();
+  for (const msg of messages) {
+    for (const content of msg.contents) {
+      if (content.type === 'code_interpreter_tool_call') {
+        families.set(content.callId ?? '', 'code_execution');
+      }
+    }
+  }
+  for (const msg of messages) {
+    for (const content of msg.contents) {
+      if (content.type === 'shell_tool_result' && families.has(content.callId ?? '')) {
+        families.set(content.callId ?? '', 'bash_code_execution');
+      } else if (content.type === 'function_result' && families.has(content.callId)) {
+        families.set(content.callId, 'text_editor_code_execution');
+      }
+    }
+  }
+  return families;
+}
+
+/** The `error_code` values each result schema accepts; anything else in that slot is prose. */
+const CODE_EXECUTION_ERROR_CODES = new Set([
+  'invalid_tool_input',
+  'unavailable',
+  'too_many_requests',
+  'execution_time_exceeded',
+]);
+const BASH_ERROR_CODES = new Set([...CODE_EXECUTION_ERROR_CODES, 'output_file_too_large']);
+const TEXT_EDITOR_ERROR_CODES = new Set([...CODE_EXECUTION_ERROR_CODES, 'file_not_found']);
+
+/** Rebuilds the `server_tool_use` block of a provider-executed call from its typed content. */
+function rebuiltServerToolUse(content: Content, family: CodeExecutionFamily): AnthropicBlock {
+  if (content.type !== 'code_interpreter_tool_call') {
+    return {};
+  }
+  const text = content.inputs?.find((item) => item.type === 'text')?.text ?? '';
+  let input: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isRecord(parsed)) {
+      input = parsed;
+    }
+  } catch {
+    // The receive side records a non-JSON input as the text itself; there is no object to rebuild.
+  }
+  return { type: 'server_tool_use', id: content.callId ?? '', name: family, input };
+}
+
+/** The file entries a rebuilt result payload lists for its `hosted_file` contents. */
+function rebuiltFileEntries(items: readonly Content[], entryType: string): AnthropicBlock[] {
+  const entries: AnthropicBlock[] = [];
+  for (const item of items) {
+    if (item.type === 'hosted_file' && item.fileId !== undefined && item.fileId !== '') {
+      entries.push({ type: entryType, file_id: item.fileId });
+    }
+  }
+  return entries;
+}
+
+/** Rebuilds the payload of a `code_execution_tool_result` from the typed outputs. */
+function rebuiltCodeExecutionPayload(outputs: readonly Content[]): AnthropicBlock {
+  const [only] = outputs;
+  if (
+    outputs.length === 1 &&
+    only?.type === 'error' &&
+    CODE_EXECUTION_ERROR_CODES.has(only.errorCode ?? only.message ?? '')
+  ) {
+    return {
+      type: 'code_execution_tool_result_error',
+      error_code: only.errorCode ?? only.message ?? '',
+    };
+  }
+  // `return_code` is not part of the typed contents; a result that was worth reporting as outputs
+  // rather than an error reads as the shell convention for success.
+  return {
+    type: 'code_execution_result',
+    stdout: outputs
+      .filter((item): item is Content & { type: 'text' } => item.type === 'text')
+      .map((item) => item.text)
+      .join(''),
+    stderr: outputs
+      .filter((item): item is Content & { type: 'error' } => item.type === 'error')
+      .map((item) => item.message ?? '')
+      .join('\n'),
+    return_code: 0,
+    content: rebuiltFileEntries(outputs, 'code_execution_output'),
+  };
+}
+
+/** Rebuilds the payload of a `bash_code_execution_tool_result` from the shell output and files. */
+function rebuiltBashPayload(outputs: readonly Content[], files: readonly Content[]): AnthropicBlock {
+  const output = outputs.find(
+    (item): item is Content & { type: 'shell_command_output' } => item.type === 'shell_command_output',
+  );
+  if (output?.timedOut === true) {
+    return { type: 'bash_code_execution_tool_result_error', error_code: 'execution_time_exceeded' };
+  }
+  // The receive side reports an error payload as a shell output whose stderr carries the code and
+  // nothing else; a code in that position with no other observation rebuilds the error variant.
+  if (
+    output !== undefined &&
+    output.stdout === undefined &&
+    output.exitCode === undefined &&
+    BASH_ERROR_CODES.has(output.stderr ?? '')
+  ) {
+    return { type: 'bash_code_execution_tool_result_error', error_code: output.stderr ?? '' };
+  }
+  return {
+    type: 'bash_code_execution_result',
+    stdout: output?.stdout ?? '',
+    stderr: output?.stderr ?? '',
+    return_code: output?.exitCode ?? 0,
+    content: rebuiltFileEntries(files, 'bash_code_execution_output'),
+  };
+}
+
+/** The `[start, lines]` span a line-range citation covers, or `undefined`. */
+function citedSpan(annotation: {
+  annotatedRegions?: readonly { type?: string; startIndex?: number; endIndex?: number }[];
+}): { start: number; lines: number } | undefined {
+  const region = annotation.annotatedRegions?.[0];
+  if (region?.type !== 'text_span' || region.startIndex === undefined || region.endIndex === undefined) {
+    return undefined;
+  }
+  return { start: region.startIndex, lines: region.endIndex - region.startIndex };
+}
+
+/**
+ * Rebuilds a `text_editor_code_execution_tool_result` block from the `function_result` the text
+ * editor maps to.
+ *
+ * The typed form keeps the outcome but not the payload variant, so the variant is read back off
+ * what each one alone produces: the fixed `File update:` text of a create, an error content, a
+ * replaced/inserted line-span pair for a str_replace, and a single viewed span otherwise. The
+ * fields the receive side does not model default to what a text view reports (`file_type: 'text'`),
+ * and an error whose stored code is not one the schema accepts degrades to `unavailable` with the
+ * message preserved, rather than an invalid request.
+ */
+function rebuiltTextEditorResult(callId: string, result: unknown): AnthropicBlock {
+  const items = Array.isArray(result) ? (result as Content[]) : [];
+  const first = items[0];
+  let payload: AnthropicBlock;
+  if (first?.type === 'error') {
+    const stored = first.errorCode ?? '';
+    payload = {
+      type: 'text_editor_code_execution_tool_result_error',
+      error_code: TEXT_EDITOR_ERROR_CODES.has(stored) ? stored : 'unavailable',
+      ...(first.message === undefined || first.message === '' ? {} : { error_message: first.message }),
+    };
+  } else if (first?.type === 'text' && /^File update: (true|false)$/.test(first.text)) {
+    payload = {
+      type: 'text_editor_code_execution_create_result',
+      is_file_update: first.text === 'File update: true',
+    };
+  } else if (first?.type === 'text') {
+    const spans = (first.annotations ?? []).flatMap((annotation) => {
+      const span = citedSpan(annotation);
+      return span === undefined ? [] : [{ span, snippet: 'snippet' in annotation }];
+    });
+    const isStrReplace = spans.length >= 2 || spans.some((entry) => entry.snippet);
+    if (isStrReplace) {
+      const [oldSpan, newSpan] = spans.length >= 2 ? [spans[0], spans[1]] : [undefined, spans[0]];
+      payload = {
+        type: 'text_editor_code_execution_str_replace_result',
+        ...(first.text === '' ? {} : { lines: first.text.split('\n') }),
+        ...(oldSpan === undefined ? {} : { old_start: oldSpan.span.start, old_lines: oldSpan.span.lines }),
+        ...(newSpan === undefined ? {} : { new_start: newSpan.span.start, new_lines: newSpan.span.lines }),
+      };
+    } else {
+      const viewed = spans[0]?.span;
+      payload = {
+        type: 'text_editor_code_execution_view_result',
+        content: first.text,
+        file_type: 'text',
+        ...(viewed === undefined ? {} : { start_line: viewed.start, num_lines: viewed.lines }),
+      };
+    }
+  } else {
+    // Nothing typed to rebuild from — an empty view says "the editor reported nothing" without
+    // inventing an outcome.
+    payload = { type: 'text_editor_code_execution_view_result', content: '', file_type: 'text' };
+  }
+  return { type: 'text_editor_code_execution_tool_result', tool_use_id: callId, content: payload };
+}
+
 /**
  * Converts one framework content item into Messages API blocks.
  *
@@ -179,13 +387,52 @@ function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
  * the `thinking` block before it instead of producing one of its own (Python
  * `_prepare_message_for_anthropic`).
  */
-function appendContent(blocks: AnthropicBlock[], content: Content, answered: ReadonlySet<string>): void {
+function appendContent(
+  blocks: AnthropicBlock[],
+  contents: readonly Content[],
+  index: number,
+  ctx: ConversionContext,
+): void {
+  const content = contents[index] as Content;
   const providerExecuted = providerExecutedBlock(content);
   if (providerExecuted !== undefined) {
     blocks.push(providerExecuted);
     return;
   }
   switch (content.type) {
+    case 'code_interpreter_tool_call': {
+      // Reached only without a raw block — a restored transcript — since the raw path above
+      // replays the exact bytes otherwise. The same holds for the result cases below.
+      blocks.push(rebuiltServerToolUse(content, ctx.families.get(content.callId ?? '') ?? 'code_execution'));
+      return;
+    }
+    case 'code_interpreter_tool_result': {
+      blocks.push({
+        type: 'code_execution_tool_result',
+        tool_use_id: content.callId ?? '',
+        content: rebuiltCodeExecutionPayload(content.outputs ?? []),
+      });
+      return;
+    }
+    case 'shell_tool_result': {
+      // The files a bash run produced sit as `hosted_file` siblings *before* the shell result —
+      // that is where the receive side put them — so the rebuilt payload gathers the contiguous
+      // run immediately preceding this content.
+      const files: Content[] = [];
+      for (let cursor = index - 1; cursor >= 0; cursor--) {
+        const sibling = contents[cursor];
+        if (sibling?.type !== 'hosted_file') {
+          break;
+        }
+        files.unshift(sibling);
+      }
+      blocks.push({
+        type: 'bash_code_execution_tool_result',
+        tool_use_id: content.callId ?? '',
+        content: rebuiltBashPayload(content.outputs ?? [], files),
+      });
+      return;
+    }
     case 'text': {
       // The API rejects empty text blocks.
       if (content.text !== '') {
@@ -227,7 +474,7 @@ function appendContent(blocks: AnthropicBlock[], content: Content, answered: Rea
       // abandoned stream, a fatal middleware abort, a declaration-only tool), and the OpenAI
       // conversion already filters it the same way, so one rule governs every provider. An empty
       // callId is never a pairable identity and is dropped on the same grounds.
-      if (content.callId === '' || !answered.has(content.callId)) {
+      if (content.callId === '' || !ctx.answered.has(content.callId)) {
         return;
       }
       blocks.push({
@@ -243,6 +490,13 @@ function appendContent(blocks: AnthropicBlock[], content: Content, answered: Rea
       // identity, and with its call omitted above this `tool_result` would answer nothing —
       // exactly the shape the API refuses from the other direction.
       if (content.callId === '') {
+        return;
+      }
+      if (ctx.families.get(content.callId) === 'text_editor_code_execution') {
+        // The text editor's outcome is typed as an ordinary function result, but it answers a
+        // provider-executed call: a restored transcript rebuilds the provider's own result block,
+        // since a `tool_result` would answer a `tool_use` the request no longer contains.
+        blocks.push(rebuiltTextEditorResult(content.callId, content.result));
         return;
       }
       blocks.push({
@@ -323,11 +577,11 @@ function roleForBlock(block: AnthropicBlock, fallback: 'user' | 'assistant'): 'u
  * framework models a whole exchange as content — but Messages API insists that tool calls are
  * assistant turns and results are user turns (Python `_prepare_message_groups_for_anthropic`).
  */
-function messageGroups(msg: Message, answered: ReadonlySet<string>): AnthropicMessage[] {
+function messageGroups(msg: Message, ctx: ConversionContext): AnthropicMessage[] {
   const fallback = ROLE_MAP[msg.role] ?? 'user';
   const blocks: AnthropicBlock[] = [];
-  for (const content of msg.contents) {
-    appendContent(blocks, content, answered);
+  for (let index = 0; index < msg.contents.length; index++) {
+    appendContent(blocks, msg.contents, index, ctx);
   }
   if (blocks.length === 0) {
     return [];
@@ -374,11 +628,12 @@ function hasToolUse(msg: AnthropicMessage): boolean {
  */
 export function toAnthropicMessages(messages: readonly Message[]): AnthropicMessage[] {
   const rest = messages[0]?.role === 'system' ? messages.slice(1) : messages;
-  // Collected across the whole transcript, so a call answered in a later message stays a call.
-  const answered = answeredCallIds(rest);
+  // Both collected across the whole transcript, so a call answered in a later message stays a
+  // call and a provider-executed exchange is recognized wherever its halves sit.
+  const ctx: ConversionContext = { answered: answeredCallIds(rest), families: codeExecutionFamilies(rest) };
   const out: AnthropicMessage[] = [];
   for (const msg of rest) {
-    out.push(...messageGroups(msg, answered));
+    out.push(...messageGroups(msg, ctx));
   }
   const last = out[out.length - 1];
   if (last !== undefined && last.role === 'assistant' && !hasToolUse(last)) {
