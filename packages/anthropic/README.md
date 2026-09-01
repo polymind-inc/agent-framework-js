@@ -60,6 +60,22 @@ the model like a call with `raw` set. Rename the parameter if that ambiguity mat
 `FunctionCallContent.arguments` and serialized sessions are never rewritten — this applies only to
 what goes on the wire.
 
+## Tool calls without a result
+
+The Messages API refuses a transcript in which a `tool_use` has no matching `tool_result`, with a
+400 naming the call. A transcript legitimately reaches that state: an approval pause suspends the
+run with the call unanswered, the iteration limit ends a round holding calls it will not execute, a
+caller abandons a stream partway, a middleware aborts the batch, or a declaration-only tool hands
+its call back to the caller who saves the session before answering.
+
+The conversion therefore omits a `function_call` that no `function_result` anywhere in the
+transcript answers — the same send-time filtering the OpenAI conversion applies, so one rule
+governs every provider. A call whose result arrives in a later message is kept; a call with an
+empty `callId` is always omitted, because an empty id is not a pairable identity. As with argument
+handling, `FunctionCallContent` and serialized sessions are never rewritten: the call stays in your
+transcript, it just does not go on the wire. Previously such a transcript was sent as-is and the
+API rejected the whole request.
+
 ---
 
 Part of [Agent Framework for TypeScript](https://github.com/polymind-inc/agent-framework-js) — an

@@ -21,6 +21,17 @@ contain breaking changes**; patch releases are fixes only.
   code runs on the consumer's behalf after it walks away, and issuing fresh requests from a
   cancelled run would invert what cancellation means — the dangling state there is unchanged.
 
+- **`@polymind-inc/agent-framework-anthropic`** — a `function_call` that no `function_result`
+  anywhere in the transcript answers is omitted from the request instead of being sent as a
+  `tool_use` the Messages API refuses with a 400 (`Each tool_use block must have a corresponding
+  tool_result block`, measured 2026-08-31). Transcripts legitimately hold such calls — an approval
+  pause, the iteration limit, an abandoned stream, a fatal middleware abort, a declaration-only
+  tool answered after the session was saved — and the OpenAI conversion already filters them the
+  same way, so one rule now governs both providers. A call answered in a later message is kept, a
+  call with an empty `callId` is always omitted, and `FunctionCallContent` and serialized sessions
+  are never rewritten — the call stays in the transcript; it just never goes on the wire. A request that
+  used to fail with the 400 above now goes through without the dangling call.
+
 - **`@polymind-inc/agent-framework-mcp`** — MCP client spans emit `server.port` as an integer, as
   the OpenTelemetry semantic conventions define the attribute, instead of the string the WHATWG URL
   API reports. **Dashboard migration:** a query that compared the attribute as a string
