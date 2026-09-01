@@ -321,6 +321,52 @@ describe('MiddlewareFailed ends the run', () => {
     released();
   });
 
+  it('is what the caller sees even when a sibling fails on the abort', async () => {
+    // A sibling knocked over by the cancellation must not stand in for the failure that caused it.
+    // This one rejects from its abort listener, the earliest a sibling failure can possibly land.
+    const collapsing = tool({
+      name: 'collapsing',
+      description: 'Rejects as soon as it is aborted',
+      parameters: { type: 'object', properties: {} },
+      execute: async (_input, ctx) => {
+        await new Promise<void>((_resolve, reject) => {
+          ctx.signal?.addEventListener('abort', () => reject(new Error('aborted mid-flight')), {
+            once: true,
+          });
+        });
+        return 'never';
+      },
+    });
+    const failing = tool({
+      name: 'failing',
+      description: 'Fails the run',
+      parameters: { type: 'object', properties: {} },
+      execute: () => {
+        throw new MiddlewareFailed('policy service is unreachable');
+      },
+    });
+
+    const client = createFunctionInvocationClientFactory(
+      new MockChatClient([
+        {
+          contents: [
+            { type: 'function_call', callId: 'c1', name: 'collapsing', arguments: '{}' },
+            { type: 'function_call', callId: 'c2', name: 'failing', arguments: '{}' },
+          ],
+          finishReason: 'tool_calls',
+        },
+        { contents: [textContent('never reached')], finishReason: 'stop' },
+      ]),
+      { allowConcurrentInvocations: true },
+    )();
+
+    await expect(
+      client.getResponse([{ role: 'user', contents: [textContent('go')] }], {
+        tools: [collapsing, failing],
+      } as never),
+    ).rejects.toThrow(MiddlewareFailed);
+  });
+
   it('is not caught by the seam even when the tool would have succeeded', async () => {
     let ran = 0;
     const counted = tool({
