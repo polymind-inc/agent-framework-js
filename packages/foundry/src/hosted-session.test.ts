@@ -182,6 +182,25 @@ describe('the hosted session id on the wire', () => {
     expect(client.sent).toEqual([undefined, undefined]);
   });
 
+  it('follows the service to a new sandbox when it reports a different id', async () => {
+    // Foundry owns provisioning, idle suspend and TTL: a recycled sandbox comes back under a new
+    // id, and a session still sending the old one would be asking for something that is gone.
+    const client = new FoundryLikeClient([
+      { contents: [textContent('one')], reports: 'sess_old' },
+      { contents: [textContent('two')], reports: 'sess_new' },
+      { contents: [textContent('three')], reports: 'sess_new' },
+    ]);
+    const agent = new Agent({ client });
+    const session = agent.createSession();
+
+    await agent.run('one', { session });
+    await agent.run('two', { session });
+    await agent.run('three', { session });
+
+    expect(client.sent).toEqual([undefined, 'sess_old', 'sess_new']);
+    expect(session.state[FOUNDRY_HOSTED_SESSION_STATE_KEY]).toBe('sess_new');
+  });
+
   it('sends nothing when the service never reports one', async () => {
     const client = new FoundryLikeClient([{ contents: [textContent('done')] }]);
     const agent = new Agent({ client });

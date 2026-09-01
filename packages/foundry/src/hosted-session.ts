@@ -68,7 +68,15 @@ export function withHostedSessionId<TOptions extends OpenAIChatOptions>(
   client: ChatClient<TOptions>,
   session: AgentSession,
 ): ChatClient<TOptions> {
-  /** Records an id the service reported, the first time one is seen. */
+  /**
+   * Points the session at whichever sandbox the service says it is on.
+   *
+   * A reported id replaces what the session held, rather than being ignored once one is set. The
+   * service is the authority on which sandbox is answering: Foundry owns provisioning, idle
+   * suspend and TTL, so a recycled sandbox is replaced by a new one and reported under a new id,
+   * and a session still sending the old one would be asking for something that no longer exists.
+   * Both reference implementations assign unconditionally for the same reason.
+   */
   const capture = (raw: unknown): void => {
     const reported = reportedHostedSessionId(raw);
     if (reported !== undefined) {
