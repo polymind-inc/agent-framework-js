@@ -15,6 +15,15 @@ contain breaking changes**; patch releases are fixes only.
   value defaults to `None` and an explicit JSON `null` deserializes to that same `None`. Only a
   script that deliberately distinguished the two — against the declared type — observes a change.
 
+- **`@polymind-inc/agent-framework-core`** — a tool call whose arguments fail to parse or fail
+  schema validation is answered with `Error: Argument parsing failed.` instead of the
+  `Error: Function failed.` a thrown tool body produces. The two failures call for opposite model
+  responses — a schema violation is worth retrying with corrected arguments, an execution failure
+  usually is not — and the shared text removed the one signal that distinguishes them. The wording
+  matches Python. The `exception` field still carries the validation detail, `includeDetailedErrors`
+  still appends the underlying message the same way, and the not-found, execution-failure and
+  success texts are unchanged.
+
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryChatClient.createConversation()` creates a
   server-side conversation and returns its id, so a run can start on a conversation that already
   exists — and is already visible in the Foundry Project UI — instead of one the first response
