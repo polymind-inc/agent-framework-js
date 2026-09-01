@@ -343,7 +343,8 @@ export function withMiddleware<TOptions extends ChatOptions>(
   // has to carry the underlying client's capability methods or `supportsMcp` and friends would
   // report a capable client as incapable after wrapping. `forSession` is a different capability
   // with the same hazard: `Agent` reads it off the client it was handed, so a wrapper that drops
-  // it turns a session-scoped provider into an ordinary one with nothing to say so.
+  // it silently turns a session-scoped provider into an ordinary one — nothing fails, and nothing
+  // reports the loss.
   const capabilities: Record<string, unknown> = {};
   for (const method of [...HOSTED_TOOL_CAPABILITY_METHODS, 'forSession']) {
     const fn = (client as unknown as Record<string, unknown>)[method];

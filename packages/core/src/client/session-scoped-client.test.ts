@@ -138,7 +138,7 @@ describe('SessionScopedChatClient', () => {
   it('survives being wrapped with withMiddleware, which the agent still collects from', async () => {
     // `withMiddleware` is the documented way to wrap any client, and the agent reads both the
     // middleware and this capability off the client it was handed. A wrapper that carried only the
-    // first would turn a session-scoped provider into an ordinary one with nothing to say so.
+    // first would silently turn a session-scoped provider into an ordinary one.
     const client = new StampingClient(twoRounds());
     const seen: string[] = [];
     const observer = functionMiddleware(async (ctx, next) => {
