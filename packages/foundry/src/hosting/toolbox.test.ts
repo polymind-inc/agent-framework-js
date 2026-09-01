@@ -31,6 +31,8 @@ const credential: TokenCredential = {
 interface RecordedCall {
   method: string;
   headers: Record<string, string>;
+  /** The tool name a `tools/call` request carried, absent for other methods. */
+  toolName?: string;
 }
 
 /** An MCP tool declaration. `inputSchema` is required by the protocol. */
@@ -62,6 +64,8 @@ function stubToolbox(
     resources?: Record<string, string>;
     /** Passed straight to the toolbox; `false` hides its tools from the model. */
     loadTools?: boolean;
+    /** Passed straight to the toolbox: namespaces the exposed tool names. */
+    toolNamePrefix?: string;
     /** The first request awaits this before reaching the stub, so a test can race `close()` in. */
     holdFirstRequest?: Promise<void>;
     /** `tools/call` requests await this forever, so a test can abort one in flight. */
@@ -93,7 +97,11 @@ function stubToolbox(
       failedOnce = true;
       throw new Error('connection reset');
     }
-    const request = JSON.parse(String(init?.body ?? '{}')) as { id?: number; method?: string };
+    const request = JSON.parse(String(init?.body ?? '{}')) as {
+      id?: number;
+      method?: string;
+      params?: { name?: string };
+    };
     if (request.method === 'tools/call' && (options.dieOnToolCalls ?? []).includes(++toolCallCount)) {
       // What a Foundry toolbox answers once it has expired the MCP session.
       return new Response('Session terminated', { status: 404 });
@@ -102,7 +110,13 @@ function stubToolbox(
     new Headers(init?.headers).forEach((value, name) => {
       headers[name] = value;
     });
-    calls.push({ method: request.method ?? '(none)', headers });
+    calls.push({
+      method: request.method ?? '(none)',
+      headers,
+      ...(typeof request.params?.name === 'string' && request.method === 'tools/call'
+        ? { toolName: request.params.name }
+        : {}),
+    });
 
     if (request.method === 'tools/call' && options.holdToolCalls !== undefined) {
       options.onToolCall?.();
@@ -168,6 +182,7 @@ function stubToolbox(
       fetch: fetchStub,
       ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
       ...(options.loadTools === undefined ? {} : { loadTools: options.loadTools }),
+      ...(options.toolNamePrefix === undefined ? {} : { toolNamePrefix: options.toolNamePrefix }),
     }),
     calls,
   };
@@ -339,6 +354,83 @@ describe('FoundryToolbox tools', () => {
       });
 
       expect((error as Error).message).toBe('MCP tool "search_docs" reported an error.');
+    });
+  });
+
+  describe('declaration normalization', () => {
+    // The same rules `McpClient` applies, shared rather than re-implemented: a provider only
+    // accepts `[A-Za-z0-9_.-]` in a function name and refuses an object schema without
+    // `properties`, so an unnormalized declaration makes the tool unreachable with a 400.
+
+    it('normalizes a bare zero-argument schema so providers accept the declaration', async () => {
+      const { toolbox } = stubToolbox({
+        tools: [{ name: 'ping', inputSchema: { type: 'object' } }],
+      });
+
+      const [tool] = await toolbox.getTools();
+
+      expect(tool?.jsonSchema).toEqual({ type: 'object', properties: {} });
+      await toolbox.close();
+    });
+
+    it('exposes a normalized name while calling the server with the remote one', async () => {
+      const { toolbox, calls } = stubToolbox({
+        tools: [{ name: 'search docs!', description: 'Search the docs' }],
+      });
+
+      const [tool] = await toolbox.getTools();
+      expect(tool?.name).toBe('search-docs-');
+
+      await tool?.execute?.({ q: 'hello' }, { callId: 'c1' });
+      expect(calls.find((c) => c.method === 'tools/call')?.toolName).toBe('search docs!');
+      await toolbox.close();
+    });
+
+    it('namespaces the exposed names under the configured prefix', async () => {
+      const { toolbox, calls } = stubToolbox({
+        tools: [{ name: 'search docs!' }],
+        toolNamePrefix: 'github',
+      });
+
+      const [tool] = await toolbox.getTools();
+      expect(tool?.name).toBe('github_search-docs-');
+
+      await tool?.execute?.({ q: 'hello' }, { callId: 'c1' });
+      expect(calls.find((c) => c.method === 'tools/call')?.toolName).toBe('search docs!');
+      await toolbox.close();
+    });
+
+    it('filters allowedTools by the remote name, prefix or not', async () => {
+      const { toolbox } = stubToolbox({
+        tools: [{ name: 'search docs!' }, { name: 'other' }],
+        allowedTools: ['search docs!'],
+        toolNamePrefix: 'github',
+      });
+
+      const tools = await toolbox.getTools();
+
+      expect(tools.map((t) => t.name)).toEqual(['github_search-docs-']);
+      await toolbox.close();
+    });
+
+    it('still raises the typed consent refusal for a tool exposed under a normalized name', async () => {
+      // Consent correlation rides on the call id, not the tool name, so renaming must not turn
+      // the gateway's refusal into an ordinary tool failure — and the request that triggered it
+      // must still name the remote tool.
+      const { toolbox, calls } = stubToolbox({
+        tools: [{ name: 'search docs!' }],
+        consentOn: 'tools/call',
+      });
+
+      const [tool] = await toolbox.getTools();
+      const failure = tool?.execute?.({ q: 'x' }, { callId: 'c1' });
+
+      await expect(failure).rejects.toBeInstanceOf(ToolboxConsentRequiredError);
+      await expect(failure).rejects.toMatchObject({
+        consents: [{ serverLabel: 'github', consentLink: 'https://consent.example.com/auth' }],
+      });
+      expect(calls.find((c) => c.method === 'tools/call')?.toolName).toBe('search docs!');
+      await toolbox.close();
     });
   });
 

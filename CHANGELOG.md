@@ -6,6 +6,17 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-foundry`** — `FoundryToolbox` now normalizes the tool
+  declarations it exposes by the same shared rules the MCP client applies, instead of passing them
+  through raw: a remote name containing characters providers refuse (anything outside
+  `[A-Za-z0-9_.-]`) is exposed with those characters replaced by `-`, and a bare
+  `{ "type": "object" }` schema — the common spelling for "takes no arguments" — gains the empty
+  `properties` map OpenAI requires. Both defects previously made such a tool unreachable with a
+  provider 400. `tools/call`, `allowedTools` and error messages keep using the toolbox's own names,
+  the server-owned schema object is never modified, and consent correlation is unaffected (it rides
+  on the call id). New public API: `FoundryToolboxConfig.toolNamePrefix` namespaces the exposed
+  names as `<prefix>_<name>`, with the same joining rules as `McpClientConfig.toolNamePrefix`.
+
 - **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
   arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
   advertised default — and that value used to be handed to `SkillScript.run` even though the

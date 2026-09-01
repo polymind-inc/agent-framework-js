@@ -33,6 +33,13 @@ project over MCP. A toolbox publishes two independent things and the class expos
 the same connection, so skills need no separate credential — and `loadTools: false` gives an agent
 the skills without exposing the tools.
 
+Tool declarations are normalized by the same rules the MCP client applies: a name is exposed with
+every character outside `[A-Za-z0-9_.-]` replaced by `-` (providers accept nothing else in a
+function name), and a bare `{ "type": "object" }` schema gains the empty `properties` map providers
+require — while `tools/call`, `allowedTools` and error messages keep using the toolbox's own names.
+`toolNamePrefix` namespaces the exposed names as `<prefix>_<name>`, the way it does on `McpClient`,
+for the moment two toolboxes both advertise a `search`.
+
 ## Starting on a conversation that already exists
 
 A run continues whatever conversation its session names, and by default the first response mints

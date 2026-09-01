@@ -10,7 +10,12 @@ import type {
 import { skillsProvider, tool } from '@polymind-inc/agent-framework-core';
 import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
 import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
-import { callToolFailure, contentsOfCallToolResult } from '@polymind-inc/agent-framework-mcp/internal';
+import {
+  callToolFailure,
+  contentsOfCallToolResult,
+  localToolName,
+  normalizeInputSchema,
+} from '@polymind-inc/agent-framework-mcp/internal';
 import type { FoundryProject } from '../project.js';
 import { FOUNDRY_API_VERSION } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
@@ -48,6 +53,17 @@ export interface FoundryToolboxConfig {
    */
   loadTools?: boolean;
   /**
+   * Namespaces the tool names this toolbox exposes to the model, as `<prefix>_<name>`.
+   *
+   * Two toolboxes that both advertise `search` collide the moment their tools reach one agent; a
+   * prefix is how the caller separates them, exactly as `McpClientConfig.toolNamePrefix` does for
+   * plain MCP servers — the joining and normalization rules are the same shared implementation.
+   *
+   * Only the exposed name changes. `tools/call`, {@link FoundryToolboxConfig.allowedTools} and
+   * error messages all keep using the toolbox's own name.
+   */
+  toolNamePrefix?: string;
+  /**
    * Replaces the transport's `fetch`, for proxies and tests.
    *
    * The per-call authorization wrapper is applied *around* whatever is supplied here, so a
@@ -76,6 +92,7 @@ export class FoundryToolbox {
   readonly #endpoint: string;
   readonly #allowedTools: ReadonlySet<string> | undefined;
   readonly #loadTools: boolean;
+  readonly #toolNamePrefix: string | undefined;
   readonly #connection: McpConnection;
 
   constructor(options: FoundryToolboxConfig) {
@@ -84,6 +101,7 @@ export class FoundryToolbox {
     this.#endpoint = project.endpoint;
     this.#allowedTools = options.allowedTools === undefined ? undefined : new Set(options.allowedTools);
     this.#loadTools = options.loadTools ?? true;
+    this.#toolNamePrefix = options.toolNamePrefix;
 
     const fetch = options.fetch ?? project.fetch;
     this.#connection = new McpConnection({
@@ -132,11 +150,13 @@ export class FoundryToolbox {
       .filter((declared) => this.#allowedTools?.has(declared.name) ?? true)
       .map((declared) =>
         tool({
-          name: declared.name,
+          // Exposed under the provider-safe name the shared MCP rules produce; every request to
+          // the toolbox below keeps using `declared.name`, the name the server owns.
+          name: localToolName(declared.name, this.#toolNamePrefix),
           // A tool declared without a description gets an empty one — the name is not reused as a
           // stand-in (Python parity: `tool.description or ""`).
           description: declared.description ?? '',
-          parameters: (declared.inputSchema ?? { type: 'object' }) as Record<string, unknown>,
+          parameters: normalizeInputSchema(declared.inputSchema as Record<string, unknown> | undefined),
           execute: async (input: unknown, ctx: ToolContext) => {
             let result: CallToolResult;
             try {

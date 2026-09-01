@@ -10,3 +10,4 @@
 
 export type { CallToolResultShape } from './content.js';
 export { callToolFailure, contentsOfCallToolResult } from './content.js';
+export { localToolName, normalizeInputSchema } from './declarations.js';
