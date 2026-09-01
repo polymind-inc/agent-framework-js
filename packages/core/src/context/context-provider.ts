@@ -115,6 +115,15 @@ function sourceTypeOf(provider: ContextProvider): MessageSourceType {
  * fixing an omission. A run the caller abandoned partway *does* have a response, so it is stored
  * like any other; see the note on stopping early in `AgentRunStream`.
  *
+ * **A structured-output failure is not one of those failures.** When the model answered but its
+ * text could not be parsed or validated against the caller's schema, this hook is called with the
+ * `response` and no `error`, and the exchange is stored — even though `run()` then rejects with a
+ * `StructuredOutputError`. The model said something, and it was billed; what failed is the
+ * caller's contract with their own schema, which is downstream of the conversation. Dropping the
+ * turn instead would leave a hole the next request replays, so the model could not even be asked
+ * to correct itself. A provider that wants to know a run ended badly for the caller cannot learn
+ * it here — the reference implementations parse lazily and never reach this state at all.
+ *
  * What reaches the store beyond the caller's input and the response is
  * {@link HistoryStoreOptions.storeContextMessages}.
  */
