@@ -1700,6 +1700,183 @@ describe('calls whose arguments are missing or null', () => {
   });
 });
 
+describe('argument failures are reported distinctly from execution failures', () => {
+  // The two failures call for opposite model responses: a schema violation is worth retrying with
+  // corrected arguments, a tool body that threw usually is not. Reporting both as
+  // "Error: Function failed." removes the one signal that changes what the model does next.
+
+  const strictParameters = {
+    type: 'object' as const,
+    properties: { resource: { type: 'string' } },
+    required: ['resource'],
+    additionalProperties: false,
+  };
+
+  function strictTool(execute: () => Promise<string> = async () => 'never') {
+    return tool({ name: 'strict', description: 'd', parameters: strictParameters, execute });
+  }
+
+  function scripted(...calls: FunctionCallContent[]): MockChatClient {
+    return new MockChatClient([
+      { contents: calls, finishReason: 'tool_calls' },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+  }
+
+  it('answers a schema validation failure with the argument-failure text', async () => {
+    const execute = vi.fn(async () => 'never');
+    const inner = scripted(call('c1', 'strict', '{}'));
+
+    const response = await withFunctionInvocation(inner).getResponse([], {
+      tools: [strictTool(execute)],
+    } as ChatOptions);
+
+    expect(execute).not.toHaveBeenCalled();
+    const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    // Exact, whole-content match: with detailed errors off the text is fixed, and the `exception`
+    // marker still carries the validation message a caller branches on.
+    expect(results).toEqual([
+      {
+        type: 'function_result',
+        callId: 'c1',
+        result: 'Error: Argument parsing failed.',
+        exception: 'Invalid arguments: $.resource: required property is missing',
+      },
+    ]);
+    // The failure is reported to the model, not fatal: the loop carried on to the final answer.
+    expect(response.text).toBe('done');
+  });
+
+  it('answers malformed argument JSON with the argument-failure text', async () => {
+    const inner = scripted(call('c1', 'strict', '{"resource":'));
+
+    const response = await withFunctionInvocation(inner).getResponse([], {
+      tools: [strictTool()],
+    } as ChatOptions);
+
+    const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    expect(results[0]?.result).toBe('Error: Argument parsing failed.');
+    expect(results[0]?.exception).toContain('Invalid JSON arguments');
+  });
+
+  it('answers a standard-schema validation failure with the argument-failure text', async () => {
+    const validating = tool({
+      name: 'strict',
+      description: 'd',
+      parameters: {
+        '~standard': {
+          version: 1 as const,
+          vendor: 'test',
+          validate: () => ({ issues: [{ message: 'value must be a string', path: ['value'] }] }),
+        },
+        toJsonSchema: () => echoSchema,
+      } as never,
+      execute: async () => 'never',
+    });
+    const inner = scripted(call('c1', 'strict', '{"value":123}'));
+
+    const response = await withFunctionInvocation(inner).getResponse([], {
+      tools: [validating],
+    } as ChatOptions);
+
+    expect(resultsOf(response.messages.flatMap((m) => m.contents))[0]?.result).toBe(
+      'Error: Argument parsing failed.',
+    );
+  });
+
+  it('appends the underlying message only with includeDetailedErrors', async () => {
+    const inner = scripted(call('c1', 'strict', '{}'));
+
+    const response = await withFunctionInvocation(inner, { includeDetailedErrors: true }).getResponse([], {
+      tools: [strictTool()],
+    } as ChatOptions);
+
+    const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    expect(results[0]?.result).toBe(
+      'Error: Argument parsing failed. ' +
+        'Exception: Invalid arguments: $.resource: required property is missing',
+    );
+    expect(results[0]?.exception).toBe('Invalid arguments: $.resource: required property is missing');
+  });
+
+  it('reports the argument-failure text through the middleware path too', async () => {
+    // Arguments are resolved before the middleware chain runs, so the middleware execution path
+    // builds this result at its own site; both sites must report the same text.
+    const observed: string[] = [];
+    const inner = scripted(call('c1', 'strict', '{}'));
+
+    const response = await withFunctionInvocation(inner, {
+      middleware: [
+        functionMiddleware(async (ctx, next) => {
+          observed.push(ctx.tool.name);
+          await next();
+        }),
+      ],
+    }).getResponse([], { tools: [strictTool()] } as ChatOptions);
+
+    // The chain never ran: the call failed before the tool became invocable.
+    expect(observed).toEqual([]);
+    expect(resultsOf(response.messages.flatMap((m) => m.contents))[0]?.result).toBe(
+      'Error: Argument parsing failed.',
+    );
+  });
+
+  it('keeps the execution-failure text for a tool body that threw', async () => {
+    const inner = scripted(call('c1', 'strict', '{"resource":"r"}'));
+
+    const response = await withFunctionInvocation(inner).getResponse([], {
+      tools: [
+        strictTool(async () => {
+          throw new Error('kaboom');
+        }),
+      ],
+    } as ChatOptions);
+
+    const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    expect(results).toEqual([
+      {
+        type: 'function_result',
+        callId: 'c1',
+        result: 'Error: Function failed.',
+        exception: 'kaboom',
+      },
+    ]);
+  });
+
+  it('keeps the execution-failure detail format with includeDetailedErrors', async () => {
+    const inner = scripted(call('c1', 'strict', '{"resource":"r"}'));
+
+    const response = await withFunctionInvocation(inner, { includeDetailedErrors: true }).getResponse([], {
+      tools: [
+        strictTool(async () => {
+          throw new Error('kaboom');
+        }),
+      ],
+    } as ChatOptions);
+
+    expect(resultsOf(response.messages.flatMap((m) => m.contents))[0]?.result).toBe(
+      'Error: Function failed. Exception: kaboom',
+    );
+  });
+
+  it('keeps the not-found and success texts unchanged', async () => {
+    const inner = new MockChatClient([
+      {
+        contents: [call('c1', 'missing', '{}'), call('c2', 'strict', '{"resource":"r"}')],
+        finishReason: 'tool_calls',
+      },
+      { contents: [textContent('done')], finishReason: 'stop' },
+    ]);
+
+    const response = await withFunctionInvocation(inner).getResponse([], {
+      tools: [strictTool(async () => 'pong')],
+    } as ChatOptions);
+
+    const results = resultsOf(response.messages.flatMap((m) => m.contents));
+    expect(results.map((r) => r.result)).toEqual(['Error: Requested function "missing" not found.', 'pong']);
+  });
+});
+
 describe('withFunctionInvocation at the iteration limit', () => {
   const FALLBACK_TEXT = 'Function invocation limit reached before a final answer could be produced.';
 
