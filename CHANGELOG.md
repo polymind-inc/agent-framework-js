@@ -6,6 +6,21 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-core`** — dangling tool calls are settled when the service owns
+  the transcript. A fatal `MiddlewareFailed` abort — mid-round or during an approved-replay batch —
+  and the final over-budget round can leave `function_call`s that never produce a result; on a
+  service-managed conversation those calls sit on the service's side, and the next request over
+  that conversation is rejected by providers that require every call to be answered. The loop now
+  submits one error `function_result` per dangling call with `toolChoice: 'none'` before the abort
+  propagates, matching the reference implementation's settlement path, and advances the session's
+  persisted continuation to the settlement response so response-id chaining starts from the
+  endpoint whose chain includes the synthetic outputs — a conversation anchor the provider declares
+  stable stays put. The original failure still reaches the caller unchanged, a settlement failure
+  never masks it, nothing is sent when the framework owns the transcript, and the extra request
+  exists only on these failure paths. A run abandoned mid-stream is deliberately not settled: no
+  code runs on the consumer's behalf after it walks away, and issuing fresh requests from a
+  cancelled run would invert what cancellation means — the dangling state there is unchanged.
+
 - **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
   arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
   advertised default — and that value used to be handed to `SkillScript.run` even though the
