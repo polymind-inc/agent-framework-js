@@ -145,6 +145,17 @@ export interface ChatClient<TOptions extends ChatOptions = ChatOptions> {
  *   serialization.
  * - **Do not mutate the caller's options.** Copy, then add.
  * - Return a client, not a promise: this runs on the hot path of every round.
+ *
+ * ## Declaring it through a wrapper
+ *
+ * `Agent` looks for this on the client it was constructed with, so a wrapper stands between them.
+ * `withMiddleware` carries it over, as it already carries the hosted-tool capability methods —
+ * that is the wrapper meant for wrapping a client on the way in.
+ *
+ * The other exported client layers (`withChatTelemetry`, `withToolApproval`,
+ * `withFunctionInvocation`, `withStructuredOutput`) do not, and are not meant to: `Agent` applies
+ * each of them itself, so applying one before constructing an agent doubles a layer rather than
+ * adding one. A client wrapped that way loses this capability along with its hosted-tool ones.
  */
 export interface SessionScopedChatClient<TOptions extends ChatOptions = ChatOptions> {
   /**
