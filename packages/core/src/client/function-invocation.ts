@@ -1,5 +1,5 @@
 import type { AgentSession } from '../agent/session.js';
-import { validateSafeInteger } from '../errors.js';
+import { MiddlewareFailed, validateSafeInteger } from '../errors.js';
 import type { FunctionMiddleware } from '../middleware/middleware.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import {
@@ -123,6 +123,30 @@ function withoutFunctionTools<TOptions extends ChatOptions>(options: TOptions): 
 /** The answer a run ends with when the iteration budget ran out before the model produced one. */
 const FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT =
   'Function invocation limit reached before a final answer could be produced.';
+
+/** The two strings a settlement `function_result` carries for one class of dangling call. */
+interface SettlementReport {
+  result: string;
+  exception: string;
+}
+
+/**
+ * What settlement reports for a call a fatal abort left unanswered.
+ *
+ * Verbatim from the reference implementation's `MiddlewareFailure` settlement path, marker
+ * included — a consumer that branches on `function_result.exception` reads the same string here
+ * as there, not this build's class name.
+ */
+const ABORTED_SETTLEMENT_REPORT: SettlementReport = {
+  result: 'Error: Tool execution was aborted by middleware before a result was produced.',
+  exception: 'MiddlewareFailure',
+};
+
+/** What settlement reports for a call the final, toolless round produced anyway. */
+const LIMIT_SETTLEMENT_REPORT: SettlementReport = {
+  result: 'Error: Function invocation limit reached before a result was produced.',
+  exception: 'FunctionInvocationLimitError',
+};
 
 /**
  * Content types that are an answer in themselves, alongside non-blank text.
@@ -436,6 +460,77 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
   ): Promise<RoundOutcome> => runInvocationRound(calls, tools, errorCount, env, roundConfig);
 
   /**
+   * Resolves dangling calls on a service-managed conversation.
+   *
+   * A round can end holding calls that never produced a result — a fatal abort mid-batch, or the
+   * final toolless round producing calls anyway. While the framework owns the transcript that is
+   * harmless: the next request is assembled locally and the unanswerable call is filtered out. On
+   * a service-managed conversation the calls are on the *service's* side, the framework cannot
+   * filter them, and the next request over that conversation continues from them — which at least
+   * one provider rejects outright rather than tolerating.
+   *
+   * So the thread is settled with one error `function_result` per dangling call, sent with
+   * `toolChoice: 'none'` so the settlement request cannot ask for more calls, exactly as the
+   * reference implementation settles an aborted batch. The persisted continuation then advances
+   * to the settlement response: for response-id chaining that is the first endpoint whose chain
+   * includes the synthetic outputs, while an anchor the provider declares stable stays put. The
+   * settlement response is otherwise discarded. Everything here is best-effort — a settlement
+   * failure never replaces or masks the failure that caused it — and costs one extra request,
+   * only on this path and only when a service-managed conversation is in play.
+   */
+  async function settleDanglingServiceCalls(
+    calls: readonly FunctionCallContent[],
+    options: TOptions,
+    conversationId: string | undefined,
+    session: AgentSession | undefined,
+    report: SettlementReport,
+  ): Promise<void> {
+    if (conversationId === undefined || conversationId === '') {
+      return;
+    }
+    const contents: Content[] = [];
+    for (const call of calls) {
+      if (call.callId === '') {
+        continue;
+      }
+      contents.push({
+        type: 'function_result',
+        callId: call.callId,
+        result: report.result,
+        exception: report.exception,
+        ...(call.additionalProperties === undefined
+          ? {}
+          : { additionalProperties: call.additionalProperties }),
+      });
+    }
+    if (contents.length === 0) {
+      return;
+    }
+    try {
+      const settleOptions = { ...options, toolChoice: 'none', conversationId } as TOptions;
+      delete (settleOptions as ChatOptions).continuationToken;
+      const settled = await client.getResponse(
+        [{ role: 'tool', contents, messageId: crypto.randomUUID() }],
+        settleOptions,
+      );
+      const settledId = settled.conversationId;
+      const current = session?.serviceSessionId;
+      if (
+        session !== undefined &&
+        settledId !== undefined &&
+        settledId !== '' &&
+        settledId !== current &&
+        !(current !== undefined && client.metadata.stableConversationId?.(current) === true)
+      ) {
+        session.serviceSessionId = settledId;
+      }
+    } catch {
+      // Best-effort by design: a settlement failure must never replace or mask the failure that
+      // caused it. The next request over this conversation may still be rejected by the service.
+    }
+  }
+
+  /**
    * Resolves approval decisions the caller sent in with this run.
    *
    * Mirrors Go `processToolApprovalResponses`: approval request/response content is removed from
@@ -451,6 +546,7 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
     messages: Message[],
     tools: Map<string, AnyFunctionTool>,
     env: InvocationEnv,
+    settleDanglingCalls?: (calls: readonly FunctionCallContent[]) => Promise<void>,
   ): Promise<
     | {
         history: Message[];
@@ -638,10 +734,20 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
     const approved = decisions.filter((decision) => decision.approved).map((decision) => decision.call);
     let outcome: RoundOutcome | undefined;
     if (approved.length > 0) {
-      outcome = await runRound(approved, tools, 0, {
-        ...env,
-        approvedCallIds: new Set(approved.map((call) => call.callId)),
-      });
+      try {
+        outcome = await runRound(approved, tools, 0, {
+          ...env,
+          approvedCallIds: new Set(approved.map((call) => call.callId)),
+        });
+      } catch (error) {
+        if (error instanceof MiddlewareFailed) {
+          // Fail-closed abort during an approved replay: the calls belong to an earlier,
+          // already-persisted model turn, so a service-managed conversation is settled before
+          // the abort propagates (best-effort inside the callback).
+          await settleDanglingCalls?.(approved);
+        }
+        throw error;
+      }
       contents.push(...outcome.contents);
     }
 
@@ -713,6 +819,14 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
       messages,
       buildToolMap(current.tools, additionalTools),
       env,
+      (approvedCalls) =>
+        settleDanglingServiceCalls(
+          approvedCalls,
+          current,
+          current.conversationId,
+          session,
+          ABORTED_SETTLEMENT_REPORT,
+        ),
     );
     // Calls resolved from inbound approvals are part of the same run, so their failures count
     // toward the same budget the loop below spends.
@@ -761,10 +875,16 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
 
       const inner = client.getResponse(history, roundOptions);
       const updates: ChatResponseUpdate[] = [];
+      // Only the final round keeps its raw updates: what `retained` removed there is exactly what
+      // may need settling on a service-managed conversation below.
+      const rawUpdates: ChatResponseUpdate[] = [];
       let flushed = 0;
       let buffering = false;
       if (stream) {
         for await (const raw of inner) {
+          if (isFinalIteration) {
+            rawUpdates.push(raw);
+          }
           const update = retained(raw);
           if (update === undefined) {
             continue;
@@ -778,6 +898,9 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
         }
       } else {
         for (const raw of chatResponseToUpdates(await inner)) {
+          if (isFinalIteration) {
+            rawUpdates.push(raw);
+          }
           const update = retained(raw);
           if (update !== undefined) {
             updates.push(update);
@@ -813,13 +936,41 @@ export function createFunctionInvocationClientFactory<TOptions extends ChatOptio
         if (!hasUserVisibleAnswer(roundResponse) && !hasHostedApprovalRequest(roundResponse)) {
           yield limitFallbackUpdate(roundResponse);
         }
+        // A call the model produced anyway was removed from what the caller sees — but on a
+        // service-managed conversation the service still holds it, so it is settled like an
+        // aborted batch, or the next run over this conversation is rejected.
+        const withdrawn = collectExecutableCalls(mergeChatUpdates(rawUpdates).messages);
+        if (withdrawn.length > 0) {
+          const settleId = optionsForNextIteration(
+            current,
+            roundResponse.conversationId,
+            client.metadata.stableConversationId,
+          ).conversationId;
+          await settleDanglingServiceCalls(withdrawn, current, settleId, session, LIMIT_SETTLEMENT_REPORT);
+        }
         return;
       }
       if (shouldStop(calls, tools)) {
         return;
       }
 
-      const outcome = await runRound(calls, tools, errorCount, env);
+      let outcome: RoundOutcome;
+      try {
+        outcome = await runRound(calls, tools, errorCount, env);
+      } catch (error) {
+        if (error instanceof MiddlewareFailed) {
+          // The batch aborted with its calls unanswered. On a service-managed conversation those
+          // calls sit on the service's side, where the next request continues from them — settle
+          // them before the abort propagates; the failure still reaches the caller unchanged.
+          const settleId = optionsForNextIteration(
+            current,
+            roundResponse.conversationId,
+            client.metadata.stableConversationId,
+          ).conversationId;
+          await settleDanglingServiceCalls(calls, current, settleId, session, ABORTED_SETTLEMENT_REPORT);
+        }
+        throw error;
+      }
       const contents = outcome.contents;
       errorCount = outcome.errorCount;
 
