@@ -486,12 +486,14 @@ describe('message conversion', () => {
     });
 
     it('keeps a call whose result arrives in a later message', () => {
+      // The answered-call scan covers the whole transcript, not just the message holding the
+      // call: the result living in the following tool message — the ordinary shape — must keep
+      // the call on the wire.
       const converted = toAnthropicMessages([
         {
           role: 'assistant',
           contents: [{ type: 'function_call', callId: 'c1', name: 'search', arguments: { q: 'x' } }],
         },
-        { role: 'user', contents: [textContent('a nudge in between')] },
         { role: 'tool', contents: [{ type: 'function_result', callId: 'c1', result: 'found' }] },
       ]);
 
