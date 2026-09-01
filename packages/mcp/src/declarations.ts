@@ -10,8 +10,29 @@
 /** Characters a provider accepts in a function name; everything else normalizes to `-`. */
 const DISALLOWED_NAME_CHARACTERS = /[^A-Za-z0-9_.-]/g;
 /** The separators trimmed off each side of the `<prefix>_<name>` join. */
-const LEADING_SEPARATORS = /^[_.-]+/;
-const TRAILING_SEPARATORS = /[_.-]+$/;
+const SEPARATORS = new Set(['_', '.', '-']);
+
+/**
+ * Trims separators off one end of a name.
+ *
+ * A scan rather than an anchored `[_.-]+` regex: the name is server-chosen, and end-anchored
+ * repetition backtracks polynomially on a long run of separators, which would let a hostile
+ * declaration stall the loader.
+ */
+function trimSeparators(value: string, from: 'start' | 'end'): string {
+  if (from === 'start') {
+    let start = 0;
+    while (start < value.length && SEPARATORS.has(value[start] as string)) {
+      start++;
+    }
+    return value.slice(start);
+  }
+  let end = value.length;
+  while (end > 0 && SEPARATORS.has(value[end - 1] as string)) {
+    end--;
+  }
+  return value.slice(0, end);
+}
 
 /**
  * Rewrites a server-chosen name into the identifier pattern providers accept.
@@ -32,11 +53,11 @@ export function localToolName(remoteName: string, toolNamePrefix: string | undef
   if (toolNamePrefix === undefined) {
     return normalized;
   }
-  const prefix = normalizeToolName(toolNamePrefix).replace(TRAILING_SEPARATORS, '');
+  const prefix = trimSeparators(normalizeToolName(toolNamePrefix), 'end');
   if (prefix === '') {
     return normalized;
   }
-  const trimmed = normalized.replace(LEADING_SEPARATORS, '');
+  const trimmed = trimSeparators(normalized, 'start');
   return trimmed === '' ? prefix : `${prefix}_${trimmed}`;
 }
 
