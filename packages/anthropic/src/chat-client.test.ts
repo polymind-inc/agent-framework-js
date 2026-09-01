@@ -414,16 +414,21 @@ describe('message conversion', () => {
         { type: 'function_call', callId: 'c2', name: 'search', arguments: '"text"' },
       ],
     };
+    const results: Message = {
+      role: 'tool',
+      contents: [
+        { type: 'function_result', callId: 'c1', result: 'a' },
+        { type: 'function_result', callId: 'c2', result: 'b' },
+      ],
+    };
 
-    expect(toAnthropicMessages([calls])).toEqual([
-      {
-        role: 'assistant',
-        content: [
-          { type: 'tool_use', id: 'c1', name: 'search', input: { raw: [] } },
-          { type: 'tool_use', id: 'c2', name: 'search', input: { raw: 'text' } },
-        ],
-      },
-    ]);
+    expect(toAnthropicMessages([calls, results])[0]).toEqual({
+      role: 'assistant',
+      content: [
+        { type: 'tool_use', id: 'c1', name: 'search', input: { raw: [] } },
+        { type: 'tool_use', id: 'c2', name: 'search', input: { raw: 'text' } },
+      ],
+    });
   });
 
   it('splits a mixed message into the roles the API requires', () => {
@@ -452,16 +457,92 @@ describe('message conversion', () => {
     expect(converted.at(-1)).toEqual({ role: 'user', content: 'Continue' });
   });
 
-  it('leaves a pending tool call as the last turn, so the pairing survives', () => {
-    const converted = toAnthropicMessages([
-      { role: 'user', contents: [textContent('hi')] },
-      {
+  describe('unanswered tool calls are dropped at send time', () => {
+    // The Messages API refuses a transcript holding a `tool_use` with no `tool_result` — measured
+    // 2026-08-31: "Each `tool_use` block must have a corresponding `tool_result` block." A
+    // transcript legitimately reaches that state (an approval pause, the iteration limit, an
+    // abandoned stream, a fatal middleware abort, a declaration-only tool handed back to the
+    // caller), so the conversion removes the one block the API cannot accept instead of letting
+    // the request fail — the same send-time filtering the OpenAI conversion applies.
+
+    it('omits an unanswered call while keeping the rest of the transcript', () => {
+      const messages: Message[] = [
+        { role: 'user', contents: [textContent('hi')] },
+        {
+          role: 'assistant',
+          contents: [
+            textContent('let me check'),
+            { type: 'function_call', callId: 'c1', name: 'search', arguments: { q: 'x' } },
+          ],
+        },
+        { role: 'user', contents: [textContent('never mind')] },
+      ];
+
+      expect(toAnthropicMessages(messages)).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'let me check' }] },
+        { role: 'user', content: [{ type: 'text', text: 'never mind' }] },
+      ]);
+    });
+
+    it('keeps a call whose result arrives in a later message', () => {
+      // The answered-call scan covers the whole transcript, not just the message holding the
+      // call: the result living in the following tool message — the ordinary shape — must keep
+      // the call on the wire.
+      const converted = toAnthropicMessages([
+        {
+          role: 'assistant',
+          contents: [{ type: 'function_call', callId: 'c1', name: 'search', arguments: { q: 'x' } }],
+        },
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'c1', result: 'found' }] },
+      ]);
+
+      expect(converted[0]).toEqual({
         role: 'assistant',
-        contents: [{ type: 'function_call', callId: 'call_1', name: 'search', arguments: {} }],
-      },
-    ]);
-    expect(converted).toHaveLength(2);
-    expect(converted.at(-1)?.role).toBe('assistant');
+        content: [{ type: 'tool_use', id: 'c1', name: 'search', input: { q: 'x' } }],
+      });
+    });
+
+    it('drops a trailing pending call and closes the transcript on a user turn', () => {
+      // The pending call used to be left as the last turn; sending it is exactly the pairing the
+      // API refuses, so the call is dropped and the assistant turn that held only that call
+      // disappears with it.
+      const converted = toAnthropicMessages([
+        { role: 'user', contents: [textContent('hi')] },
+        {
+          role: 'assistant',
+          contents: [{ type: 'function_call', callId: 'call_1', name: 'search', arguments: {} }],
+        },
+      ]);
+
+      expect(converted).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
+    });
+
+    it('drops both halves of an empty-callId exchange', () => {
+      // An empty id is not an identity: the OpenAI conversion refuses to treat two '' as a pair,
+      // and this conversion follows the same rule — for the result as much as the call, since a
+      // `tool_result` whose call was omitted is the same unpairable shape from the other side.
+      const converted = toAnthropicMessages([
+        {
+          role: 'assistant',
+          contents: [{ type: 'function_call', callId: '', name: 'search', arguments: {} }],
+        },
+        { role: 'tool', contents: [{ type: 'function_result', callId: '', result: 'found' }] },
+      ]);
+
+      const blocks = converted.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+      expect(blocks).not.toContainEqual(expect.objectContaining({ type: 'tool_use' }));
+      expect(blocks).not.toContainEqual(expect.objectContaining({ type: 'tool_result' }));
+    });
+
+    it('does not mutate the transcript it filters', () => {
+      const call: Content = { type: 'function_call', callId: 'c1', name: 'search', arguments: {} };
+      const messages: Message[] = [{ role: 'assistant', contents: [call] }];
+
+      toAnthropicMessages(messages);
+
+      expect(messages[0]?.contents).toEqual([call]);
+    });
   });
 
   it('drops empty text, which the API rejects', () => {
