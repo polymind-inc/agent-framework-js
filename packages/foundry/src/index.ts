@@ -10,6 +10,7 @@
 export type { OpenAIChatOptions } from '@polymind-inc/agent-framework-openai';
 export type { FoundryChatClientConfig } from './chat-client.js';
 export { FoundryChatClient } from './chat-client.js';
+export { createFoundryConversation } from './conversation.js';
 export {
   FOUNDRY_HOSTED_SESSION_STATE_KEY,
   pinnedHostedSessionId,

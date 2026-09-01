@@ -2,6 +2,7 @@ import type { AgentSession, ChatClient, SessionScopedChatClient } from '@polymin
 import type { OpenAIChatOptions } from '@polymind-inc/agent-framework-openai';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
 import OpenAI from 'openai';
+import { createFoundryConversation } from './conversation.js';
 import { withHostedSessionId } from './hosted-session.js';
 import type { FoundryProject } from './project.js';
 import type { FoundryTarget } from './target.js';
@@ -72,6 +73,23 @@ export class FoundryChatClient
    */
   forSession(session: AgentSession): ChatClient<OpenAIChatOptions> {
     return withHostedSessionId(this, session);
+  }
+
+  /**
+   * Creates a server-side conversation in the project and returns its id.
+   *
+   * Pair it with `createSession` to start a run on a conversation that already exists — and is
+   * already visible in the Foundry Project UI — rather than one the first response mints:
+   *
+   * ```ts
+   * const session = agent.createSession({ serviceSessionId: await client.createConversation() });
+   * ```
+   *
+   * Creating is all it does: the conversation's lifecycle belongs to the service, and nothing here
+   * deletes it. See {@link createFoundryConversation}.
+   */
+  async createConversation(options: { signal?: AbortSignal } = {}): Promise<string> {
+    return createFoundryConversation(this.client, options);
   }
 
   constructor(config: FoundryChatClientConfig) {
