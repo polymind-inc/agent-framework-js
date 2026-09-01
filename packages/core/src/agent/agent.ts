@@ -784,12 +784,15 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
      * A session with no conversation id yet takes the first one a response reports, which hands
      * the transcript to the service: from the next turn the request carries the id instead of the
      * whole history, the framework's own history provider stands down, and the provider's prompt
-     * cache — which only ever sees a stable prefix this way — starts paying off. A provider that
-     * reports no id keeps the framework's transcript, and so does a caller who asks for one:
-     * `store: false` means nothing is kept service-side, so nothing is reported and nothing is
-     * adopted. That is the switch for a caller who needs the framework to stay in charge of
-     * history — a message filter, a summarizing provider, a persisted local transcript — and it is
-     * what a hosted agent sets, since the hosting platform replays the transcript itself.
+     * cache — which only ever sees a stable prefix this way — starts paying off.
+     *
+     * Nothing is adopted when nothing is reported, which is the case for a provider that keeps no
+     * conversation at all. `store: false` is how a caller arranges the same thing deliberately: it
+     * tells the provider not to keep the turn, so there is no stored conversation to report an id
+     * for, and the framework stays in charge of the transcript. That is the switch to reach for
+     * when it has to stay in charge — a message filter, a summarizing provider, a persisted local
+     * transcript — and it is what a hosted agent sets, since the hosting platform replays the
+     * transcript itself.
      */
     const stableConversationId = this.#client.metadata.stableConversationId;
     const propagateConversationId = (update: ChatResponseUpdate): void => {
