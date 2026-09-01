@@ -12,7 +12,7 @@ contain breaking changes**; patch releases are fixes only.
   `[A-Za-z0-9_.-]`) is exposed with those characters replaced by `-`, and a bare
   `{ "type": "object" }` schema — the common spelling for "takes no arguments" — gains the empty
   `properties` map OpenAI requires. Both defects previously made such a tool unreachable with a
-  provider 400. `tools/call`, `allowedTools` and error messages keep using the toolbox's own names,
+  provider 400. `tools/call`, `allowedTools` and error messages keep using the tool names the server declared,
   the server-owned schema object is never modified, and consent correlation is unaffected (it rides
   on the call id). New public API: `FoundryToolboxConfig.toolNamePrefix` namespaces the exposed
   names as `<prefix>_<name>`, with the same joining rules as `McpClientConfig.toolNamePrefix`.
