@@ -37,14 +37,16 @@ describe('Foundry toolbox tools through the OpenAI request conversion', () => {
     const listTools = vi.spyOn(McpConnection.prototype, 'listTools').mockResolvedValue({
       tools: [{ name: 'search docs!', description: 'Search the docs', inputSchema: { type: 'object' } }],
     } as unknown as ListToolsResult);
-    const toolbox = new FoundryToolbox({
-      name: 'my-toolbox',
-      project: new FoundryProject(
-        'https://my-resource.services.ai.azure.com/api/projects/my-project',
-        credential,
-      ),
-    });
+    // Constructed inside the try: a construction failure must still restore the prototype spy.
+    let toolbox: FoundryToolbox | undefined;
     try {
+      toolbox = new FoundryToolbox({
+        name: 'my-toolbox',
+        project: new FoundryProject(
+          'https://my-resource.services.ai.azure.com/api/projects/my-project',
+          credential,
+        ),
+      });
       const tools = await toolbox.getTools();
       const client = new OpenAIChatClient({ apiKey: 'test-key', model: 'gpt-4o' });
 
@@ -58,7 +60,7 @@ describe('Foundry toolbox tools through the OpenAI request conversion', () => {
         additionalProperties: false,
       });
     } finally {
-      await toolbox.close();
+      await toolbox?.close();
       listTools.mockRestore();
     }
   });

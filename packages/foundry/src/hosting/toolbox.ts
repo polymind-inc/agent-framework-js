@@ -134,6 +134,10 @@ export class FoundryToolbox {
    * Called on the first request rather than at startup: a toolbox that is briefly unreachable
    * would otherwise keep `/readiness` red and fail every invocation with `session_not_ready`,
    * instead of failing the one request that needed it.
+   *
+   * @throws {AgentFrameworkError} When two of the toolbox's tools would be exposed under the same
+   *   name — the same claim rule `McpClient.getTools` applies. Silently keeping one of them would
+   *   make the other unreachable, and which one survived would depend on the listing order.
    */
   async getTools(): Promise<Array<FunctionTool<Record<string, unknown>, unknown>>> {
     if (!this.#loadTools) {

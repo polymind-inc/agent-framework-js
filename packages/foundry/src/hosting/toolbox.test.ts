@@ -35,7 +35,7 @@ interface RecordedCall {
   toolName?: string;
 }
 
-/** An MCP tool declaration. `inputSchema` is required by the protocol. */
+/** An MCP tool declaration. `inputSchema` is required by the protocol; the stub fills a default. */
 interface StubTool {
   name: string;
   description?: string;

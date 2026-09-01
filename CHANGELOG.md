@@ -14,8 +14,11 @@ contain breaking changes**; patch releases are fixes only.
   `properties` map OpenAI requires. Both defects previously made such a tool unreachable with a
   provider 400. `tools/call`, `allowedTools` and error messages keep using the tool names the server declared,
   the server-owned schema object is never modified, and consent correlation is unaffected (it rides
-  on the call id). New public API: `FoundryToolboxConfig.toolNamePrefix` namespaces the exposed
-  names as `<prefix>_<name>`, with the same joining rules as `McpClientConfig.toolNamePrefix`.
+  on the call id). Like `McpClient.getTools`, `getTools()` now throws when two remote names would
+  be exposed under the same normalized name — previously both were exposed and one was silently
+  unreachable, decided by listing order. New public API: `FoundryToolboxConfig.toolNamePrefix`
+  namespaces the exposed names as `<prefix>_<name>`, with the same joining rules as
+  `McpClientConfig.toolNamePrefix`.
 
 - **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
   arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
