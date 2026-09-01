@@ -6,6 +6,18 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-foundry`** — `FoundryChatClient` now carries the Foundry
+  hosted-agent session id. The service mints one on the first request that carries none and reports
+  it back; every later request of that session sends it, including later rounds of the same run — a
+  round that omitted it could land on a different sandbox and lose the persistent `$HOME` the
+  sandbox exists to provide. The id is kept in `session.state` under
+  `FOUNDRY_HOSTED_SESSION_STATE_KEY`, so it survives serializing and restoring a session and one
+  session never sees another's. A hosted-agent session is a sandbox and is **not** the conversation
+  the transcript lives in, which is still `AgentSession.serviceSessionId`. Attach to an existing
+  sandbox by putting `agent_session_id` in `additionalProperties`; naming one that differs from what
+  the session already holds fails with a `ConfigurationError` before the request goes out rather
+  than picking one. Foundry owns the sandbox's lifecycle — nothing here creates or releases one.
+
 - **`@polymind-inc/agent-framework-core`** — a chat client can now implement
   `SessionScopedChatClient` to be asked, once per run, for a view of itself bound to that run's
   session. The bound client wraps every service call of the run — later rounds of a tool loop as

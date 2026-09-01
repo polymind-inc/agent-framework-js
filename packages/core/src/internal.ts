@@ -16,6 +16,7 @@ export {
   safeStringify,
   setIfDefined,
   topLevelMediaType,
+  updatesOf,
   withoutUndefined,
 } from './client/provider-utils.js';
 export { errorMessageOf, validateSafeInteger } from './errors.js';

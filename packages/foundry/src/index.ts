@@ -10,6 +10,11 @@
 export type { OpenAIChatOptions } from '@polymind-inc/agent-framework-openai';
 export type { FoundryChatClientConfig } from './chat-client.js';
 export { FoundryChatClient } from './chat-client.js';
+export {
+  FOUNDRY_HOSTED_SESSION_STATE_KEY,
+  pinnedHostedSessionId,
+  withHostedSessionId,
+} from './hosted-session.js';
 // The memory-store client itself (memory/client.ts) is the provider's transport, not a public
 // surface; only the error it raises and the store definition a caller has to supply are exported.
 export type { MemoryOperation, MemoryStoreDefinition, MemoryStoreObject } from './memory/client.js';

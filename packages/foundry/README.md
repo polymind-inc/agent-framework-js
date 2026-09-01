@@ -33,6 +33,35 @@ project over MCP. A toolbox publishes two independent things and the class expos
 the same connection, so skills need no separate credential — and `loadTools: false` gives an agent
 the skills without exposing the tools.
 
+## Hosted-agent sessions
+
+Foundry has two service-side identifiers, and they are not the same thing:
+
+- a **conversation** holds the transcript, and the framework tracks it as
+  `AgentSession.serviceSessionId`;
+- a **hosted-agent session** is a sandbox — compute plus a persistent `$HOME` — that a hosted agent
+  runs in.
+
+`FoundryChatClient` carries the sandbox id for you. The service mints one on the first request that
+carries none and reports it back; from then on every request of that session sends it, including
+later rounds of the same run — a round that omitted it could land on a different sandbox and lose
+the `$HOME` the sandbox exists to provide. The id is kept in `session.state` under
+`FOUNDRY_HOSTED_SESSION_STATE_KEY`, so it survives serializing and restoring a session, and one
+session never sees another's.
+
+To attach to a sandbox you already have, put it on the request:
+
+```ts
+await agent.run('hello', {
+  session,
+  options: { additionalProperties: { agent_session_id: 'existing-sandbox-id' } },
+});
+```
+
+Naming an id that differs from the one the session already holds fails with a `ConfigurationError`
+before the request goes out, rather than silently picking one. Foundry owns the sandbox's lifecycle
+— provisioning, idle suspend, TTL — and nothing here creates or releases one.
+
 Known limitations:
 
 - `FoundryToolbox.asSkillsProvider()` discovers skills inside the run rather than while the agent
