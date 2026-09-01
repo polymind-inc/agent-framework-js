@@ -20,8 +20,16 @@ function blocksOf(contents: Message['contents']): Record<string, unknown>[] {
 
 describe('tool_use input parsing', () => {
   function inputOf(args: Record<string, unknown> | string): unknown {
-    const [block] = blocksOf([{ type: 'function_call', callId: 'c1', name: 'f', arguments: args }]);
-    return block?.input;
+    // Answered in a later message, because an unanswered call never reaches the wire at all.
+    const [first] = toAnthropicMessages([
+      {
+        role: 'assistant',
+        contents: [{ type: 'function_call', callId: 'c1', name: 'f', arguments: args }],
+      },
+      { role: 'tool', contents: [{ type: 'function_result', callId: 'c1', result: 'ok' }] },
+    ]);
+    if (first === undefined || typeof first.content === 'string') throw new Error('expected blocks');
+    return first.content[0]?.input;
   }
 
   it('parses a JSON object string back to the object the API wants', () => {
@@ -65,7 +73,7 @@ describe('tool_use input parsing', () => {
 
   it('leaves the source content untouched', () => {
     const content = { type: 'function_call', callId: 'c1', name: 'f', arguments: '[1,2]' } as const;
-    blocksOf([{ ...content }]);
+    blocksOf([{ ...content }, { type: 'function_result', callId: 'c1', result: 'ok' }]);
     expect(content.arguments).toBe('[1,2]');
   });
 });

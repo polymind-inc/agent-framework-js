@@ -6,6 +6,17 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-anthropic`** — a `function_call` that no `function_result`
+  anywhere in the transcript answers is omitted from the request instead of being sent as a
+  `tool_use` the Messages API refuses with a 400 (`Each tool_use block must have a corresponding
+  tool_result block`, measured 2026-08-31). Transcripts legitimately hold such calls — an approval
+  pause, the iteration limit, an abandoned stream, a fatal middleware abort, a declaration-only
+  tool answered after the session was saved — and the OpenAI conversion already filters them the
+  same way, so one rule now governs both providers. A call answered in a later message is kept, a
+  call with an empty `callId` is always omitted, and `FunctionCallContent` and serialized sessions
+  are never rewritten — the call stays in the transcript and only leaves the wire. A request that
+  used to fail with the 400 above now goes through without the dangling call.
+
 - **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
   arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
   advertised default — and that value used to be handed to `SkillScript.run` even though the

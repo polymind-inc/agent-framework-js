@@ -13,7 +13,12 @@ import {
   serializeContent,
   textOfContents,
 } from '@polymind-inc/agent-framework-core';
-import { isRecord, safeStringify, topLevelMediaType } from '@polymind-inc/agent-framework-core/internal';
+import {
+  answeredCallIds,
+  isRecord,
+  safeStringify,
+  topLevelMediaType,
+} from '@polymind-inc/agent-framework-core/internal';
 import { MCP_SERVER_SPEC_TYPE } from './hosted-tools.js';
 
 /** A Messages API content block, kept loose so unmodelled block types pass through. */
@@ -174,7 +179,7 @@ function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
  * the `thinking` block before it instead of producing one of its own (Python
  * `_prepare_message_for_anthropic`).
  */
-function appendContent(blocks: AnthropicBlock[], content: Content): void {
+function appendContent(blocks: AnthropicBlock[], content: Content, answered: ReadonlySet<string>): void {
   const providerExecuted = providerExecutedBlock(content);
   if (providerExecuted !== undefined) {
     blocks.push(providerExecuted);
@@ -215,6 +220,16 @@ function appendContent(blocks: AnthropicBlock[], content: Content): void {
       return;
     }
     case 'function_call': {
+      // A call no `function_result` anywhere in the transcript answers is omitted: the Messages
+      // API refuses the request outright when a `tool_use` has no `tool_result` — so the choice is
+      // not between sending and filtering but between a defined omission and a provider 400. A
+      // transcript legitimately holds such a call (an approval pause, the iteration limit, an
+      // abandoned stream, a fatal middleware abort, a declaration-only tool), and the OpenAI
+      // conversion already filters it the same way, so one rule governs every provider. An empty
+      // callId is never a pairable identity and is dropped on the same grounds.
+      if (content.callId === '' || !answered.has(content.callId)) {
+        return;
+      }
       blocks.push({
         type: 'tool_use',
         id: content.callId,
@@ -302,11 +317,11 @@ function roleForBlock(block: AnthropicBlock, fallback: 'user' | 'assistant'): 'u
  * framework models a whole exchange as content — but Messages API insists that tool calls are
  * assistant turns and results are user turns (Python `_prepare_message_groups_for_anthropic`).
  */
-function messageGroups(msg: Message): AnthropicMessage[] {
+function messageGroups(msg: Message, answered: ReadonlySet<string>): AnthropicMessage[] {
   const fallback = ROLE_MAP[msg.role] ?? 'user';
   const blocks: AnthropicBlock[] = [];
   for (const content of msg.contents) {
-    appendContent(blocks, content);
+    appendContent(blocks, content, answered);
   }
   if (blocks.length === 0) {
     return [];
@@ -344,16 +359,20 @@ function hasToolUse(msg: AnthropicMessage): boolean {
  * Converts the framework transcript into the Messages API `messages` array.
  *
  * A leading system message is *not* included: it belongs in the `system` request parameter (see
- * {@link toAnthropicSystem}). A conversation that would end on an assistant turn gets a synthetic
- * `"Continue"` user turn, because Messages API requires the last message to be a user one — unless
- * that turn is a pending tool call, where appending would break the call/result pairing (Python
+ * {@link toAnthropicSystem}). A local `function_call` no result in the transcript answers is
+ * omitted — see the `function_call` case in {@link appendContent}. A conversation that would end
+ * on an assistant turn gets a synthetic `"Continue"` user turn, because Messages API requires the
+ * last message to be a user one — unless that turn still holds a `tool_use` block (a hosted or
+ * raw-replayed call), where appending would break the call/result pairing (Python
  * `_prepare_messages_for_anthropic`).
  */
 export function toAnthropicMessages(messages: readonly Message[]): AnthropicMessage[] {
   const rest = messages[0]?.role === 'system' ? messages.slice(1) : messages;
+  // Collected across the whole transcript, so a call answered in a later message stays a call.
+  const answered = answeredCallIds(rest);
   const out: AnthropicMessage[] = [];
   for (const msg of rest) {
-    out.push(...messageGroups(msg));
+    out.push(...messageGroups(msg, answered));
   }
   const last = out[out.length - 1];
   if (last !== undefined && last.role === 'assistant' && !hasToolUse(last)) {
