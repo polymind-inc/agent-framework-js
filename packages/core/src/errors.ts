@@ -139,6 +139,35 @@ export class MiddlewareTerminated extends AgentFrameworkError {
   }
 }
 
+/**
+ * A failure that must end the run rather than be reported to the model.
+ *
+ * An ordinary error from a tool or a function middleware becomes this call's `function_result` and
+ * the loop carries on — the right reading for a tool that failed, and the wrong one for a layer
+ * whose whole job is to decide whether the call may happen at all. A guardrail that cannot reach
+ * its policy service has not decided "no"; it has failed to decide, and telling the model the tool
+ * errored invites it to try again against a check that is no longer running.
+ *
+ * Throw this to say so. It is never converted into a result: the current batch of calls is
+ * cancelled, no further call starts, and it reaches the caller of `run()`. The counterpart of
+ * Python's `MiddlewareFailure`.
+ *
+ * Two other errors also leave the seam without becoming a failure result, and neither is this:
+ * {@link MiddlewareTerminated} — from `ctx.terminate(result)` — stops the loop *after* reporting
+ * this round, and {@link UserInputRequiredError} carries a request only the caller can settle.
+ *
+ * Cancellation is cooperative. A sibling call already awaiting something stops at its next
+ * suspension point if it watches `ctx.signal`; one that ignores the signal runs to completion and
+ * may still have its effects, but its result is discarded either way and never reaches the
+ * transcript, the model, or history.
+ */
+export class MiddlewareFailed extends AgentFrameworkError {
+  constructor(message = 'Middleware aborted the run.', options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'MiddlewareFailed';
+  }
+}
+
 /** A feature exists in the API surface but is not implemented by this package. */
 export class NotImplementedError extends AgentFrameworkError {
   constructor(message: string, options?: ErrorOptions) {
