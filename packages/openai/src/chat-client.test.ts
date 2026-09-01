@@ -915,7 +915,65 @@ describe('Agent over OpenAIChatClient', () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(response.text).toBe('Tokyo is sunny.');
 
-    // The follow-up request replays the call and its result as top-level items.
+    // `store` defaults on, so the first response is one the service kept: the follow-up continues
+    // from it and carries the tool result alone.
+    expect(create.mock.calls[1]?.[0].previous_response_id).toBe('resp_1');
+    const secondInput = create.mock.calls[1]?.[0].input as InputItem[];
+    expect(secondInput.map((item) => item.type)).toEqual(['function_call_output']);
+    expect(secondInput[0]?.output).toBe('Tokyo is sunny');
+    expect(create.mock.calls[1]?.[0].instructions).toBe('Be helpful.');
+  });
+
+  it('replays the call and its result inline when nothing is stored service-side', async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(
+        completedResponse({
+          output: [
+            {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'call_1',
+              name: 'get_weather',
+              arguments: '{"location":"Tokyo"}',
+              status: 'completed',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        completedResponse({
+          id: 'resp_2',
+          output: [
+            {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'Tokyo is sunny.', annotations: [] }],
+            },
+          ],
+        }),
+      );
+
+    const weather = tool({
+      name: 'get_weather',
+      description: 'Get the weather',
+      parameters: { type: 'object', properties: { location: { type: 'string' } }, required: ['location'] },
+      execute: async ({ location }) => `${location} is sunny`,
+    });
+
+    const agent = new Agent({
+      client: new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' }),
+      instructions: 'Be helpful.',
+      tools: [weather],
+      defaultOptions: { store: false },
+    });
+
+    const response = await agent.run('weather in Tokyo?');
+
+    expect(response.text).toBe('Tokyo is sunny.');
+    // Nothing is kept service-side, so there is no id to continue from and the whole exchange
+    // travels as top-level items.
+    expect(create.mock.calls[1]?.[0].previous_response_id).toBeUndefined();
     const secondInput = create.mock.calls[1]?.[0].input as InputItem[];
     expect(secondInput.map((item) => item.type)).toEqual([
       'message',
@@ -923,7 +981,6 @@ describe('Agent over OpenAIChatClient', () => {
       'function_call_output',
     ]);
     expect(secondInput[2]?.output).toBe('Tokyo is sunny');
-    expect(create.mock.calls[1]?.[0].instructions).toBe('Be helpful.');
   });
 
   it('chains the response id and stops re-sending stored items across a tool round', async () => {
