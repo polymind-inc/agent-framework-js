@@ -21,6 +21,50 @@ contain breaking changes**; patch releases are fixes only.
   explicit `historyProvider` still fails with `ConfigurationError` when the service claims the
   transcript, unchanged and matching .NET.
 
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — a structured answer is read from the last
+  assistant message that says anything, not from every message of the response joined together. A
+  run that called a tool leaves more than one assistant message behind, and the earlier ones can
+  hold an answer the model then corrected; reading the whole response put the superseded one first
+  and handed it back with every field present and every check passing, so nothing downstream could
+  tell. Python fixed the same defect in July 2026; .NET still joins, and its file has not been
+  touched since February. Non-assistant messages are no longer a source at all — JSON in a tool
+  result is data the model was given, not something it said — so a schema that used to be filled
+  from a tool result now fails with "the model returned no text". Within the chosen message the
+  behaviour is unchanged: several text parts still concatenate, and only the first top-level JSON
+  value is read.
+
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — structured-output failures now reject with
+  `StructuredOutputError`, a new subclass of `ChatClientError`, so existing `catch` blocks keep
+  working. Everything that can fail once a response is in hand reports through it with the original
+  failure on `cause`: unparseable or truncated text, a validator that reported issues, a validator
+  that threw or rejected instead (an async refinement calling out and failing, for one — previously
+  that escaped raw), and a schema that could not be converted. `error.response` is the completed
+  response, so the text, usage, finish reason and ids of the turn you were billed for stay
+  reachable; the reference implementations parse lazily and leave their callers holding the
+  response object, which an eager parse would otherwise take away. It is non-enumerable, so a
+  logger that serializes the error does not write the whole conversation into the log line — read
+  it by name. This also settles a semantic that was never written down: a parse failure reaches
+  context and history providers as a **success**, and the exchange is stored, because the model did
+  answer and dropping the turn would leave a hole the next request replays.
+
+- **[BREAKING] `@polymind-inc/agent-framework-anthropic`** — tool arguments that are not an object
+  are sent to the Messages API under a single `raw` key instead of being replaced with `{}`. A
+  JSON scalar, array or `null` becomes `{ raw: <value> }`, and text JSON cannot parse becomes
+  `{ raw: "<the original characters>" }`, untrimmed; only an empty string still maps to `{}`. This
+  matches Python, whose Anthropic client sends `parse_arguments()` straight through as
+  `tool_use.input`. Normal responses are unaffected — the fallback is reached by interrupted
+  streams, restored or hand-built transcripts, and arguments another provider produced. Erasing
+  them was measurably worse than keeping them: for a tool whose parameters are all optional, `{}`
+  is byte-for-byte a valid no-argument call, so a corrupted payload became a different, plausible
+  invocation that nothing downstream could detect, and the API does not catch it either — it does
+  not validate a replayed `tool_use.input` against the tool's schema, not even with `strict` and
+  `additionalProperties: false`. A tool that declares a `raw` parameter of its own now sees a name
+  collision in what the model reads; rename that parameter if the ambiguity matters. Separately, a
+  value that is neither a string nor an object — reachable from a session restored from JSON,
+  which is not validated — no longer passes through to the wire, where the API rejected it with
+  `400 tool_use.input: Input should be an object`. `FunctionCallContent.arguments` and serialized
+  sessions are unchanged.
+
 - **[BREAKING] `@polymind-inc/agent-framework-a2a`** — a remote task's status message becomes a
   response message only when the task is waiting for input (`input-required`). Previously an
   awaited `run()` also materialized the status message of a `completed`, `failed`, `canceled` or

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ChatClientError } from '../errors.js';
+import { ChatClientError, StructuredOutputError } from '../errors.js';
 import { textContent } from '../types/content.js';
+import type { Message } from '../types/message.js';
 import { chatResponse } from '../types/response.js';
 import { applyStructuredOutput, resolveResponseFormat, withStructuredOutput } from './structured-output.js';
 import { MockChatClient } from './test-support.js';
@@ -26,6 +27,146 @@ function textResponse(text: string): ReturnType<typeof chatResponse<unknown>> {
     messages: [{ role: 'assistant', contents: [textContent(text)] }],
   });
 }
+
+/** A response whose messages are given as `[role, text]` pairs, in order. */
+function messagesResponse(pairs: [Message['role'], string][]): ReturnType<typeof chatResponse<unknown>> {
+  return chatResponse<unknown>({
+    messages: pairs.map(([role, text]) => ({ role, contents: [textContent(text)] })),
+  });
+}
+
+describe('parse source', () => {
+  it('reads the last assistant message, not every message joined', async () => {
+    // A tool round leaves the model's first answer in the transcript. Joining the whole response
+    // put that first answer ahead of the corrected one, and the caller was handed it silently.
+    const response = await applyStructuredOutput(
+      messagesResponse([
+        ['assistant', '{"name":"Taro"}'],
+        ['tool', '{"name":"Hanako"}'],
+        ['assistant', '{"name":"Jiro"}'],
+      ]),
+      schema as never,
+    );
+    expect(response.value).toEqual({ name: 'Jiro' });
+  });
+
+  it('never reads a non-assistant message', async () => {
+    // Asserting the message, not just the type: before this rule the user message parsed cleanly,
+    // so a bare `ChatClientError` check would have passed for the wrong reason.
+    await expect(
+      applyStructuredOutput(
+        messagesResponse([
+          ['user', '{"name":"Taro"}'],
+          ['tool', '{"name":"Hanako"}'],
+        ]),
+        schema as never,
+      ),
+    ).rejects.toThrow(/returned no text/);
+  });
+
+  it('skips a trailing assistant message that is blank', async () => {
+    const response = await applyStructuredOutput(
+      messagesResponse([
+        ['assistant', '{"name":"Jiro"}'],
+        ['assistant', '   \n '],
+      ]),
+      schema as never,
+    );
+    expect(response.value).toEqual({ name: 'Jiro' });
+  });
+
+  it('joins the text contents inside the message it chose', async () => {
+    const response = await applyStructuredOutput(
+      chatResponse<unknown>({
+        messages: [{ role: 'assistant', contents: [textContent('{"name":'), textContent('"Jiro"}')] }],
+      }),
+      schema as never,
+    );
+    expect(response.value).toEqual({ name: 'Jiro' });
+  });
+
+  it('throws when the run produced no assistant text at all', async () => {
+    await expect(
+      applyStructuredOutput(messagesResponse([['user', 'anything']]), schema as never),
+    ).rejects.toThrow(/returned no text/);
+  });
+});
+
+describe('failure boundary', () => {
+  /** The rejection of `applyStructuredOutput`, typed. */
+  async function rejection(
+    response: ReturnType<typeof chatResponse<unknown>>,
+    format: unknown = schema,
+  ): Promise<StructuredOutputError> {
+    try {
+      await applyStructuredOutput(response, format as never);
+    } catch (error) {
+      return error as StructuredOutputError;
+    }
+    throw new Error('expected a rejection');
+  }
+
+  it('reports every post-response failure as one type, keeping the answer reachable', async () => {
+    // Four shapes, one boundary: unparseable text, a truncated answer, a validator that reported
+    // issues, and a validator that threw instead of reporting them.
+    const asyncThrowing = {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'test',
+        validate: async () => {
+          throw new Error('lookup service is down');
+        },
+      },
+      toJsonSchema: () => ({ type: 'object' }),
+    };
+    const cases: [string, ReturnType<typeof chatResponse<unknown>>, unknown][] = [
+      ['not JSON', textResponse('not json at all'), schema],
+      ['cut off', textResponse('{"name":"Ji'), schema],
+      ['issues', textResponse('{"other":1}'), schema],
+      ['validator threw', textResponse('{"name":"Jiro"}'), asyncThrowing],
+    ];
+
+    for (const [label, response, format] of cases) {
+      const error = await rejection(response, format);
+      expect(error, label).toBeInstanceOf(StructuredOutputError);
+      // Still a ChatClientError, so code catching the old type keeps working.
+      expect(error, label).toBeInstanceOf(ChatClientError);
+      expect(error.response, label).toBe(response);
+    }
+  });
+
+  it('carries the underlying failure on `cause`', async () => {
+    const error = await rejection(textResponse('{"name":"Ji'));
+    expect(error.cause).toBeInstanceOf(SyntaxError);
+
+    const thrown = new Error('lookup service is down');
+    const throwing = {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'test',
+        validate: async () => {
+          throw thrown;
+        },
+      },
+      toJsonSchema: () => ({ type: 'object' }),
+    };
+    expect((await rejection(textResponse('{"name":"Jiro"}'), throwing)).cause).toBe(thrown);
+  });
+
+  it('keeps the response out of anything that serializes the error', async () => {
+    // A logger that writes a caught error would otherwise put the whole conversation in the line.
+    const error = await rejection(textResponse('{"secret":"conversation text"}'));
+    expect(Object.keys(error)).not.toContain('response');
+    expect(JSON.stringify({ ...error })).not.toContain('conversation text');
+    expect(error.response).toBeDefined();
+  });
+
+  it('leaves value unset on the response it hands back', async () => {
+    const response = textResponse('{"other":1}');
+    const error = await rejection(response);
+    expect(error.response.value).toBeUndefined();
+  });
+});
 
 describe('applyStructuredOutput', () => {
   it('parses and validates the response text into value', async () => {

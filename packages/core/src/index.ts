@@ -64,6 +64,7 @@ export {
   NotImplementedError,
   SchemaResolutionError,
   StreamConsumedError,
+  StructuredOutputError,
   ToolInvocationError,
   UserInputRequiredError,
 } from './errors.js';

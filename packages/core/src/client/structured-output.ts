@@ -1,10 +1,10 @@
-import { ChatClientError } from '../errors.js';
+import { errorMessageOf, StructuredOutputError } from '../errors.js';
 import { createResponseStream } from '../streaming/response-stream.js';
 import type { JsonSchema } from '../tools/json-schema.js';
 import { resolveJsonSchema } from '../tools/json-schema.js';
-import type { StandardSchemaV1 } from '../tools/standard-schema.js';
+import type { StandardSchemaResult, StandardSchemaV1 } from '../tools/standard-schema.js';
 import { formatSchemaIssues, isStandardSchema } from '../tools/standard-schema.js';
-import { isUserInputRequest } from '../types/content.js';
+import { isUserInputRequest, textOfContents } from '../types/content.js';
 import type { ResponseBase } from '../types/response.js';
 import type {
   ChatClient,
@@ -102,12 +102,43 @@ function isSuspended(response: ResponseBase<unknown>): boolean {
 }
 
 /**
+ * The text the structured answer is read from: the last assistant message that says anything.
+ *
+ * A run that called a tool leaves more than one assistant message behind, and the earlier ones can
+ * hold an answer the model then corrected. Reading the whole response as one string puts the first
+ * of those ahead of the last, so the caller is handed a superseded value with no way to tell —
+ * every field is present and every check passes. The answer is the final one, so that is the only
+ * message read.
+ *
+ * Non-assistant messages are never a source. A tool result is data the model was given, not
+ * something it said, and JSON in a tool result is a very ordinary thing to find.
+ *
+ * Text contents *within* the chosen message still concatenate: one message split across several
+ * text parts is one utterance.
+ *
+ * @returns The message's text, or `undefined` when no assistant message carries any.
+ */
+function structuredAnswerText(response: ResponseBase<unknown>): string | undefined {
+  for (let index = response.messages.length - 1; index >= 0; index--) {
+    const message = response.messages[index];
+    if (message === undefined || message.role !== 'assistant') {
+      continue;
+    }
+    const text = textOfContents(message.contents);
+    if (text.trim() !== '') {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Extracts the first complete top-level JSON object or array from `text`.
  *
- * Mirrors .NET `AgentResponse{T}.DeserializeFirstTopLevelObject` (`AllowMultipleValues`): some
- * model backends emit a second top-level object — or trailing prose — after the structured answer,
- * and the reference implementation reads the first value and ignores the rest. Leading non-JSON
- * text is *not* tolerated, also matching .NET (its reader starts at position zero).
+ * Some model backends emit a second top-level object — or trailing prose — after the structured
+ * answer, and the first value is the answer. Leading non-JSON text is *not* tolerated: text before
+ * the value means the model wrote prose where a bare value was asked for, and guessing which of
+ * several values it meant would be a different kind of answer than the one requested.
  *
  * @returns The substring holding the first value, or `undefined` when none can be found.
  */
@@ -176,16 +207,39 @@ export async function applyStructuredOutput<TResponse extends ResponseBase<unkno
   if (isSuspended(response)) {
     return response;
   }
-  const resolved = resolveResponseFormat(format);
-  const text = response.text;
-  if (text.trim() === '') {
-    throw new ChatClientError('Structured output was requested but the model returned no text.');
+
+  /**
+   * Every failure from here on is the same kind of failure, and carries the same evidence.
+   *
+   * The response exists and was billed; what went wrong is downstream of it. A caller who catches
+   * this needs the model's own words to act — to retry, to show the user, or to hand the output
+   * back to the model — and the original throw to diagnose, so both travel: the response by name,
+   * the cause on `cause`.
+   */
+  const failed = (message: string, cause?: unknown): StructuredOutputError =>
+    new StructuredOutputError(message, response, cause === undefined ? undefined : { cause });
+
+  let resolved: ResolvedResponseFormat;
+  try {
+    resolved = resolveResponseFormat(format);
+  } catch (error) {
+    // The schema is the caller's, and converting it can fail — but only once a response is in
+    // hand does that failure lose an answer, so it is reported like the others.
+    throw failed(
+      `Structured output was requested but its schema could not be resolved: ${errorMessageOf(error)}`,
+      error,
+    );
   }
 
-  const invalidJson = (cause: unknown): ChatClientError =>
-    new ChatClientError(
+  const text = structuredAnswerText(response);
+  if (text === undefined) {
+    throw failed('Structured output was requested but the model returned no text.');
+  }
+
+  const invalidJson = (cause: unknown): StructuredOutputError =>
+    failed(
       `Structured output was requested but the model returned text that is not valid JSON: ${text.slice(0, 200)}`,
-      { cause },
+      cause,
     );
   let parsed: unknown;
   try {
@@ -203,11 +257,17 @@ export async function applyStructuredOutput<TResponse extends ResponseBase<unkno
   }
 
   if (resolved.validator !== undefined) {
-    const validation = await resolved.validator['~standard'].validate(parsed);
+    let validation: StandardSchemaResult<unknown>;
+    try {
+      validation = await resolved.validator['~standard'].validate(parsed);
+    } catch (error) {
+      // A validator may throw or reject instead of reporting issues — an async refinement that
+      // calls out and fails, for one. That is still a validation failure, and reporting it as one
+      // keeps a single type at this boundary.
+      throw failed(`Structured output failed schema validation: ${errorMessageOf(error)}`, error);
+    }
     if (validation.issues !== undefined) {
-      throw new ChatClientError(
-        `Structured output failed schema validation: ${formatSchemaIssues(validation.issues)}`,
-      );
+      throw failed(`Structured output failed schema validation: ${formatSchemaIssues(validation.issues)}`);
     }
     parsed = validation.value;
   }

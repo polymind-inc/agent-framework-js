@@ -1,4 +1,5 @@
 import type { UserInputRequestContent } from './types/content.js';
+import type { ResponseBase } from './types/response.js';
 
 /** Base class for every error the framework raises. */
 export class AgentFrameworkError extends Error {
@@ -62,6 +63,36 @@ export class ChatClientError extends AgentFrameworkError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'ChatClientError';
+  }
+}
+
+/**
+ * A response arrived, but it could not be turned into the caller's structured type.
+ *
+ * The model answered and the turn was billed and persisted; what failed is the caller's contract
+ * with the schema. {@link StructuredOutputError.response} is that answer, so a caller can read the
+ * text, usage, finish reason and ids of the turn they paid for, retry against them, or show the
+ * model its own output. The reference implementations parse lazily, so their callers still hold
+ * the response object when the parse throws; this framework parses eagerly and rejects the run, so
+ * the response has to travel on the error to stay reachable at all.
+ *
+ * `response` is **non-enumerable**: a logger that serializes a caught error would otherwise write
+ * the whole conversation — every message of the turn, and whatever the tools returned — into the
+ * log line. Read it by name.
+ */
+export class StructuredOutputError extends ChatClientError {
+  /** The completed response whose text could not be parsed or validated. */
+  declare readonly response: ResponseBase<unknown>;
+
+  constructor(message: string, response: ResponseBase<unknown>, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'StructuredOutputError';
+    Object.defineProperty(this, 'response', {
+      value: response,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
   }
 }
 
