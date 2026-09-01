@@ -1,5 +1,5 @@
 import type { Content } from '@polymind-inc/agent-framework-core';
-import { unknownContent } from '@polymind-inc/agent-framework-core';
+import { ToolInvocationError, unknownContent } from '@polymind-inc/agent-framework-core';
 
 /** One entry of an MCP `CallToolResult.content`, kept loose so unmodelled blocks pass through. */
 export type McpContentBlock = Record<string, unknown>;
@@ -142,6 +142,45 @@ export function mcpMetaProperties(
   }
   const entries = { ...(meta as Record<string, unknown>) };
   return Object.keys(entries).length === 0 ? undefined : { additionalProperties: { _meta: entries } };
+}
+
+/** The parts of a `tools/call` result the framework reads. Structural, so any SDK's shape fits. */
+export interface CallToolResultShape {
+  content?: unknown;
+  structuredContent?: unknown;
+  _meta?: unknown;
+}
+
+/**
+ * Converts a whole `tools/call` result into framework contents.
+ *
+ * The content blocks are converted with the result's `_meta` stamp, and a non-null
+ * `structuredContent` is appended as a JSON text item — a structured-only server would otherwise
+ * yield an empty result. It comes last, and *before* any `isError` decision, so a failure's text
+ * includes it too. It is the one item built *without* the `_meta` stamp (the reference
+ * implementation's `_parse_tool_result_from_mcp` has the same asymmetry, preserved rather than
+ * tidied up).
+ *
+ * Every reader of a tool result — the MCP client and the Foundry toolbox — goes through this one
+ * function, so what a result means cannot drift between them.
+ */
+export function contentsOfCallToolResult(result: CallToolResultShape): Content[] {
+  const contents = fromMcpContents(result.content as readonly unknown[] | undefined, result._meta);
+  if (result.structuredContent !== undefined && result.structuredContent !== null) {
+    contents.push({ type: 'text', text: JSON.stringify(result.structuredContent) });
+  }
+  return contents;
+}
+
+/**
+ * The error an `isError` tool result raises, built from the result's converted contents.
+ *
+ * The text is {@link mcpErrorText}'s one-line-per-block assembly; a result that said nothing
+ * falls back to naming the tool that failed, so the model never reads an empty failure.
+ */
+export function callToolFailure(toolName: string, contents: readonly Content[]): ToolInvocationError {
+  const text = mcpErrorText(contents);
+  return new ToolInvocationError(toolName, text === '' ? `MCP tool "${toolName}" reported an error.` : text);
 }
 
 /**

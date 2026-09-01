@@ -20,6 +20,7 @@ const workspaceAliases = {
   '@polymind-inc/agent-framework-openai/internal': source('openai/src/internal.ts'),
   '@polymind-inc/agent-framework-openai': source('openai/src/index.ts'),
   '@polymind-inc/agent-framework-anthropic': source('anthropic/src/index.ts'),
+  '@polymind-inc/agent-framework-mcp/internal': source('mcp/src/internal.ts'),
   '@polymind-inc/agent-framework-mcp': source('mcp/src/index.ts'),
   '@polymind-inc/agent-framework-a2a': source('a2a/src/index.ts'),
 };

@@ -1,21 +1,16 @@
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { platformHeaders } from '@polymind-inc/agent-framework-agentserver';
 import type {
-  Content,
   ContextProvider,
   FunctionTool,
   SkillsProviderConfig,
   SkillsSource,
   ToolContext,
 } from '@polymind-inc/agent-framework-core';
-import {
-  skillsProvider,
-  ToolInvocationError,
-  textOfContents,
-  tool,
-} from '@polymind-inc/agent-framework-core';
+import { skillsProvider, tool } from '@polymind-inc/agent-framework-core';
 import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
 import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
+import { callToolFailure, contentsOfCallToolResult } from '@polymind-inc/agent-framework-mcp/internal';
 import type { FoundryProject } from '../project.js';
 import { FOUNDRY_API_VERSION } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
@@ -168,8 +163,10 @@ export class FoundryToolbox {
             if (result.isError === true) {
               // MCP reports a tool failure in the payload, not by rejecting. Returning it as a
               // success would tell the model the call worked and hand it the error text as the
-              // answer; throwing routes it through the loop's error handling instead.
-              throw new ToolInvocationError(declared.name, textOfContents(result.content as Content[]));
+              // answer; throwing routes it through the loop's error handling instead. The text is
+              // assembled by the same shared rule `McpClient` applies — one line per text block,
+              // structured content last, a tool-naming fallback — not a second copy of it.
+              throw callToolFailure(declared.name, contentsOfCallToolResult(result));
             }
             return result.content;
           },
