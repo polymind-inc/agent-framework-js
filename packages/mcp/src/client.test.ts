@@ -18,7 +18,7 @@ import { MockChatClient } from '@polymind-inc/agent-framework-core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { McpClient } from './client.js';
 import { McpConnection } from './connection.js';
-import { fromMcpContent, mcpErrorText } from './content.js';
+import { callToolFailure, contentsOfCallToolResult, fromMcpContent, mcpErrorText } from './content.js';
 import type { TestTool } from './test-server.js';
 import { SlowStartServer, TestMcpServer } from './test-server.js';
 
@@ -1058,5 +1058,51 @@ describe('mcpErrorText', () => {
         { type: 'text', text: 'retry after 30s' },
       ]),
     ).toBe('rejected it\nretry after 30s');
+  });
+});
+
+describe('contentsOfCallToolResult', () => {
+  // The one conversion every reader of a tool result shares — the MCP client here, the Foundry
+  // toolbox through the internal entry — pinned at the function so the readers cannot drift.
+
+  it('stamps the result _meta onto converted blocks but not onto the structured-content item', () => {
+    const contents = contentsOfCallToolResult({
+      content: [{ type: 'text', text: 'partial output' }],
+      structuredContent: { code: 'RATE_LIMITED' },
+      _meta: { 'ifc/labels': ['secret'] },
+    });
+
+    expect(contents).toEqual([
+      {
+        type: 'text',
+        text: 'partial output',
+        rawRepresentation: { type: 'text', text: 'partial output' },
+        additionalProperties: { _meta: { 'ifc/labels': ['secret'] } },
+      },
+      // Last, and deliberately unstamped: the reference implementation builds this one item
+      // without the `_meta` envelope, and the asymmetry is preserved.
+      { type: 'text', text: '{"code":"RATE_LIMITED"}' },
+    ]);
+  });
+
+  it('reads an absent content list as empty rather than throwing', () => {
+    expect(contentsOfCallToolResult({})).toEqual([]);
+  });
+});
+
+describe('callToolFailure', () => {
+  it('assembles one line per text block', () => {
+    const error = callToolFailure('search_docs', [
+      { type: 'text', text: 'rejected it' },
+      { type: 'text', text: 'retry after 30s' },
+    ]);
+
+    expect(error).toBeInstanceOf(ToolInvocationError);
+    expect(error.toolName).toBe('search_docs');
+    expect(error.message).toBe('rejected it\nretry after 30s');
+  });
+
+  it('names the tool when the result said nothing', () => {
+    expect(callToolFailure('search_docs', []).message).toBe('MCP tool "search_docs" reported an error.');
   });
 });
