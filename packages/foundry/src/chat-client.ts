@@ -1,5 +1,8 @@
+import type { AgentSession, ChatClient, SessionScopedChatClient } from '@polymind-inc/agent-framework-core';
+import type { OpenAIChatOptions } from '@polymind-inc/agent-framework-openai';
 import { OpenAIChatClient } from '@polymind-inc/agent-framework-openai';
 import OpenAI from 'openai';
+import { withHostedSessionId } from './hosted-session.js';
 import type { FoundryProject } from './project.js';
 import type { FoundryTarget } from './target.js';
 import { isModelTarget, resolveEndpoint } from './target.js';
@@ -55,8 +58,21 @@ export type FoundryChatClientConfig = FoundryChatClientConfigBase &
  *   configuration; never build it from user input.
  * - The OpenAI notes apply unchanged: messages leave the process, and `store` is pass-through.
  */
-export class FoundryChatClient extends OpenAIChatClient {
+export class FoundryChatClient
+  extends OpenAIChatClient
+  implements SessionScopedChatClient<OpenAIChatOptions>
+{
   readonly #baseURL: string;
+
+  /**
+   * Binds this client to one run's session so the Foundry hosted-agent session id travels with it.
+   *
+   * `Agent` calls this; a caller does not. See {@link withHostedSessionId} for what the bound
+   * client does and how a hosted-agent session differs from a conversation.
+   */
+  forSession(session: AgentSession): ChatClient<OpenAIChatOptions> {
+    return withHostedSessionId(this, session);
+  }
 
   constructor(config: FoundryChatClientConfig) {
     // A server agent is addressed by its endpoint, and the agent definition picks the model, so
