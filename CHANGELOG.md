@@ -6,6 +6,21 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — a session now takes the conversation id the
+  first response reports, which hands the transcript to the service. From the next turn the request
+  carries that id instead of the whole history, the framework's own history provider stands down,
+  and the provider's prompt cache starts paying off. All three reference implementations do this;
+  the guard that refused it was ours alone. Measured against the live API over six turns:
+  `previous_response_id` does **not** reduce billed input tokens — both modes sent about 9,000 —
+  but only the service-managed side gets cache hits (the framework-managed side reported zero
+  cached tokens on every turn), which came out 23–29% cheaper and 25–38% faster. To keep the
+  framework in charge of history — for a message filter, a summarizing provider, or a persisted
+  local transcript — set `store: false`: nothing is kept service-side, so no id is reported and
+  none is adopted. Hosted agents already set it, because the hosting platform replays the
+  transcript itself; leaving it unset there sends the transcript twice. An agent configured with an
+  explicit `historyProvider` still fails with `ConfigurationError` when the service claims the
+  transcript, unchanged and matching .NET.
+
 - **[BREAKING] `@polymind-inc/agent-framework-a2a`** — a remote task's status message becomes a
   response message only when the task is waiting for input (`input-required`). Previously an
   awaited `run()` also materialized the status message of a `completed`, `failed`, `canceled` or

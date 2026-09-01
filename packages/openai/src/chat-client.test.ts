@@ -1041,7 +1041,7 @@ describe('Agent over OpenAIChatClient', () => {
     expect(resumed.text).toBe('Found three.');
   });
 
-  it('keeps framework-managed history across turns instead of switching to service-side storage', async () => {
+  it('continues from the stored response instead of resending the transcript', async () => {
     const create = vi
       .fn()
       .mockResolvedValueOnce(completedResponse())
@@ -1055,8 +1055,31 @@ describe('Agent over OpenAIChatClient', () => {
     await agent.run('one', { session });
     await agent.run('two', { session });
 
-    // A stored response id must not silently become a serviceSessionId; service-side
-    // conversation state is a separate opt-in.
+    // `store` defaults on, so the first response is one the service kept, and the session takes
+    // its id: the second turn sends only the new input and points at what came before.
+    expect(session.serviceSessionId).toBe('resp_2');
+    const secondCall = create.mock.calls[1];
+    assert.exists(secondCall);
+    expect(secondCall[0].previous_response_id).toBe('resp_1');
+    expect((secondCall[0].input as InputItem[]).map((item) => item.role)).toEqual(['user']);
+  });
+
+  it('keeps framework-managed history when the caller sets store false', async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(completedResponse())
+      .mockResolvedValueOnce(completedResponse({ id: 'resp_2' }));
+
+    const agent = new Agent({
+      client: new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' }),
+      defaultOptions: { store: false },
+    });
+    const session = agent.createSession();
+
+    await agent.run('one', { session });
+    await agent.run('two', { session });
+
+    // Nothing is kept service-side, so no conversation id is reported and none is adopted.
     expect(session.serviceSessionId).toBeUndefined();
     expect(create.mock.calls[1]?.[0].previous_response_id).toBeUndefined();
     const secondCall = create.mock.calls[1];
@@ -1098,6 +1121,9 @@ describe('Agent over OpenAIChatClient', () => {
     const agent = new Agent({
       client: new OpenAIChatClient({ client: fakeClient(create), model: 'gpt-4o' }),
       tools: [book],
+      // The framework owns this transcript: the question is what *its* replay does with a call
+      // nothing answered. With the service owning it there is no local transcript to round-trip.
+      defaultOptions: { store: false },
     });
     const session = agent.createSession();
     await agent.run('book me a flight', { session });
