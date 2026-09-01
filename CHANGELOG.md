@@ -6,6 +6,16 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-core`** — a chat client can now implement
+  `SessionScopedChatClient` to be asked, once per run, for a view of itself bound to that run's
+  session. The bound client wraps every service call of the run — later rounds of a tool loop as
+  much as the first, awaited and streamed alike — which is what a provider needs when its service
+  mints an identifier during a run that the session then has to echo on every later request. There
+  was nowhere to put such a value before: on the client it leaks between sessions, and a caller
+  cannot supply it because it does not exist until a run is already under way. `Agent` reads the
+  capability off the client it was constructed with, the same way it collects that client's
+  middleware; a client that does not implement it is unaffected and takes the same path as before.
+
 - **`@polymind-inc/agent-framework-core`** — the function-calling loop decides the next round from
   the conversation id the round that just finished **reported**, not from the id the request
   happened to carry. A run that started without one and was handed one mid-flight kept resending
