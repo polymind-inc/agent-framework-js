@@ -170,7 +170,9 @@ export class FoundryToolbox {
           // A tool declared without a description gets an empty one — the name is not reused as a
           // stand-in (Python parity: `tool.description or ""`).
           description: declared.description ?? '',
-          parameters: normalizeInputSchema(declared.inputSchema as Record<string, unknown> | undefined),
+          parameters: normalizeInputSchema(
+            declared.inputSchema as Record<string, unknown> | null | undefined,
+          ),
           execute: async (input: unknown, ctx: ToolContext) => {
             let result: CallToolResult;
             try {
