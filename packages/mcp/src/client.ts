@@ -6,16 +6,11 @@ import type {
   SkillsSource,
   ToolContext,
 } from '@polymind-inc/agent-framework-core';
-import {
-  AgentFrameworkError,
-  ConfigurationError,
-  ToolInvocationError,
-  tool,
-} from '@polymind-inc/agent-framework-core';
+import { ConfigurationError, ToolInvocationError, tool } from '@polymind-inc/agent-framework-core';
 import { errorMessageOf } from '@polymind-inc/agent-framework-core/internal';
 import { McpConnection } from './connection.js';
 import { callToolFailure, contentsOfCallToolResult, mcpMetaProperties } from './content.js';
-import { localToolName, normalizeInputSchema } from './declarations.js';
+import { claimLocalName, localToolName, normalizeInputSchema } from './declarations.js';
 import type { McpHeaderProvider } from './headers.js';
 import type { McpSkillsSourceConfig } from './skills.js';
 import { mcpSkillsSource } from './skills.js';
@@ -237,21 +232,10 @@ export class McpClient {
         continue;
       }
       const localName = localToolName(entry.name, this.#config.toolNamePrefix);
-      const claimedBy = remoteByLocalName.get(localName);
-      if (claimedBy !== undefined) {
-        if (claimedBy !== entry.name) {
-          throw new AgentFrameworkError(
-            `MCP server ${this.#target} advertises two tools whose exposed name is the same ` +
-              `"${localName}": "${claimedBy}" and "${entry.name}". Both cannot be offered to the ` +
-              'model, so neither is: restrict `allowedTools` to one of them, or have the server ' +
-              'rename one.',
-          );
-        }
-        // The same tool listed twice names the same target, so the first entry stands. Offering it
-        // twice would be the duplicate-name rejection this normalization exists to avoid.
+      const claim = claimLocalName(remoteByLocalName, localName, entry.name, `MCP server ${this.#target}`);
+      if (claim === 'duplicate') {
         continue;
       }
-      remoteByLocalName.set(localName, entry.name);
       exposed.push(this.#toFunctionTool(entry, localName));
     }
     return exposed;

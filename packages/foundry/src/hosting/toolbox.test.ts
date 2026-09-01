@@ -400,6 +400,26 @@ describe('FoundryToolbox tools', () => {
       await toolbox.close();
     });
 
+    it('refuses two remote names that collide on one exposed name', async () => {
+      // The MCP client's claim rule, shared: silently keeping one would make the other
+      // unreachable, and which survived would depend on the server's listing order.
+      const { toolbox } = stubToolbox({ tools: [{ name: 'a b' }, { name: 'a-b' }] });
+
+      await expect(toolbox.getTools()).rejects.toThrow(/exposed name is the same "a-b"/);
+      await toolbox.close();
+    });
+
+    it('keeps the first entry when the same tool is listed twice', async () => {
+      const { toolbox } = stubToolbox({
+        tools: [{ name: 'search_docs' }, { name: 'search_docs' }],
+      });
+
+      const tools = await toolbox.getTools();
+
+      expect(tools.map((t) => t.name)).toEqual(['search_docs']);
+      await toolbox.close();
+    });
+
     it('filters allowedTools by the remote name, prefix or not', async () => {
       const { toolbox } = stubToolbox({
         tools: [{ name: 'search docs!' }, { name: 'other' }],

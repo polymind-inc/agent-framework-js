@@ -1,11 +1,11 @@
 /**
  * How an MCP tool declaration becomes one a model provider accepts.
  *
- * Two rules, shared by every consumer of a `tools/list` result — the MCP client and the Foundry
- * toolbox, which speaks MCP over its own connection — so the same remote tool surfaces under the
- * same name and schema wherever it is loaded from, and a defect fixed in one place cannot survive
- * in a copy.
+ * Shared by every consumer of a `tools/list` result — the MCP client and the Foundry toolbox,
+ * which speaks MCP over its own connection — so the same remote tool surfaces under the same name
+ * and schema wherever it is loaded from, and a defect fixed in one place cannot survive in a copy.
  */
+import { AgentFrameworkError } from '@polymind-inc/agent-framework-core';
 
 /** Characters a provider accepts in a function name; everything else normalizes to `-`. */
 const DISALLOWED_NAME_CHARACTERS = /[^A-Za-z0-9_.-]/g;
@@ -15,9 +15,10 @@ const SEPARATORS = new Set(['_', '.', '-']);
 /**
  * Trims separators off one end of a name.
  *
- * A scan rather than an anchored `[_.-]+` regex: the name is server-chosen, and end-anchored
- * repetition backtracks polynomially on a long run of separators, which would let a hostile
- * declaration stall the loader.
+ * A scan rather than an anchored `[_.-]+` regex: the name is server-chosen, and `replace` retries
+ * an end-anchored pattern at every start position, rescanning a long separator run once per
+ * position — quadratic overall even though each attempt is linear, which is what lets a hostile
+ * declaration stall the loader. The scan reads each character once.
  */
 function trimSeparators(value: string, from: 'start' | 'end'): string {
   if (from === 'start') {
@@ -45,6 +46,39 @@ function trimSeparators(value: string, from: 'start' | 'end'): string {
  */
 function normalizeToolName(name: string): string {
   return name.replace(DISALLOWED_NAME_CHARACTERS, '-');
+}
+
+/**
+ * Claims one exposed name for a remote tool, refusing a collision.
+ *
+ * Normalization can land two different remote names on the same exposed name (`a b` and `a-b`
+ * both become `a-b`). Silently keeping one would make the other unreachable, and which one
+ * survived would depend on the order the server happened to list them in — so a collision throws,
+ * naming both remote tools. The same remote name listed twice names the same target; its later
+ * copies answer `'duplicate'` so the caller skips them, since offering the name twice is the
+ * duplicate-name rejection the normalization exists to avoid.
+ *
+ * `origin` names the tool source in the error — the MCP server, or the Foundry toolbox.
+ */
+export function claimLocalName(
+  claims: Map<string, string>,
+  localName: string,
+  remoteName: string,
+  origin: string,
+): 'claimed' | 'duplicate' {
+  const claimedBy = claims.get(localName);
+  if (claimedBy === undefined) {
+    claims.set(localName, remoteName);
+    return 'claimed';
+  }
+  if (claimedBy === remoteName) {
+    return 'duplicate';
+  }
+  throw new AgentFrameworkError(
+    `${origin} advertises two tools whose exposed name is the same "${localName}": ` +
+      `"${claimedBy}" and "${remoteName}". Both cannot be offered to the model, so neither is: ` +
+      'restrict `allowedTools` to one of them, or have the server rename one.',
+  );
 }
 
 /** The name a tool is exposed to the model under, given the configured prefix. */

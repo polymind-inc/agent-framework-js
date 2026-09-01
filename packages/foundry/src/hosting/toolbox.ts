@@ -12,6 +12,7 @@ import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
 import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
 import {
   callToolFailure,
+  claimLocalName,
   contentsOfCallToolResult,
   localToolName,
   normalizeInputSchema,
@@ -147,13 +148,25 @@ export class FoundryToolbox {
       throw withConsentTyped(error);
     });
 
-    return tools
-      .filter((declared) => this.#allowedTools?.has(declared.name) ?? true)
-      .map((declared) =>
+    // The same claim rule the MCP client applies: a collision between exposed names throws, and
+    // the same remote tool listed twice keeps its first entry.
+    const claims = new Map<string, string>();
+    const exposed: Array<FunctionTool<Record<string, unknown>, unknown>> = [];
+    for (const declared of tools) {
+      if (!(this.#allowedTools?.has(declared.name) ?? true)) {
+        continue;
+      }
+      const localName = localToolName(declared.name, this.#toolNamePrefix);
+      if (
+        claimLocalName(claims, localName, declared.name, `Foundry toolbox '${this.#name}'`) === 'duplicate'
+      ) {
+        continue;
+      }
+      exposed.push(
         tool({
           // Exposed under the provider-safe name the shared MCP rules produce; every request to
           // the toolbox below keeps using `declared.name`, the name the server owns.
-          name: localToolName(declared.name, this.#toolNamePrefix),
+          name: localName,
           // A tool declared without a description gets an empty one — the name is not reused as a
           // stand-in (Python parity: `tool.description or ""`).
           description: declared.description ?? '',
@@ -193,6 +206,8 @@ export class FoundryToolbox {
           },
         }),
       );
+    }
+    return exposed;
   }
 
   /**
