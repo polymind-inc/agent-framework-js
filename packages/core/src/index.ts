@@ -26,6 +26,7 @@ export type {
   ChatResponseStream,
   JsonSchemaResponseFormat,
   ResponseFormat,
+  SessionScopedChatClient,
   ToolChoice,
 } from './client/chat-client.js';
 export type { ClientErrorNormalizer, ClientErrorNormalizerOptions } from './client/client-errors.js';

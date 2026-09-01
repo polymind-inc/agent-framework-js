@@ -1,3 +1,4 @@
+import type { AgentSession } from '../agent/session.js';
 import type { ResponseStream } from '../streaming/response-stream.js';
 import type { JsonSchema, SchemaInput } from '../tools/json-schema.js';
 import type { Tool } from '../tools/tool.js';
@@ -101,4 +102,67 @@ export interface ChatClient<TOptions extends ChatOptions = ChatOptions> {
     messages: Message[],
     options?: TOptions & { signal?: AbortSignal },
   ): ChatResponseStream<unknown>;
+}
+
+/**
+ * An optional capability of a {@link ChatClient}: a view of itself bound to one run's session.
+ *
+ * A chat client is shared by every session that uses the agent, and `getResponse` is handed
+ * messages and options — never the session. That is right for a provider that only translates a
+ * request, and not enough for one whose service mints an identifier the *session* has to keep and
+ * echo on every later request. There is nowhere in a plain client to put such a value: on the
+ * client it would leak between sessions, and the caller cannot supply it because the service only
+ * issues it once a run is already under way.
+ *
+ * A client that implements this is asked, once per run, for a client bound to that run's session.
+ * The returned client sits inside the function-calling loop, so it wraps **every** service call of
+ * the run — the second and third rounds of a tool loop as much as the first — on awaited and
+ * streamed runs alike. `Agent` reads this capability off the client it was constructed with, the
+ * same way it collects that client's middleware.
+ *
+ * Write the bound client as an ordinary wrapper. Nothing else is required of it:
+ *
+ * ```ts
+ * class MyChatClient implements ChatClient<MyOptions>, SessionScopedChatClient<MyOptions> {
+ *   forSession(session: AgentSession): ChatClient<MyOptions> {
+ *     return {
+ *       metadata: this.metadata,
+ *       getResponse: (messages, options) => {
+ *         const kept = session.state.myServiceTicket;
+ *         const stream = this.getResponse(messages, withTicket(options, kept));
+ *         // …record a ticket the response carries back onto `session.state`
+ *         return stream;
+ *       },
+ *     };
+ *   }
+ * }
+ * ```
+ *
+ * ## What the bound client owes
+ *
+ * - **Keep per-session state on the session**, in {@link AgentSession.state}, not on the client.
+ *   Two sessions must never see each other's values, and session state is what survives
+ *   serialization.
+ * - **Do not mutate the caller's options.** Copy, then add.
+ * - Return a client, not a promise: this runs on the hot path of every round.
+ *
+ * ## Declaring it through a wrapper
+ *
+ * `Agent` looks for this on the client it was constructed with, so a wrapper stands between them.
+ * `withMiddleware` carries it over, as it already carries the hosted-tool capability methods —
+ * that is the wrapper meant for wrapping a client on the way in.
+ *
+ * The other exported client layers (`withChatTelemetry`, `withToolApproval`,
+ * `withFunctionInvocation`, `withStructuredOutput`) do not, and are not meant to: `Agent` applies
+ * each of them itself, so applying one before constructing an agent doubles a layer rather than
+ * adding one. A client wrapped that way loses this capability along with its hosted-tool ones.
+ */
+export interface SessionScopedChatClient<TOptions extends ChatOptions = ChatOptions> {
+  /**
+   * Returns a client bound to `session`, called once per run before the first service call.
+   *
+   * @param session - The run's session. Always resolved — a run without an explicit session still
+   * has one.
+   */
+  forSession(session: AgentSession): ChatClient<TOptions>;
 }

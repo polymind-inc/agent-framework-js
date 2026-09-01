@@ -1,4 +1,10 @@
-import type { ChatClient, ChatOptions, ChatResponseStream, ResponseFormat } from '../client/chat-client.js';
+import type {
+  ChatClient,
+  ChatOptions,
+  ChatResponseStream,
+  ResponseFormat,
+  SessionScopedChatClient,
+} from '../client/chat-client.js';
 import type { FunctionInvocationConfig } from '../client/function-invocation.js';
 import { createFunctionInvocationClientFactory } from '../client/function-invocation.js';
 import { applyStructuredOutput } from '../client/structured-output.js';
@@ -235,6 +241,10 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     session?: AgentSession,
     middleware?: readonly FunctionMiddleware[],
   ) => ChatClient<TOptions>;
+  /** Kept so the loop can be prepared again for a run whose client is bound to its session. */
+  readonly #loopConfig: FunctionInvocationConfig;
+  /** The provider's {@link SessionScopedChatClient} hook, already bound to the client. */
+  readonly #forSession: ((session: AgentSession) => ChatClient<TOptions>) | undefined;
   readonly #tools: Tool[];
   readonly #defaultOptions: Partial<TOptions>;
   /**
@@ -295,10 +305,38 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     // that round's tools run.
     this.#functionInvocation = config.functionInvocation ?? {};
     this.#client = withChatTelemetry(config.client);
-    this.#functionClient = createFunctionInvocationClientFactory(this.#client, {
+    this.#loopConfig = {
       ...this.#functionInvocation,
       middleware: [...(this.#functionInvocation.middleware ?? []), ...collected.function],
-    });
+    };
+    this.#functionClient = createFunctionInvocationClientFactory(this.#client, this.#loopConfig);
+    // Read where the client's middleware is read from, and for the same reason: a capability the
+    // client offers is declared on the client the caller handed over, not on a wrapper of it.
+    const scoped = (config.client as Partial<SessionScopedChatClient<TOptions>>).forSession;
+    this.#forSession = typeof scoped === 'function' ? scoped.bind(config.client) : undefined;
+  }
+
+  /**
+   * The client stack for one run, with the session bound in when the provider asked for it.
+   *
+   * The bound wrapper takes the leaf's place: inside the chat span, so whatever it does is
+   * measured as part of the call it wraps, and inside the function-calling loop, so it wraps every
+   * round rather than only the first. The span still reports the request as the framework issued
+   * it — what a provider layer adds below is the provider's business, the same as it already is
+   * for anything the leaf client puts on the wire.
+   *
+   * Preparing the loop a second time is the price of binding per run, and only a provider that
+   * asked for it pays: without the capability this returns the layer prepared at construction.
+   */
+  #loopClient(
+    session: AgentSession,
+    functionMiddleware: readonly FunctionMiddleware[],
+  ): ChatClient<TOptions> {
+    if (this.#forSession === undefined) {
+      return this.#functionClient(session, functionMiddleware);
+    }
+    const bound = withChatTelemetry(this.#forSession(session));
+    return createFunctionInvocationClientFactory(bound, this.#loopConfig)(session, functionMiddleware);
   }
 
   /** Fails fast when two providers would write to the same slot of {@link AgentSession.state}. */
@@ -721,15 +759,11 @@ export class Agent<TOptions extends ChatOptions = ChatOptions> implements AgentL
     session: AgentSession,
     functionMiddleware: readonly FunctionMiddleware[],
   ): ChatClient<TOptions> {
-    return withToolApproval(
-      this.#functionClient(session, functionMiddleware),
-      sessionApprovalStore(session),
-      {
-        ...(this.#functionInvocation.additionalTools === undefined
-          ? {}
-          : { additionalTools: this.#functionInvocation.additionalTools }),
-      },
-    );
+    return withToolApproval(this.#loopClient(session, functionMiddleware), sessionApprovalStore(session), {
+      ...(this.#functionInvocation.additionalTools === undefined
+        ? {}
+        : { additionalTools: this.#functionInvocation.additionalTools }),
+    });
   }
 
   /** This agent's identity as handed to middleware and context providers. */

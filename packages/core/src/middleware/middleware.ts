@@ -1,5 +1,5 @@
 import type { AgentSession } from '../agent/session.js';
-import type { ChatClient, ChatOptions } from '../client/chat-client.js';
+import type { ChatClient, ChatOptions, SessionScopedChatClient } from '../client/chat-client.js';
 import { ConfigurationError, MiddlewareTerminated } from '../errors.js';
 import { HOSTED_TOOL_CAPABILITY_METHODS } from '../tools/hosted.js';
 import type { AnyFunctionTool, Tool } from '../tools/tool.js';
@@ -334,6 +334,13 @@ export function terminateMiddleware(): never {
  * The client keeps working as a plain {@link ChatClient} — the middleware only takes effect for an
  * agent, which is the layer that owns runs and tool invocations.
  */
+/**
+ * The {@link SessionScopedChatClient} method name, checked against the interface rather than
+ * spelled twice: `HOSTED_TOOL_CAPABILITY_METHODS` is derived from a compiler-checked record for the
+ * same reason, and a name only a string literal knows about would go quietly stale on a rename.
+ */
+const SESSION_SCOPE_METHOD = 'forSession' satisfies keyof SessionScopedChatClient;
+
 export function withMiddleware<TOptions extends ChatOptions>(
   client: ChatClient<TOptions>,
   middleware: readonly Middleware[],
@@ -341,11 +348,17 @@ export function withMiddleware<TOptions extends ChatOptions>(
   const existing = (client as { middleware?: readonly Middleware[] }).middleware ?? [];
   // The hosted-tool capability protocol is duck-typed on method presence, so the wrapper
   // has to carry the underlying client's capability methods or `supportsMcp` and friends would
-  // report a capable client as incapable after wrapping.
+  // report a capable client as incapable after wrapping. `forSession` is a different capability
+  // with the same hazard: `Agent` reads it off the client it was handed, so a wrapper that drops
+  // it silently turns a session-scoped provider into an ordinary one — nothing fails, and nothing
+  // reports the loss.
   const capabilities: Record<string, unknown> = {};
-  for (const method of HOSTED_TOOL_CAPABILITY_METHODS) {
+  for (const method of [...HOSTED_TOOL_CAPABILITY_METHODS, SESSION_SCOPE_METHOD]) {
     const fn = (client as unknown as Record<string, unknown>)[method];
     if (typeof fn === 'function') {
+      // Bound to the wrapped client, which loses nothing: this wrapper's `getResponse` only
+      // delegates, and the middleware it carries travels on `middleware` for the agent to collect,
+      // not through the call.
       capabilities[method] = fn.bind(client);
     }
   }
