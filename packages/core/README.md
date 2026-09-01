@@ -26,6 +26,27 @@ service-side should declare which conversation ids are stable anchors via
 propagation consult that predicate, and without it every reported conversation id advances the
 chain between tool rounds.
 
+A client whose service mints an identifier *during* a run — one the session then has to send on
+every later request — can also implement `SessionScopedChatClient`. `Agent` asks it once per run
+for a view of itself bound to that run's session, and that view wraps every service call of the
+run, later tool rounds included, on awaited and streamed runs alike:
+
+```ts
+class MyChatClient implements ChatClient<MyOptions>, SessionScopedChatClient<MyOptions> {
+  forSession(session: AgentSession): ChatClient<MyOptions> {
+    return {
+      metadata: this.metadata,
+      getResponse: (messages, options) =>
+        this.getResponse(messages, withTicket(options, session.state.myTicket)),
+    };
+  }
+}
+```
+
+Keep the value in `session.state` rather than on the client — that is what keeps one session from
+seeing another's, and what survives session serialization — and copy the options rather than
+mutating what the caller passed in.
+
 Function middleware wraps one tool call, and `next()` throws when that call fails — whether the
 tool body threw or an inner middleware did. Catch it and assign `ctx.result` to answer in the
 tool's place; let it out and it is reported to the model as that call's `function_result` while the
