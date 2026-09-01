@@ -48,11 +48,19 @@ const cached = agentMiddleware(async (ctx, next) => {
   await next();
 });
 
-/** Times every tool call, and could just as easily rewrite `ctx.arguments` or `ctx.result`. */
+/**
+ * Times every tool call, and could just as easily rewrite `ctx.arguments` or `ctx.result`.
+ *
+ * `next()` throws when the call fails, so the timing goes in `finally` — a tool that took two
+ * seconds to fail is exactly the one worth knowing about.
+ */
 const timing = functionMiddleware(async (ctx, next) => {
   const started = performance.now();
-  await next();
-  console.log(`  (tool) ${ctx.tool.name} took ${Math.round(performance.now() - started)}ms`);
+  try {
+    await next();
+  } finally {
+    console.log(`  (tool) ${ctx.tool.name} took ${Math.round(performance.now() - started)}ms`);
+  }
 });
 
 const getWeather = tool({

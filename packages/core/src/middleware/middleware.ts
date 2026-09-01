@@ -126,7 +126,13 @@ export interface FunctionMiddlewareContext {
    * the model, which is how {@link toolApprovalMiddleware} defers a call to a human.
    */
   result?: unknown;
-  /** The error the tool threw, when it threw. Set after `next()` returns. */
+  /**
+   * The error the tool threw, when it threw.
+   *
+   * A mirror, not the channel: the failure is what `next()` throws, and this is set alongside it
+   * so a middleware can look without catching. Clearing it does not clear the failure — recover by
+   * catching and assigning {@link FunctionMiddlewareContext.result}.
+   */
   error?: unknown;
   /**
    * Ends this invocation *and* the function-calling loop.
@@ -170,13 +176,26 @@ function middlewareName(handler: MiddlewareHandler<never>, options?: { name?: st
 /**
  * Declares a function middleware.
  *
+ * `next()` throws when the call it wraps fails, whether the tool body threw or an inner middleware
+ * did, so anything that has to happen on both paths belongs in `finally`:
+ *
  * ```ts
  * const timing = functionMiddleware(async (ctx, next) => {
  *   const started = performance.now();
- *   await next();
- *   console.log(ctx.tool.name, performance.now() - started, 'ms');
+ *   try {
+ *     await next();
+ *   } finally {
+ *     console.log(ctx.tool.name, performance.now() - started, 'ms');
+ *   }
  * });
  * ```
+ *
+ * Catching it and assigning `ctx.result` answers the call in the tool's place; letting it out
+ * reports it to the model as this call's failure and the loop carries on. To end the run instead,
+ * throw {@link MiddlewareFailed} — that one is never turned into a result.
+ *
+ * The failure is also readable as `ctx.error`, for a middleware that wants to look at it without
+ * taking responsibility for it.
  */
 export function functionMiddleware(
   handler: MiddlewareHandler<FunctionMiddlewareContext>,

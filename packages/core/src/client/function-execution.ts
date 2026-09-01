@@ -1,6 +1,7 @@
 import type { AgentSession } from '../agent/session.js';
 import {
   errorMessageOf,
+  MiddlewareFailed,
   MiddlewareTerminated,
   ToolInvocationError,
   UserInputRequiredError,
@@ -270,15 +271,25 @@ async function invokeOne(
  *
  * Arguments are parsed and validated *before* the chain, so a middleware inspects what the tool
  * would actually receive rather than the model's raw JSON (Python `FunctionInvocationContext`
- * carries the validated arguments). Everything the chain leaves in the context is then read back:
+ * carries the validated arguments).
  *
- * - a `result` with no `error` is what the model is told, whether the tool ran or a middleware
- *   answered for it;
- * - an `error` that no middleware cleared becomes the failure result, so recovery is possible by
- *   assigning `ctx.result`;
+ * The chain is one exception boundary, not two. Whatever it throws — the tool body, a middleware,
+ * either one — is this call's failure and becomes the `function_result` the model reads, and the
+ * round counts against `maxConsecutiveErrors` like any other failure, so a layer that keeps
+ * failing still ends the run. Python draws the boundary in exactly this place: one
+ * `except Exception` around the whole pipeline, with the tool body as its innermost handler.
+ *
+ * Three throws are not that failure and cross unchanged: `terminate()` stops the loop after this
+ * round, {@link UserInputRequiredError} carries a request only the caller can settle, and
+ * {@link MiddlewareFailed} says the run must end now.
+ *
+ * What the chain leaves in the context is then read back:
+ *
+ * - a `result` is what the model is told, whether the tool ran or a middleware answered for it —
+ *   which is how a middleware recovers from a failure it caught;
+ * - an `error` with no `result` becomes the failure result;
  * - a `function_approval_request` is surfaced to the caller instead of the model, which is how
- *   {@link toolApprovalMiddleware} sends a call to a human;
- * - `terminate()` stops the loop after this round.
+ *   {@link toolApprovalMiddleware} sends a call to a human.
  */
 async function executeWithMiddleware(
   call: FunctionCallContent,
@@ -309,20 +320,36 @@ async function executeWithMiddleware(
   let terminated = false;
   const final = async (): Promise<void> => {
     const outcome = await runTool(call, target, ctx.arguments, env);
-    if (outcome.status === 'exception') {
-      ctx.error = outcome.error;
-    } else {
+    if (outcome.status !== 'exception') {
       ctx.result = outcome.result;
+      return;
     }
+    // Recorded *and* thrown. Thrown so `await next()` behaves the way the syntax reads — a
+    // middleware that wraps the call in `try/catch` or `try/finally` sees the tool's failure the
+    // same way it would see its own, which is how .NET and Python's function seams behave. Also
+    // recorded so a middleware that only wants to look does not have to catch, and so one that
+    // recovers by assigning `ctx.result` still leaves the original failure legible.
+    ctx.error = outcome.error;
+    throw outcome.error;
   };
 
   try {
     await runMiddlewareChain(env.middleware, ctx, final);
   } catch (error) {
-    if (!(error instanceof MiddlewareTerminated)) {
+    if (error instanceof MiddlewareTerminated) {
+      terminated = true;
+    } else if (error instanceof MiddlewareFailed || error instanceof UserInputRequiredError) {
+      // The two throws that are not this call's failure: one aborts the run on purpose, the other
+      // is a request only the caller can settle.
       throw error;
+    } else {
+      // Anything else — the tool body, or a middleware — is this call's failure and is reported to
+      // the model, exactly as a tool that threw always has been. A middleware failing is not a
+      // different kind of event to the loop than the tool it wraps failing (Python
+      // `_tools.py`: one `except Exception` around the whole pipeline), and the round still
+      // counts against `maxConsecutiveErrors`, so a layer that keeps failing still ends the run.
+      ctx.error = error;
     }
-    terminated = true;
   }
 
   const terminationFlag = terminated ? { terminated: true } : {};
@@ -407,11 +434,14 @@ async function resolveArguments(
 /**
  * Runs the tool body. A thrown error becomes a result the model reads, never a failed run.
  *
- * The one exception is {@link UserInputRequiredError}: a sub-agent that stopped for a human has no
- * result the model could act on, so it crosses this inner boundary unchanged. {@link invokeOne}
- * converts its contents into the round's user-input requests — or, when it carries none, into an
- * ordinary exception result — matching Python's `_execute_single_function_call`; every other error
- * is still reported to the model. Neither path fails the run.
+ * Two errors cross this boundary unchanged, because neither is something the model could act on:
+ *
+ * - {@link UserInputRequiredError} — a sub-agent stopped for a human. {@link invokeOne} converts
+ *   its contents into the round's user-input requests, or, when it carries none, into an ordinary
+ *   exception result, matching Python's `_execute_single_function_call`. It does not fail the run.
+ * - {@link MiddlewareFailed} — the caller said this failure ends the run. A tool can raise it as
+ *   well as a middleware; Python re-raises it from outside the whole pipeline, which covers the
+ *   tool body the same way.
  */
 async function runTool(
   call: FunctionCallContent,
@@ -436,7 +466,7 @@ async function runTool(
     const execute = target.execute as (input: unknown, ctx: ToolContext) => unknown;
     return { status: 'completed', call, result: await execute(input, ctx) };
   } catch (error) {
-    if (error instanceof UserInputRequiredError) {
+    if (error instanceof UserInputRequiredError || error instanceof MiddlewareFailed) {
       throw error;
     }
     return { status: 'exception', call, error };
@@ -530,7 +560,27 @@ export async function runInvocationRound(
   const captureErrors = errorCount < config.maxConsecutiveErrors;
   let results: SettledInvocation[];
   if (config.allowConcurrentInvocations && calls.length > 1) {
-    results = await Promise.all(calls.map((call) => invokeOne(call, tools, env)));
+    // A batch that is ending must not keep working. `MiddlewareFailed` aborts the run, so the
+    // siblings still in flight are told to stop rather than left to finish into a transcript
+    // nothing will read. Cancellation is cooperative: a call that watches its signal stops at its
+    // next suspension point, one that ignores it runs to completion and may still have its
+    // effects, and either way its result is discarded here.
+    const batch = new AbortController();
+    const signal = env.signal === undefined ? batch.signal : AbortSignal.any([env.signal, batch.signal]);
+    const pending = calls.map((call) =>
+      invokeOne(call, tools, { ...env, signal }).catch((error: unknown) => {
+        if (error instanceof MiddlewareFailed) {
+          batch.abort(error);
+        }
+        throw error;
+      }),
+    );
+    // Every promise carries a handler before the first `await`, so a sibling rejecting after the
+    // batch has already failed is not an unhandled rejection.
+    for (const promise of pending) {
+      void promise.catch(() => undefined);
+    }
+    results = await Promise.all(pending);
   } else {
     results = [];
     for (const call of calls) {

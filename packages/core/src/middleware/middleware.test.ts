@@ -443,10 +443,10 @@ describe('function middleware', () => {
       },
     });
     const recover = functionMiddleware(async (ctx, next) => {
-      await next();
-      if (ctx.error !== undefined) {
+      try {
+        await next();
+      } catch {
         ctx.result = 'recovered';
-        ctx.error = undefined;
       }
     });
     const agent = new Agent({
