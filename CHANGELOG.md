@@ -6,6 +6,16 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-foundry`** — `FoundryChatClient.createConversation()` creates a
+  server-side conversation and returns its id, so a run can start on a conversation that already
+  exists — and is already visible in the Foundry Project UI — instead of one the first response
+  mints: `agent.createSession({ serviceSessionId: await client.createConversation() })`. Creating is
+  all it does: the conversation outlives the session object, nothing deletes it, and dropping the
+  session does not release it. A client whose SDK has no conversations resource fails with a
+  `ConfigurationError` naming that, rather than a `TypeError`, and a cancellation passes through as
+  itself rather than as a provider failure. The standalone `createFoundryConversation` is exported
+  for a caller holding an SDK client without a `FoundryChatClient`.
+
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryChatClient` now carries the Foundry
   hosted-agent session id. The service mints one on the first request that carries none and reports
   it back; every later request of that session sends it, including later rounds of the same run — a

@@ -33,6 +33,20 @@ project over MCP. A toolbox publishes two independent things and the class expos
 the same connection, so skills need no separate credential — and `loadTools: false` gives an agent
 the skills without exposing the tools.
 
+## Starting on a conversation that already exists
+
+A run continues whatever conversation its session names, and by default the first response mints
+one. To have the conversation exist — and be visible in the Foundry Project UI — before the first
+turn, create it and pin it to the session:
+
+```ts
+const session = agent.createSession({ serviceSessionId: await client.createConversation() });
+await agent.run('hello', { session });
+```
+
+Creating is all this does. The conversation outlives the session object, nothing here deletes it,
+and dropping the session does not release it — its lifecycle belongs to the service.
+
 ## Hosted-agent sessions
 
 Foundry has two service-side identifiers, and they are not the same thing:
