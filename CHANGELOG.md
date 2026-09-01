@@ -14,6 +14,28 @@ contain breaking changes**; patch releases are fixes only.
   and what the session-level adoption already assumed. The anchor a provider declares stable is
   still held. Nothing changes when no id is ever reported, including under `store: false`.
 
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — a tool body's exception now travels out
+  through the function middleware wrapped around it, so `try { await next() } catch` and
+  `try { await next() } finally` mean what they read. Previously the failure was written to
+  `ctx.error` and `next()` resolved, while an exception from an *inner middleware* did propagate —
+  the same syntax behaved differently depending on which layer threw, and a timing or logging
+  middleware silently skipped exactly the calls worth knowing about. Recover by catching and
+  assigning `ctx.result`; `ctx.error` is still set alongside the throw for a middleware that only
+  wants to look, but clearing it no longer clears the failure. Middleware written as
+  `await next(); if (ctx.error) { … }` must become `try/catch`.
+
+- **[BREAKING] `@polymind-inc/agent-framework-core`** — an exception from a function middleware is
+  reported to the model as that call's `function_result` and the loop continues, instead of failing
+  the run. Tool bodies already behaved this way; middleware did not, and all three reference
+  implementations treat both the same. The round still counts against `maxConsecutiveErrors`
+  (default 3), so a layer that keeps failing still ends the run — this is not a licence to fail
+  forever. **This reversal is silent**: nothing in the type system or the linter will point at
+  middleware that relied on throwing to abort. Throw the new `MiddlewareFailed` where that was the
+  intent — it is never turned into a result, it cancels the rest of the concurrent batch, and it
+  reaches the caller of `run()`. A tool body may throw it too. Cancellation is cooperative: a
+  sibling that watches `ctx.signal` stops at its next suspension point, one that ignores it runs to
+  completion and may still have its effects, and either way its result is discarded.
+
 - **[BREAKING] `@polymind-inc/agent-framework-core`** — a session now takes the conversation id the
   first response reports, which hands the transcript to the service. From the next turn the request
   carries that id instead of the whole history, the framework's own history provider stands down,

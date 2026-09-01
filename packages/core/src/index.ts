@@ -60,6 +60,7 @@ export {
   ChatClientError,
   ConfigurationError,
   ContentFilterError,
+  MiddlewareFailed,
   MiddlewareTerminated,
   NotImplementedError,
   SchemaResolutionError,

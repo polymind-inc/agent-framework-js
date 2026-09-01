@@ -26,6 +26,14 @@ service-side should declare which conversation ids are stable anchors via
 propagation consult that predicate, and without it every reported conversation id advances the
 chain between tool rounds.
 
+Function middleware wraps one tool call, and `next()` throws when that call fails — whether the
+tool body threw or an inner middleware did. Catch it and assign `ctx.result` to answer in the
+tool's place; let it out and it is reported to the model as that call's `function_result` while the
+loop carries on, counting against `maxConsecutiveErrors`. Anything that must run either way belongs
+in `finally`. To end the run instead of telling the model, throw `MiddlewareFailed`: it is never
+turned into a result, it cancels the rest of a concurrent batch, and it reaches the caller of
+`run()` — the escape a guardrail wants when it could not decide rather than decided "no".
+
 Requirements: Node.js >= 24, ESM only (no CommonJS build).
 
 Known limitations:
