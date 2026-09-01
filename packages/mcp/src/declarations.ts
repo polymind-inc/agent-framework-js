@@ -67,8 +67,9 @@ export function localToolName(remoteName: string, toolNamePrefix: string | undef
  * A tool that takes no arguments is commonly declared as a bare `{ "type": "object" }`, which
  * OpenAI answers with a 400 because the object form requires `properties`. Adding the empty map is
  * what Python's MCP loader does, and it says exactly what the server meant. A schema that is
- * absent altogether is treated as that same zero-argument declaration; Python leaves it as an
- * empty schema, which says nothing about the arguments at all. Any other schema is passed through.
+ * absent altogether gets that same zero-argument declaration here — a deliberate divergence from
+ * Python, which leaves it as an empty schema that says nothing about the arguments at all. Any
+ * other schema is passed through.
  *
  * The copy is shallow — only the top-level `properties` key is ever written — so the schema the
  * server owns is left as it was; nothing nested is modified.

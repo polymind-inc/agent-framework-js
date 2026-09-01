@@ -60,7 +60,8 @@ export interface FoundryToolboxConfig {
    * plain MCP servers — the joining and normalization rules are the same shared implementation.
    *
    * Only the exposed name changes. `tools/call`, {@link FoundryToolboxConfig.allowedTools} and
-   * error messages all keep using the toolbox's own name.
+   * error messages all keep using the tool name the server declared — not the prefixed name, and
+   * not {@link FoundryToolboxConfig.name}.
    */
   toolNamePrefix?: string;
   /**
