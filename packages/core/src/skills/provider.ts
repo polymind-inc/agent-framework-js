@@ -2,6 +2,7 @@ import type { ContextProvider, ProviderRunContext } from '../context/context-pro
 import { ConfigurationError } from '../errors.js';
 import type { ApprovalMode, Tool, ToolContext } from '../tools/tool.js';
 import { tool } from '../tools/tool.js';
+import { isRecord } from '../types/content.js';
 import type { Skill, SkillAccessOptions, SkillInvocationContext, SkillScriptArguments } from './skill.js';
 import { xmlEscape } from './skill.js';
 import type { SkillLoadFailure, SkillsSource, SkillsSourceContext } from './source.js';
@@ -287,13 +288,15 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
             { type: 'null' },
           ],
           // Advertised only: omitting `args` is a supported call, and saying so keeps the model
-          // from inventing a placeholder for a script that takes nothing. The tool never
-          // substitutes the value — a script still sees `undefined` for an omitted argument.
+          // from inventing a placeholder for a script that takes nothing. An explicit `null` is
+          // that same absence spelled out — the script sees `undefined` for both, as
+          // `scriptArguments` documents.
           default: null,
           description:
             'Arguments to pass to the script. Use an array of strings for CLI-style positional ' +
             'arguments (e.g. ["input.docx", "--output", "result.idx"]), or an object for named ' +
-            'parameters (e.g. {"length": 24, "uppercase": true}). How these values are mapped to ' +
+            'parameters (e.g. {"length": 24, "uppercase": true}). Omit this or pass null when the ' +
+            'script takes no arguments; both mean the same absence. How these values are mapped to ' +
             'the underlying script is determined by the script implementation or configured runner.',
         },
       },
@@ -316,16 +319,35 @@ function skillTools(skills: readonly Skill[], approvals: SkillApprovalModes): To
       if (script === undefined) {
         return `Error: Script '${scriptName}' not found in skill '${skillName}'.`;
       }
-      // The cast is wider than the truth: the schema's null branch means a model can send an
-      // explicit `null`, which reaches the script even though the declared type excludes it. The
-      // test driving all three shapes through this call pins that. Reconciling the two — widening
-      // the type or folding `null` into `undefined` — changes the published surface or what a
-      // script observes, so it is decided separately rather than here.
-      return await script.run(input.args as SkillScriptArguments, invocationContext(skill, toolCtx));
+      return await script.run(scriptArguments(input.args), invocationContext(skill, toolCtx));
     },
   });
 
   return [loadSkill, readSkillResource, runSkillScript];
+}
+
+/**
+ * What the model's `args` value hands the script.
+ *
+ * An explicit JSON `null` — the schema's advertised default — collapses to the same absence an
+ * omitted `args` produces, so a script author handles one absent value and the declared
+ * {@link SkillScriptArguments} parameter type is true at runtime: nothing reaches `run` that the
+ * type excludes. The reference implementation makes the same collapse — its `args` parameter
+ * defaults to `None`, and an explicit JSON `null` deserializes to that same `None`.
+ *
+ * The predicates re-establish for the compiler what the tool's schema (`oneOf` of object, string
+ * array, null) already validated before execution, so no assertion is needed. A caller invoking
+ * `execute` directly with a value the schema would have refused gets the absent case rather than
+ * a script receiving a type its signature was promised never to see.
+ */
+function scriptArguments(args: unknown): SkillScriptArguments {
+  if (isRecord(args)) {
+    return args;
+  }
+  if (Array.isArray(args) && args.every((item): item is string => typeof item === 'string')) {
+    return args;
+  }
+  return undefined;
 }
 
 function compareNames(left: string, right: string): number {

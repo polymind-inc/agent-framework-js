@@ -6,6 +6,15 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
+  arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
+  advertised default — and that value used to be handed to `SkillScript.run` even though the
+  declared `SkillScriptArguments` type excludes it, so a `typeof args === 'object'` branch written
+  against the type met a `null` at runtime. An explicit `null` is the same absence as omitting the
+  argument and now arrives as `undefined`, matching the reference implementation, where an omitted
+  value defaults to `None` and an explicit JSON `null` deserializes to that same `None`. Only a
+  script that deliberately distinguished the two — against the declared type — observes a change.
+
 - **`@polymind-inc/agent-framework-foundry`** — a Foundry toolbox tool that reports `isError` now
   assembles its failure text by the same rule the MCP client applies, instead of an independent
   second implementation that had drifted from it: each text block lands on its own line rather than
