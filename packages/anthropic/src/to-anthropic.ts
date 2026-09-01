@@ -220,7 +220,7 @@ function appendContent(blocks: AnthropicBlock[], content: Content, answered: Rea
       return;
     }
     case 'function_call': {
-      // A call no `function_result` anywhere in the transcript answers is omitted: the Messages
+      // A call that no `function_result` anywhere in the transcript answers is omitted: the Messages
       // API refuses the request outright when a `tool_use` has no `tool_result` — so the choice is
       // not between sending and filtering but between a defined omission and a provider 400. A
       // transcript legitimately holds such a call (an approval pause, the iteration limit, an
