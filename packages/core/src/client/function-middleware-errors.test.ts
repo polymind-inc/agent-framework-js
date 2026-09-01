@@ -185,6 +185,20 @@ describe('a failure nothing recovered is reported to the model', () => {
     expect(messages.at(-1)?.contents.some((c) => c.type === 'text' && c.text === 'carried on')).toBe(true);
   });
 
+  it('reports a middleware that threw after the tool had already succeeded', async () => {
+    // The tool ran and left a result behind. The middleware then failed, so the call as a whole
+    // did not succeed, and the result of a step that never finished is not the answer.
+    const thrower = functionMiddleware(async (_ctx, next) => {
+      await next();
+      throw new Error('after the tool');
+    });
+
+    const messages = await run(callThen('quiet', 'carried on'), [thrower]);
+
+    expect(exceptionOf(messages)).toContain('after the tool');
+    expect(resultOf(messages)).not.toBe('done');
+  });
+
   it('reports a value that is not an Error', async () => {
     const thrower = functionMiddleware(async () => {
       throw 'a bare string';

@@ -142,7 +142,7 @@ export class MiddlewareTerminated extends AgentFrameworkError {
 /**
  * A failure that must end the run rather than be reported to the model.
  *
- * Everything else a tool or a function middleware throws becomes this call's `function_result`, and
+ * An ordinary error from a tool or a function middleware becomes this call's `function_result` and
  * the loop carries on — the right reading for a tool that failed, and the wrong one for a layer
  * whose whole job is to decide whether the call may happen at all. A guardrail that cannot reach
  * its policy service has not decided "no"; it has failed to decide, and telling the model the tool
@@ -151,6 +151,10 @@ export class MiddlewareTerminated extends AgentFrameworkError {
  * Throw this to say so. It is never converted into a result: the current batch of calls is
  * cancelled, no further call starts, and it reaches the caller of `run()`. The counterpart of
  * Python's `MiddlewareFailure`.
+ *
+ * Two other errors also leave the seam without becoming a failure result, and neither is this:
+ * {@link MiddlewareTerminated} — from `ctx.terminate(result)` — stops the loop *after* reporting
+ * this round, and {@link UserInputRequiredError} carries a request only the caller can settle.
  *
  * Cancellation is cooperative. A sibling call already awaiting something stops at its next
  * suspension point if it watches `ctx.signal`; one that ignores the signal runs to completion and

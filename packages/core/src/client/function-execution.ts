@@ -349,6 +349,11 @@ async function executeWithMiddleware(
       // `_tools.py`: one `except Exception` around the whole pipeline), and the round still
       // counts against `maxConsecutiveErrors`, so a layer that keeps failing still ends the run.
       ctx.error = error;
+      // A middleware that threw *after* the tool succeeded leaves a result behind that no longer
+      // stands: the call as a whole did not succeed, and the output of a step that never finished
+      // is not the answer. Recovery is unaffected — a middleware that recovers catches the failure
+      // itself, so the chain resolves and never reaches here.
+      ctx.result = undefined;
     }
   }
 
