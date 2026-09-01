@@ -31,7 +31,11 @@ export interface ScratchRoot {
  * Call at module scope of a test file; the cleanup hook binds to that file.
  */
 export function scratchRoot(prefix: string): ScratchRoot {
-  const root = join(tmpdir(), `${prefix}-${crypto.randomUUID()}`);
+  // The prefix names a directory and nothing more. Stripping everything path-like keeps a
+  // mistaken `/tmp/foo` or `..\bar` from letting the recursive removal below reach outside the
+  // OS temp directory.
+  const name = prefix.replace(/[^A-Za-z0-9_-]/g, '-');
+  const root = join(tmpdir(), `${name}-${crypto.randomUUID()}`);
   let count = 0;
   afterAll(async () => {
     try {
