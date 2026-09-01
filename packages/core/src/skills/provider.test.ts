@@ -229,7 +229,8 @@ describe('skillsProvider tools', () => {
           description:
             'Arguments to pass to the script. Use an array of strings for CLI-style positional ' +
             'arguments (e.g. ["input.docx", "--output", "result.idx"]), or an object for named ' +
-            'parameters (e.g. {"length": 24, "uppercase": true}). How these values are mapped to ' +
+            'parameters (e.g. {"length": 24, "uppercase": true}). Omit this or pass null when the ' +
+            'script takes no arguments; both mean the same absence. How these values are mapped to ' +
             'the underlying script is determined by the script implementation or configured runner.',
         },
       },
@@ -237,10 +238,12 @@ describe('skillsProvider tools', () => {
     });
   });
 
-  it('hands the script exactly what the model sent for args, never the advertised default', async () => {
-    // `default` tells the model what omitting `args` means; it is not a value the tool substitutes.
-    // A script therefore still sees `undefined` for an omitted argument and `null` for an explicit
-    // one, and can tell the two apart.
+  it('hands the script one absent value: omitted args and an explicit null both arrive as undefined', async () => {
+    // The schema's `default: null` advertises that omitting `args` is supported; an explicit
+    // `null` is that same absence spelled out, so the script sees `undefined` for both — never a
+    // `null` its declared parameter type excludes. The reference implementation collapses the two
+    // the same way: an omitted value defaults to None and an explicit JSON null deserializes to
+    // that same None. Values the model actually sent pass through untouched.
     const seen: unknown[] = [];
     const probe = inlineSkill({
       name: 'probe-skill',
@@ -262,10 +265,11 @@ describe('skillsProvider tools', () => {
       { skill_name: 'probe-skill', script_name: 'probe' },
       { skill_name: 'probe-skill', script_name: 'probe', args: null },
       { skill_name: 'probe-skill', script_name: 'probe', args: ['--json'] },
+      { skill_name: 'probe-skill', script_name: 'probe', args: { length: 24 } },
     ]) {
       expect(await invoke(contribution, SKILL_TOOL_NAMES.runSkillScript, input)).toBe('recorded');
     }
-    expect(seen).toStrictEqual([undefined, null, ['--json']]);
+    expect(seen).toStrictEqual([undefined, undefined, ['--json'], { length: 24 }]);
   });
 
   it.each([

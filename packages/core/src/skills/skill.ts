@@ -37,6 +37,11 @@ export interface SkillResource {
  *
  * Two shapes, because scripts come in two flavours: named parameters for a function, and a
  * positional argv for anything shaped like a command line.
+ *
+ * `null` is deliberately not part of this type. The `run_skill_script` tool's schema lets a model
+ * send an explicit `null` — the advertised default — but that is the same absence as omitting the
+ * argument, and it reaches a script as this type's `undefined`, so an implementation handles one
+ * absent value.
  */
 export type SkillScriptArguments = Record<string, unknown> | readonly string[] | undefined;
 

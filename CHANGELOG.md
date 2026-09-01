@@ -6,6 +6,15 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-core`** — a skill script no longer receives `null` as its
+  arguments. The `run_skill_script` tool's schema lets a model send an explicit `null` — the
+  advertised default — and that value used to be handed to `SkillScript.run` even though the
+  declared `SkillScriptArguments` type excludes it, so a `typeof args === 'object'` branch written
+  against the type met a `null` at runtime. An explicit `null` is the same absence as omitting the
+  argument and now arrives as `undefined`, matching the reference implementation, where an omitted
+  value defaults to `None` and an explicit JSON `null` deserializes to that same `None`. Only a
+  script that deliberately distinguished the two — against the declared type — observes a change.
+
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryChatClient.createConversation()` creates a
   server-side conversation and returns its id, so a run can start on a conversation that already
   exists — and is already visible in the Foundry Project UI — instead of one the first response
