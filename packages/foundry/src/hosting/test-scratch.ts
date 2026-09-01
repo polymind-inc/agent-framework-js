@@ -1,3 +1,8 @@
+/**
+ * Test-only module: imports `vitest` and is reachable from test files alone. It is not part of
+ * any build entry point and must never be imported from runtime code, which would pull a
+ * dev-only dependency into the published package.
+ */
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
