@@ -280,8 +280,19 @@ function hostedFiles(result: AnthropicBlock): Content[] {
 /** The outputs of a `code_execution_tool_result` payload. */
 function codeExecutionOutputs(result: AnthropicBlock): Content[] {
   switch (result.type) {
-    case 'code_execution_tool_result_error':
-      return [{ type: 'error', message: String(result.error_code ?? ''), rawRepresentation: result }];
+    case 'code_execution_tool_result_error': {
+      // `errorCode` carries the code as itself, so a restored transcript can rebuild the error
+      // payload without guessing whether the message was a code or prose.
+      const errorCode = String(result.error_code ?? '');
+      return [
+        {
+          type: 'error',
+          message: errorCode,
+          ...(errorCode === '' ? {} : { errorCode }),
+          rawRepresentation: result,
+        },
+      ];
+    }
     case 'code_execution_result':
     case 'encrypted_code_execution_result': {
       const outputs: Content[] = [];
@@ -367,9 +378,18 @@ function textEditorOutputs(result: AnthropicBlock): Content[] {
     case 'text_editor_code_execution_tool_result_error': {
       // The error code gates the message, as in Python: a payload that reports a code but no
       // message describes itself through the raw representation rather than through prose.
+      // `errorCode` keeps the code itself, which a restored transcript needs to rebuild the
+      // error payload — the message alone cannot say which schema code produced it.
       const errorCode = String(result.error_code ?? '');
       const errorMessage = errorCode === '' ? '' : (nonEmptyString(result.error_message) ?? '');
-      return [{ type: 'error', message: errorMessage, rawRepresentation: result }];
+      return [
+        {
+          type: 'error',
+          message: errorMessage,
+          ...(errorCode === '' ? {} : { errorCode }),
+          rawRepresentation: result,
+        },
+      ];
     }
     case 'text_editor_code_execution_view_result': {
       const annotation = lineSpanAnnotation(result.start_line, result.num_lines, result);

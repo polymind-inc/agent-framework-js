@@ -6,6 +6,19 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-anthropic`** — a session restored from persistence can replay a
+  turn that used the code-execution beta. The blocks describing a provider-executed call — code
+  execution, bash, the text editor — used to be replayed only from `rawRepresentation`, which
+  serialization deliberately strips, so a restored transcript dropped them and the turn's remaining
+  `tool_result` answered a call the request no longer contained, which the Messages API rejects.
+  The conversion now rebuilds `server_tool_use` and the code-execution result blocks from the typed
+  contents when the raw block is gone: calls stay paired with their results, stdout/stderr, files
+  and error codes survive, and for a turn whose typed form captures what the wire said the rebuilt
+  request is identical to the in-memory one. A transcript still holding `rawRepresentation` replays
+  the exact bytes, unchanged, and `rawRepresentation` is still never serialized. Error outputs
+  parsed from code-execution and text-editor failures now also carry the wire's code under
+  `ErrorContent.errorCode` (additive), which is what makes a restored error turn rebuild faithfully.
+
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryToolbox` now normalizes the tool
   declarations it exposes by the same shared rules the MCP client applies, instead of passing them
   through raw: a remote name containing characters providers refuse (anything outside

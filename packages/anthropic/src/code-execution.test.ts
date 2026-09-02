@@ -106,7 +106,16 @@ describe('code_execution_tool_result variants', () => {
     expect(content).toEqual({
       type: 'code_interpreter_tool_result',
       callId: 'srvtoolu_1',
-      outputs: [{ type: 'error', message: 'execution_time_exceeded', rawRepresentation: inner }],
+      outputs: [
+        {
+          type: 'error',
+          message: 'execution_time_exceeded',
+          // The code as itself, so a restored transcript can rebuild the error payload without
+          // guessing whether the message was a code or prose.
+          errorCode: 'execution_time_exceeded',
+          rawRepresentation: inner,
+        },
+      ],
       rawRepresentation: block,
     });
   });
@@ -320,7 +329,9 @@ describe('text_editor_code_execution_tool_result variants', () => {
     expect(content).toEqual({
       type: 'function_result',
       callId: 'srvtoolu_1',
-      result: [{ type: 'error', message: 'File not found', rawRepresentation: inner }],
+      result: [
+        { type: 'error', message: 'File not found', errorCode: 'file_not_found', rawRepresentation: inner },
+      ],
       rawRepresentation: block,
     });
   });
