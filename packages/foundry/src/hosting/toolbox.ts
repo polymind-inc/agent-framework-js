@@ -10,7 +10,13 @@ import type {
 import { skillsProvider, tool } from '@polymind-inc/agent-framework-core';
 import type { McpSkillsSourceConfig } from '@polymind-inc/agent-framework-mcp';
 import { McpConnection, mcpSkillsSource } from '@polymind-inc/agent-framework-mcp';
-import { callToolFailure, contentsOfCallToolResult } from '@polymind-inc/agent-framework-mcp/internal';
+import {
+  callToolFailure,
+  claimLocalName,
+  contentsOfCallToolResult,
+  localToolName,
+  normalizeInputSchema,
+} from '@polymind-inc/agent-framework-mcp/internal';
 import type { FoundryProject } from '../project.js';
 import { FOUNDRY_API_VERSION } from '../target.js';
 import { consentRequestsOf, ToolboxConsentRequiredError } from './consent.js';
@@ -48,6 +54,18 @@ export interface FoundryToolboxConfig {
    */
   loadTools?: boolean;
   /**
+   * Namespaces the tool names this toolbox exposes to the model, as `<prefix>_<name>`.
+   *
+   * Two toolboxes that both advertise `search` collide the moment their tools reach one agent; a
+   * prefix is how the caller separates them, exactly as `McpClientConfig.toolNamePrefix` does for
+   * plain MCP servers — the joining and normalization rules are the same shared implementation.
+   *
+   * Only the exposed name changes. `tools/call`, {@link FoundryToolboxConfig.allowedTools} and
+   * error messages all keep using the tool name the server declared — not the prefixed name, and
+   * not {@link FoundryToolboxConfig.name}.
+   */
+  toolNamePrefix?: string;
+  /**
    * Replaces the transport's `fetch`, for proxies and tests.
    *
    * The per-call authorization wrapper is applied *around* whatever is supplied here, so a
@@ -76,6 +94,7 @@ export class FoundryToolbox {
   readonly #endpoint: string;
   readonly #allowedTools: ReadonlySet<string> | undefined;
   readonly #loadTools: boolean;
+  readonly #toolNamePrefix: string | undefined;
   readonly #connection: McpConnection;
 
   constructor(options: FoundryToolboxConfig) {
@@ -84,6 +103,7 @@ export class FoundryToolbox {
     this.#endpoint = project.endpoint;
     this.#allowedTools = options.allowedTools === undefined ? undefined : new Set(options.allowedTools);
     this.#loadTools = options.loadTools ?? true;
+    this.#toolNamePrefix = options.toolNamePrefix;
 
     const fetch = options.fetch ?? project.fetch;
     this.#connection = new McpConnection({
@@ -114,6 +134,10 @@ export class FoundryToolbox {
    * Called on the first request rather than at startup: a toolbox that is briefly unreachable
    * would otherwise keep `/readiness` red and fail every invocation with `session_not_ready`,
    * instead of failing the one request that needed it.
+   *
+   * @throws {AgentFrameworkError} When two of the toolbox's tools would be exposed under the same
+   *   name — the same claim rule `McpClient.getTools` applies. Silently keeping one of them would
+   *   make the other unreachable, and which one survived would depend on the listing order.
    */
   async getTools(): Promise<Array<FunctionTool<Record<string, unknown>, unknown>>> {
     if (!this.#loadTools) {
@@ -128,15 +152,31 @@ export class FoundryToolbox {
       throw withConsentTyped(error);
     });
 
-    return tools
-      .filter((declared) => this.#allowedTools?.has(declared.name) ?? true)
-      .map((declared) =>
+    // The same claim rule the MCP client applies: a collision between exposed names throws, and
+    // the same remote tool listed twice keeps its first entry.
+    const claims = new Map<string, string>();
+    const exposed: Array<FunctionTool<Record<string, unknown>, unknown>> = [];
+    for (const declared of tools) {
+      if (!(this.#allowedTools?.has(declared.name) ?? true)) {
+        continue;
+      }
+      const localName = localToolName(declared.name, this.#toolNamePrefix);
+      if (
+        claimLocalName(claims, localName, declared.name, `Foundry toolbox '${this.#name}'`) === 'duplicate'
+      ) {
+        continue;
+      }
+      exposed.push(
         tool({
-          name: declared.name,
+          // Exposed under the provider-safe name the shared MCP rules produce; every request to
+          // the toolbox below keeps using `declared.name`, the name the server owns.
+          name: localName,
           // A tool declared without a description gets an empty one — the name is not reused as a
           // stand-in (Python parity: `tool.description or ""`).
           description: declared.description ?? '',
-          parameters: (declared.inputSchema ?? { type: 'object' }) as Record<string, unknown>,
+          parameters: normalizeInputSchema(
+            declared.inputSchema as Record<string, unknown> | null | undefined,
+          ),
           execute: async (input: unknown, ctx: ToolContext) => {
             let result: CallToolResult;
             try {
@@ -172,6 +212,8 @@ export class FoundryToolbox {
           },
         }),
       );
+    }
+    return exposed;
   }
 
   /**
