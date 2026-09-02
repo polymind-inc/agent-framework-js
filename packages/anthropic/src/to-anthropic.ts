@@ -231,27 +231,64 @@ function rebuiltServerToolUse(content: Content, family: CodeExecutionFamily): An
     return {};
   }
   const text = content.inputs?.find((item) => item.type === 'text')?.text ?? '';
-  let input: Record<string, unknown> = {};
+  // The receive side records an object input as its JSON and a string input as itself, so the
+  // faithful inverse parses when it can and otherwise sends the text back as the string it was.
+  // `server_tool_use.input` is `unknown` in the request schema, so a non-object round-trips as
+  // itself — unlike a local `tool_use.input`, whose object requirement is what the `raw` wrapping
+  // elsewhere serves. (A string input that happens to be valid JSON parses; the two spellings are
+  // indistinguishable once typed, and the parsed reading matches what an object input produced.)
+  let input: unknown;
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (isRecord(parsed)) {
-      input = parsed;
-    }
+    input = JSON.parse(text);
   } catch {
-    // The receive side records a non-JSON input as the text itself; there is no object to rebuild.
+    input = text;
   }
   return { type: 'server_tool_use', id: content.callId ?? '', name: family, input };
 }
 
-/** The file entries a rebuilt result payload lists for its `hosted_file` contents. */
+/** The file entries a rebuilt result payload lists for its `hosted_file` and preserved contents. */
 function rebuiltFileEntries(items: readonly Content[], entryType: string): AnthropicBlock[] {
   const entries: AnthropicBlock[] = [];
   for (const item of items) {
     if (item.type === 'hosted_file' && item.fileId !== undefined && item.fileId !== '') {
       entries.push({ type: entryType, file_id: item.fileId });
+    } else if (item.type === 'unknown' && item.unknownType === entryType) {
+      // A malformed entry — one naming no fetchable file — is preserved verbatim by the receive
+      // side; it goes back where it sat, so a restored replay carries the same list the wire did.
+      entries.push(serializeContent(item) as AnthropicBlock);
     }
   }
   return entries;
+}
+
+/** Whether a content item is a bash file entry the receive side placed before its shell result. */
+function isBashFileSibling(content: Content | undefined): boolean {
+  return (
+    content?.type === 'hosted_file' ||
+    (content?.type === 'unknown' && content.unknownType === 'bash_code_execution_output')
+  );
+}
+
+/**
+ * Whether this preserved entry is folded into the shell result that follows it.
+ *
+ * The receive side lists a bash run's file entries — malformed ones preserved as unknown content —
+ * as siblings *before* the `shell_tool_result`. Those are the shell payload's to carry: the
+ * rebuilt payload lists them again, and a raw replay already holds them inside the raw block, so
+ * emitting them standalone here would duplicate them at the top level.
+ */
+function foldsIntoFollowingShellResult(contents: readonly Content[], index: number): boolean {
+  const item = contents[index];
+  if (item?.type !== 'unknown' || item.unknownType !== 'bash_code_execution_output') {
+    return false;
+  }
+  for (let cursor = index + 1; cursor < contents.length; cursor++) {
+    if (isBashFileSibling(contents[cursor])) {
+      continue;
+    }
+    return contents[cursor]?.type === 'shell_tool_result';
+  }
+  return false;
 }
 
 /** Rebuilds the payload of a `code_execution_tool_result` from the typed outputs. */
@@ -415,16 +452,16 @@ function appendContent(
       return;
     }
     case 'shell_tool_result': {
-      // The files a bash run produced sit as `hosted_file` siblings *before* the shell result —
-      // that is where the receive side put them — so the rebuilt payload gathers the contiguous
-      // run immediately preceding this content.
+      // The files a bash run produced sit as siblings *before* the shell result — that is where
+      // the receive side put them, malformed entries preserved as unknown content included — so
+      // the rebuilt payload gathers the contiguous run immediately preceding this content.
       const files: Content[] = [];
       for (let cursor = index - 1; cursor >= 0; cursor--) {
         const sibling = contents[cursor];
-        if (sibling?.type !== 'hosted_file') {
+        if (!isBashFileSibling(sibling)) {
           break;
         }
-        files.unshift(sibling);
+        files.unshift(sibling as Content);
       }
       blocks.push({
         type: 'bash_code_execution_tool_result',
@@ -534,6 +571,9 @@ function appendContent(
       return;
     }
     case 'unknown': {
+      if (foldsIntoFollowingShellResult(contents, index)) {
+        return;
+      }
       // Forward compatibility: a block this build does not model is replayed
       // exactly as it arrived, so a transcript survives a round trip through the framework.
       const raw = content.rawRepresentation;

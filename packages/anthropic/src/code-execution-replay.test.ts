@@ -38,6 +38,50 @@ const CODE_TURN = [
   },
 ];
 
+const CODE_STRING_INPUT_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: 'print(1)' },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: { type: 'code_execution_result', stdout: '1\n', stderr: '', return_code: 0, content: [] },
+  },
+];
+
+const CODE_MALFORMED_FILE_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      // The first entry names no file; the receive side preserves it as unknown content, and the
+      // rebuilt payload must carry it back in place.
+      content: [{ type: 'code_execution_output' }, { type: 'code_execution_output', file_id: 'file_1' }],
+    },
+  },
+];
+
+const BASH_MALFORMED_FILE_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'make' } },
+  {
+    type: 'bash_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_2',
+    content: {
+      type: 'bash_code_execution_result',
+      stdout: 'built\n',
+      stderr: '',
+      return_code: 0,
+      content: [
+        { type: 'bash_code_execution_output', file_id: 7 },
+        { type: 'bash_code_execution_output', file_id: 'file_2' },
+      ],
+    },
+  },
+];
+
 const CODE_ERROR_TURN = [
   { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'boom()' } },
   {
@@ -147,7 +191,10 @@ const EDITOR_ERROR_TURN = [
 describe('restored provider-executed turns', () => {
   it.each([
     ['code execution', CODE_TURN],
+    ['code execution with a string input', CODE_STRING_INPUT_TURN],
+    ['code execution with a malformed file entry', CODE_MALFORMED_FILE_TURN],
     ['code execution error', CODE_ERROR_TURN],
+    ['bash with a malformed file entry', BASH_MALFORMED_FILE_TURN],
     ['bash', BASH_TURN],
     ['bash timeout', BASH_TIMEOUT_TURN],
     ['text editor view', EDITOR_VIEW_TURN],
