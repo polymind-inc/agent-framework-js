@@ -195,20 +195,31 @@ interface ConversionContext {
  * `text_editor_code_execution`. A call nothing answers reads as plain `code_execution`.
  */
 function codeExecutionFamilies(messages: readonly Message[]): Map<string, CodeExecutionFamily> {
+  // Only a non-empty callId is an identity two contents can share — the same rule the unanswered-
+  // call filter applies. Keying `''` would let unrelated keyless contents correlate, flipping the
+  // rebuilt family of one degenerate call because a different keyless result happened to exist.
   const families = new Map<string, CodeExecutionFamily>();
   for (const msg of messages) {
     for (const content of msg.contents) {
-      if (content.type === 'code_interpreter_tool_call') {
-        families.set(content.callId ?? '', 'code_execution');
+      if (
+        content.type === 'code_interpreter_tool_call' &&
+        content.callId !== undefined &&
+        content.callId !== ''
+      ) {
+        families.set(content.callId, 'code_execution');
       }
     }
   }
   for (const msg of messages) {
     for (const content of msg.contents) {
-      if (content.type === 'shell_tool_result' && families.has(content.callId ?? '')) {
-        families.set(content.callId ?? '', 'bash_code_execution');
-      } else if (content.type === 'function_result' && families.has(content.callId)) {
-        families.set(content.callId, 'text_editor_code_execution');
+      const callId = 'callId' in content ? content.callId : undefined;
+      if (typeof callId !== 'string' || callId === '' || !families.has(callId)) {
+        continue;
+      }
+      if (content.type === 'shell_tool_result') {
+        families.set(callId, 'bash_code_execution');
+      } else if (content.type === 'function_result') {
+        families.set(callId, 'text_editor_code_execution');
       }
     }
   }

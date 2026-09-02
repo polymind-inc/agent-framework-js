@@ -236,6 +236,25 @@ describe('restored provider-executed turns', () => {
     });
   });
 
+  it('does not let keyless contents correlate when inferring the call family', () => {
+    // An empty callId is not an identity: a keyless shell result must not flip a different
+    // keyless call's rebuilt family to bash.
+    const messages: Message[] = [
+      {
+        role: 'assistant',
+        contents: [
+          { type: 'code_interpreter_tool_call', inputs: [{ type: 'text', text: '{"code":"x"}' }] },
+          { type: 'shell_tool_result', outputs: [] },
+        ],
+      },
+    ];
+
+    const [message] = toAnthropicMessages(messages);
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+
+    expect(blocks[0]).toMatchObject({ type: 'server_tool_use', name: 'code_execution' });
+  });
+
   it('keeps using the raw block when it is present', () => {
     // The raw block is the exact bytes the provider sent; reconstruction is the fallback, not a
     // replacement. An extra field this build does not model must survive an in-memory replay.
