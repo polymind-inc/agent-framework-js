@@ -294,15 +294,20 @@ function foldsIntoFollowingShellResult(contents: readonly Content[], index: numb
 /** Rebuilds the payload of a `code_execution_tool_result` from the typed outputs. */
 function rebuiltCodeExecutionPayload(outputs: readonly Content[]): AnthropicBlock {
   const [only] = outputs;
-  if (
-    outputs.length === 1 &&
-    only?.type === 'error' &&
-    CODE_EXECUTION_ERROR_CODES.has(only.errorCode ?? only.message ?? '')
-  ) {
-    return {
-      type: 'code_execution_tool_result_error',
-      error_code: only.errorCode ?? only.message ?? '',
-    };
+  if (outputs.length === 1 && only?.type === 'error') {
+    // A stored `errorCode` marks the error-payload variant unambiguously, so it always rebuilds
+    // an error — a code the schema does not know degrades to `unavailable`, the same way the
+    // text-editor path degrades, rather than flipping the payload into a success-shaped result.
+    // A legacy session without the stored code is recognized by its message carrying a known
+    // code, since the receive side wrote the code as the message; a prose-only lone error stays
+    // a result payload, because that is how a stderr-only success run reads back.
+    const stored = only.errorCode ?? only.message ?? '';
+    if (only.errorCode !== undefined || CODE_EXECUTION_ERROR_CODES.has(stored)) {
+      return {
+        type: 'code_execution_tool_result_error',
+        error_code: CODE_EXECUTION_ERROR_CODES.has(stored) ? stored : 'unavailable',
+      };
+    }
   }
   // `return_code` is not part of the typed contents; a result that was worth reporting as outputs
   // rather than an error reads as the shell convention for success.

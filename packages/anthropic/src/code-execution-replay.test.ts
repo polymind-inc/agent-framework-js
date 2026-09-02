@@ -213,6 +213,29 @@ describe('restored provider-executed turns', () => {
     expect(inMemory).toEqual([{ role: 'assistant', content: blocks }]);
   });
 
+  it('degrades an unrecognized stored error code to unavailable, never to a success payload', () => {
+    // A stored errorCode marks the error-payload variant unambiguously; a code this build's
+    // schema does not know must stay an error — flipping to a success-shaped result with
+    // return_code 0 would invert what the turn reported.
+    const turn = assistantTurn([
+      { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'x' } },
+      {
+        type: 'code_execution_tool_result',
+        tool_use_id: 'srvtoolu_1',
+        content: { type: 'code_execution_tool_result_error', error_code: 'brand_new_code' },
+      },
+    ]);
+
+    const [message] = toAnthropicMessages([restored(turn)]);
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+
+    expect(blocks[1]).toEqual({
+      type: 'code_execution_tool_result',
+      tool_use_id: 'srvtoolu_1',
+      content: { type: 'code_execution_tool_result_error', error_code: 'unavailable' },
+    });
+  });
+
   it('keeps using the raw block when it is present', () => {
     // The raw block is the exact bytes the provider sent; reconstruction is the fallback, not a
     // replacement. An extra field this build does not model must survive an in-memory replay.
