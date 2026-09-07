@@ -71,7 +71,7 @@
   "devDependencies": {
     "@polymind-inc/agent-framework-agentserver": "workspace:^",
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/sdk-metrics": "^2.10.0",
+    "@opentelemetry/sdk-metrics": "^2.11.0",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
