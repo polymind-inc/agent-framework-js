@@ -13,10 +13,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.122.0",
+    "@anthropic-ai/sdk": "^0.126.0",
     "@polymind-inc/agent-framework": "workspace:^",
     "openai": "catalog:",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "catalog:",
