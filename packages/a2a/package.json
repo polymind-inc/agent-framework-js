@@ -48,7 +48,7 @@
     "typecheck": "tsc -p tsconfig.src.json --noEmit && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^1.1.0",
+    "@a2a-js/sdk": "^1.2.1",
     "@polymind-inc/agent-framework-core": "workspace:^"
   },
   "devDependencies": {
