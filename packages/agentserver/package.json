@@ -72,8 +72,8 @@
     "@opentelemetry/sdk-trace-node": "^2.10.0"
   },
   "peerDependencies": {
-    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.221.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "^0.221.0"
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.223.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.223.0"
   },
   "peerDependenciesMeta": {
     "@opentelemetry/exporter-metrics-otlp-grpc": {
@@ -84,8 +84,8 @@
     }
   },
   "devDependencies": {
-    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.221.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "^0.221.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.223.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.223.0",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
