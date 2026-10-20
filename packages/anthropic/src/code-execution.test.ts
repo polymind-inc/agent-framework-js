@@ -412,12 +412,15 @@ describe('text_editor_code_execution_tool_result variants', () => {
           {
             type: 'citation',
             annotatedRegions: [{ type: 'text_span', startIndex: 5, endIndex: 8 }],
+            // Which span each one is, which the two cannot say by themselves once no lines are quoted.
+            additionalProperties: { lineSpan: 'replaced' },
             rawRepresentation: inner,
           },
           {
             type: 'citation',
             snippet: 'one\ntwo',
             annotatedRegions: [{ type: 'text_span', startIndex: 5, endIndex: 7 }],
+            additionalProperties: { lineSpan: 'inserted' },
             rawRepresentation: inner,
           },
         ],

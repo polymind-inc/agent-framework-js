@@ -263,6 +263,24 @@ const EDITOR_VIEW_CREATE_LOOKALIKE_TURN = [
   },
 ];
 
+// With no replacement lines to quote, neither span carries a snippet: the replaced and the
+// inserted span read alike unless the receive side records which one each is.
+const editorStrReplaceTurn = (payload: Record<string, unknown>) => [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'str_replace', path: '/tmp/a.txt', old_str: 'x', new_str: '' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: { type: 'text_editor_code_execution_str_replace_result', ...payload },
+  },
+];
+const EDITOR_STR_REPLACE_REMOVAL_TURN = editorStrReplaceTurn({ old_start: 3, old_lines: 1 });
+const EDITOR_STR_REPLACE_EMPTY_NEW_SPAN_TURN = editorStrReplaceTurn({ new_start: 3, new_lines: 0 });
+
 const EDITOR_STR_REPLACE_OLD_SPAN_ONLY_TURN = [
   {
     type: 'server_tool_use',
@@ -397,6 +415,8 @@ describe('restored provider-executed turns', () => {
     ['bash error', BASH_ERROR_TURN],
     ['text editor view that reads like a create result', EDITOR_VIEW_CREATE_LOOKALIKE_TURN],
     ['text editor str_replace with only the replaced span', EDITOR_STR_REPLACE_OLD_SPAN_ONLY_TURN],
+    ['text editor str_replace removing lines', EDITOR_STR_REPLACE_REMOVAL_TURN],
+    ['text editor str_replace with only an empty inserted span', EDITOR_STR_REPLACE_EMPTY_NEW_SPAN_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
     const turn = assistantTurn(blocks);
 
@@ -487,11 +507,14 @@ describe('restored provider-executed turns', () => {
     });
 
     it.each([
-      ['in memory', (msg: Message) => msg],
-      ['restored', restored],
-    ])('is kept %s while only local tool results follow it', (_label, prepare) => {
+      ['in memory', 'tool' as const, (msg: Message) => msg],
+      ['restored', 'tool' as const, restored],
+      ['in memory', 'assistant' as const, (msg: Message) => msg],
+      ['restored', 'assistant' as const, restored],
+    ])('is kept %s while only local tool results follow it, in a %s envelope', (_label, role, prepare) => {
       // Called alongside a local tool, the server call waits for the local results; the API runs it
-      // when they arrive, so it must still be on the open turn.
+      // when they arrive, so it must still be on the open turn. The results go to the user side
+      // whatever role the message carrying them has.
       const messages: Message[] = [
         user('go'),
         prepare(
@@ -500,7 +523,7 @@ describe('restored provider-executed turns', () => {
             { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } },
           ]),
         ),
-        { role: 'tool', contents: [{ type: 'function_result', callId: 'toolu_1', result: 'ok' }] },
+        { role, contents: [{ type: 'function_result', callId: 'toolu_1', result: 'ok' }] },
       ];
 
       expect(serverToolUses(messages)).toEqual([call]);

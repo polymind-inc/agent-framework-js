@@ -188,6 +188,12 @@ export const PAYLOAD_TYPE_KEY = 'payloadType';
 export const RETURN_CODE_KEY = 'returnCode';
 
 /**
+ * The `additionalProperties` key under which a str_replace line-span citation records which span it
+ * is, `'replaced'` or `'inserted'`.
+ */
+export const LINE_SPAN_KEY = 'lineSpan';
+
+/**
  * The payload variant a result recorded on receive, or `undefined` for a transcript stored before
  * the record existed — which the rebuild then reads back off the typed outputs alone.
  */
@@ -219,14 +225,20 @@ interface ConversionContext {
 /**
  * The provider-executed calls that no result answers and whose turn has closed.
  *
- * A server call legitimately lacks its result in one place only: the open turn — the last
- * assistant message, with nothing after it but local tool results. A `pause_turn` response ends
+ * A server call legitimately lacks its result in one place only: the open turn — the last message
+ * carrying anything but local tool results, when it is an assistant one. Local results go to the
+ * user side whatever role the message carrying them has, so they never close the turn; a
+ * provider-executed result answering an earlier call is part of the assistant turn and does. A
+ * `pause_turn` response ends
  * there on a call the API has not run yet, and a call made alongside a local tool waits there for
  * the local results; the API runs it on the next request. Anywhere else the turn is over without
  * the result — a stream abandoned mid-call — and the API refuses the whole request over it, so the
  * call is omitted instead, the same defined omission an unanswered local `function_call` gets.
  */
-function abandonedCalls(messages: readonly Message[]): Set<Content> {
+function abandonedCalls(
+  messages: readonly Message[],
+  families: ReadonlyMap<string, CodeExecutionFamily>,
+): Set<Content> {
   const answered = new Set<string>();
   for (const msg of messages) {
     for (const content of msg.contents) {
@@ -241,13 +253,13 @@ function abandonedCalls(messages: readonly Message[]): Set<Content> {
       }
     }
   }
-  const lastAssistant = messages.findLastIndex((msg) => msg.role === 'assistant');
-  const turnOpen = messages
-    .slice(lastAssistant + 1)
-    .every((msg) => msg.contents.every((content) => content.type === 'function_result'));
+  const isLocalResult = (content: Content): boolean =>
+    content.type === 'function_result' && !families.has(content.callId);
+  const last = messages.findLastIndex((msg) => msg.contents.some((content) => !isLocalResult(content)));
+  const turnOpen = messages[last]?.role === 'assistant';
   const abandoned = new Set<Content>();
   messages.forEach((msg, index) => {
-    if (turnOpen && index === lastAssistant) {
+    if (turnOpen && index === last) {
       return;
     }
     for (const content of msg.contents) {
@@ -520,7 +532,9 @@ function rebuiltTextEditorResult(content: FunctionResultContent): AnthropicBlock
   const text = first?.type === 'text' ? first : undefined;
   const spans = (text?.annotations ?? []).flatMap((annotation) => {
     const span = citedSpan(annotation);
-    return span === undefined ? [] : [{ span, snippet: 'snippet' in annotation }];
+    return span === undefined
+      ? []
+      : [{ span, snippet: 'snippet' in annotation, role: annotation.additionalProperties?.[LINE_SPAN_KEY] }];
   });
   const variant =
     recordedPayloadType(content) ??
@@ -545,14 +559,15 @@ function rebuiltTextEditorResult(content: FunctionResultContent): AnthropicBlock
   } else if (variant === 'text_editor_code_execution_create_result') {
     payload = { type: variant, is_file_update: text?.text === 'File update: true' };
   } else if (variant === 'text_editor_code_execution_str_replace_result') {
-    // Two spans are the replaced and the inserted one, in that order. A lone span is the inserted
-    // one when it quotes the new lines — the receive side attaches the snippet to that span only,
-    // whenever there are lines to quote — and the replaced one otherwise; with no lines to tell
-    // them apart, it reads as the inserted one.
+    // Each span records which one it is. Without the record, two spans are the replaced and the
+    // inserted one, in that order, and a lone span is the inserted one when it quotes the new lines
+    // — the receive side attaches the snippet to that span only, whenever there are lines to quote
+    // — and the replaced one otherwise; with no lines to tell them apart, it reads as the inserted.
     const lines = text?.text ?? '';
     const [only] = spans;
-    const [oldSpan, newSpan] =
-      spans.length >= 2
+    const [oldSpan, newSpan] = spans.some((entry) => entry.role !== undefined)
+      ? [spans.find((entry) => entry.role === 'replaced'), spans.find((entry) => entry.role === 'inserted')]
+      : spans.length >= 2
         ? [spans[0], spans[1]]
         : only !== undefined && !only.snippet && lines !== ''
           ? [only, undefined]
@@ -832,12 +847,13 @@ function hasToolUse(msg: AnthropicMessage): boolean {
  */
 export function toAnthropicMessages(messages: readonly Message[]): AnthropicMessage[] {
   const rest = messages[0]?.role === 'system' ? messages.slice(1) : messages;
-  // Both collected across the whole transcript, so a call answered in a later message stays a
-  // call and a provider-executed exchange is recognized wherever its halves sit.
+  // Collected across the whole transcript, so a call answered in a later message stays a call and
+  // a provider-executed exchange is recognized wherever its halves sit.
+  const families = codeExecutionFamilies(rest);
   const ctx: ConversionContext = {
     answered: answeredCallIds(rest),
-    families: codeExecutionFamilies(rest),
-    abandoned: abandonedCalls(rest),
+    families,
+    abandoned: abandonedCalls(rest, families),
   };
   const out: AnthropicMessage[] = [];
   for (const msg of rest) {
