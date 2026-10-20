@@ -264,6 +264,12 @@ interface ConversionContext {
   answered: ReadonlySet<string>;
   /** Provider-executed call ids → the tool family inferred from the content answering them. */
   families: ReadonlyMap<string, CodeExecutionFamily>;
+  /**
+   * The blocks emitted for provider-executed calls, filled in as the conversion runs. A call can go
+   * out as `server_tool_use` or — replayed raw — as the `tool_use` it arrived as, so it is known by
+   * the content it came from, never by its block type alone.
+   */
+  providerCalls: Set<AnthropicBlock>;
   /** Server tool call ids → the tool name, for the `function_result` contents answering them. */
   serverCalls: ReadonlyMap<string, string>;
 }
@@ -303,7 +309,10 @@ function isLocalResults(msg: AnthropicMessage): boolean {
  * framework messages they came from: a framework message can split into several turns, and one
  * that sends nothing (usage metadata, say) is not a turn at all.
  */
-function withoutAbandonedServerCalls(messages: readonly AnthropicMessage[]): AnthropicMessage[] {
+function withoutAbandonedServerCalls(
+  messages: readonly AnthropicMessage[],
+  providerCalls: ReadonlySet<AnthropicBlock>,
+): { messages: AnthropicMessage[]; pending: boolean } {
   const answered = new Set<string>();
   for (const msg of messages) {
     for (const block of Array.isArray(msg.content) ? msg.content : []) {
@@ -321,18 +330,23 @@ function withoutAbandonedServerCalls(messages: readonly AnthropicMessage[]): Ant
   while (openStart > 0 && messages[openStart - 1]?.role === 'assistant') {
     openStart--;
   }
-  return messages.flatMap((msg, index) => {
+  const isPending = (block: AnthropicBlock): boolean =>
+    providerCalls.has(block) && !(typeof block.id === 'string' && answered.has(block.id));
+  // Whether the open turn still waits on a call — which a closing user turn would leave unanswered.
+  const pending = messages
+    .slice(openStart, openEnd)
+    .some((msg) => Array.isArray(msg.content) && msg.content.some(isPending));
+  const kept = messages.flatMap((msg, index) => {
     if ((index >= openStart && index < openEnd) || !Array.isArray(msg.content)) {
       return [msg];
     }
-    const content = msg.content.filter(
-      (block) => block.type !== 'server_tool_use' || (typeof block.id === 'string' && answered.has(block.id)),
-    );
+    const content = msg.content.filter((block) => !isPending(block));
     if (content.length === msg.content.length) {
       return [msg];
     }
     return content.length === 0 ? [] : [{ ...msg, content }];
   });
+  return { messages: kept, pending };
 }
 
 /**
@@ -669,6 +683,9 @@ function appendContent(
   const content = contents[index] as Content;
   const providerExecuted = providerExecutedBlock(content);
   if (providerExecuted !== undefined) {
+    if (content.type === 'code_interpreter_tool_call') {
+      ctx.providerCalls.add(providerExecuted);
+    }
     blocks.push(providerExecuted);
     return;
   }
@@ -676,7 +693,9 @@ function appendContent(
     case 'code_interpreter_tool_call': {
       // Reached only without a raw block — a restored transcript — since the raw path above
       // replays the exact bytes otherwise. The same holds for the result cases below.
-      blocks.push(rebuiltServerToolUse(content, ctx.families.get(content.callId ?? '') ?? 'code_execution'));
+      const block = rebuiltServerToolUse(content, ctx.families.get(content.callId ?? '') ?? 'code_execution');
+      ctx.providerCalls.add(block);
+      blocks.push(block);
       return;
     }
     case 'code_interpreter_tool_result': {
@@ -746,7 +765,7 @@ function appendContent(
         // `tool_use` for a tool the request does not define. Whether an unanswered one survives is
         // the open-turn rule above, not the local filter below: a paused turn still needs it.
         const raw = content.rawRepresentation;
-        blocks.push(
+        const block: AnthropicBlock =
           isRecord(raw) && raw.type === 'server_tool_use'
             ? raw
             : {
@@ -754,8 +773,9 @@ function appendContent(
                 id: content.callId,
                 name: content.name,
                 input: serverToolInput(content.arguments),
-              },
-        );
+              };
+        ctx.providerCalls.add(block);
+        blocks.push(block);
         return;
       }
       // A call that no `function_result` anywhere in the transcript answers is omitted: the Messages
@@ -938,10 +958,15 @@ export function toAnthropicMessages(messages: readonly Message[]): AnthropicMess
     answered: answeredCallIds(rest),
     families,
     serverCalls,
+    providerCalls: new Set(),
   };
-  const out = withoutAbandonedServerCalls(rest.flatMap((msg) => messageGroups(msg, ctx)));
+  const { messages: out, pending } = withoutAbandonedServerCalls(
+    rest.flatMap((msg) => messageGroups(msg, ctx)),
+    ctx.providerCalls,
+  );
   const last = out[out.length - 1];
-  if (last !== undefined && last.role === 'assistant' && !hasToolUse(last)) {
+  // A pending call anywhere on the open turn keeps it open, not only one in its last message.
+  if (last !== undefined && last.role === 'assistant' && !hasToolUse(last) && !pending) {
     out.push({ role: 'user', content: 'Continue' });
   }
   return out;
