@@ -6,6 +6,10 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-agentserver`** — the optional OTLP/gRPC exporter peers now
+  also accept the `0.223` release line (`^0.221.0 || ^0.222.0 || ^0.223.0`), so a host that
+  installs the latest exporters passes strict peer validation.
+
 - **`@polymind-inc/agent-framework-mcp`, `@polymind-inc/agent-framework-foundry`** — the
   `@modelcontextprotocol/client` dependency now requires `^2.2.0`, the first release with the fix
   for the OAuth client advisory affecting `>=2.0.0 <2.2.0`.
