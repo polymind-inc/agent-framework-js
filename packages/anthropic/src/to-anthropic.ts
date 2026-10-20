@@ -264,8 +264,6 @@ interface ConversionContext {
   answered: ReadonlySet<string>;
   /** Provider-executed call ids → the tool family inferred from the content answering them. */
   families: ReadonlyMap<string, CodeExecutionFamily>;
-  /** The provider-executed calls to omit: unanswered, on a turn that has already closed. */
-  abandoned: ReadonlySet<Content>;
   /** Server tool call ids → the tool name, for the `function_result` contents answering them. */
   serverCalls: ReadonlyMap<string, string>;
 }
@@ -283,58 +281,58 @@ function serverToolCalls(messages: readonly Message[]): Map<string, string> {
   return calls;
 }
 
+/** Whether a request message carries only local `tool_result` blocks. */
+function isLocalResults(msg: AnthropicMessage): boolean {
+  return (
+    Array.isArray(msg.content) &&
+    msg.content.length > 0 &&
+    msg.content.every((block) => block.type === 'tool_result')
+  );
+}
+
 /**
- * The provider-executed calls that no result answers and whose turn has closed.
+ * The request messages without the server calls that no result answers and whose turn has closed.
  *
- * A server call legitimately lacks its result in one place only: the open turn — the last message
- * carrying anything but local tool results, when it is an assistant one. Local results go to the
- * user side whatever role the message carrying them has, so they never close the turn; a
- * provider-executed result answering an earlier call is part of the assistant turn and does. A
- * `pause_turn` response ends
- * there on a call the API has not run yet, and a call made alongside a local tool waits there for
- * the local results; the API runs it on the next request. Anywhere else the turn is over without
- * the result — a stream abandoned mid-call — and the API refuses the whole request over it, so the
- * call is omitted instead, the same defined omission an unanswered local `function_call` gets.
+ * A server call legitimately lacks its result in one place only: the open turn — the trailing run
+ * of assistant messages, with nothing after it but local `tool_result` messages. A `pause_turn`
+ * response ends there on a call the API has not run yet, and a call made alongside a local tool
+ * waits there for the local results; the API runs it on the next request. Anywhere else the turn is
+ * over without the result — a stream abandoned mid-call — and the API refuses the whole request
+ * over it, so the call is omitted instead, the same defined omission an unanswered local
+ * `function_call` gets. The turns are read off the messages the request will carry, not the
+ * framework messages they came from: a framework message can split into several turns, and one
+ * that sends nothing (usage metadata, say) is not a turn at all.
  */
-function abandonedCalls(
-  messages: readonly Message[],
-  families: ReadonlyMap<string, CodeExecutionFamily>,
-  serverCalls: ReadonlyMap<string, string>,
-): Set<Content> {
+function withoutAbandonedServerCalls(messages: readonly AnthropicMessage[]): AnthropicMessage[] {
   const answered = new Set<string>();
   for (const msg of messages) {
-    for (const content of msg.contents) {
-      if (
-        (content.type === 'code_interpreter_tool_result' ||
-          content.type === 'shell_tool_result' ||
-          content.type === 'function_result') &&
-        content.callId !== undefined &&
-        content.callId !== ''
-      ) {
-        answered.add(content.callId);
+    for (const block of Array.isArray(msg.content) ? msg.content : []) {
+      // Every provider-executed result names its call; a local `tool_result` answers a `tool_use`.
+      if (block.type !== 'tool_result' && typeof block.tool_use_id === 'string' && block.tool_use_id !== '') {
+        answered.add(block.tool_use_id);
       }
     }
   }
-  const isLocalResult = (content: Content): boolean =>
-    content.type === 'function_result' && !families.has(content.callId) && !serverCalls.has(content.callId);
-  const last = messages.findLastIndex((msg) => msg.contents.some((content) => !isLocalResult(content)));
-  const turnOpen = messages[last]?.role === 'assistant';
-  const abandoned = new Set<Content>();
-  messages.forEach((msg, index) => {
-    if (turnOpen && index === last) {
-      return;
+  let openEnd = messages.length;
+  while (openEnd > 0 && isLocalResults(messages[openEnd - 1] as AnthropicMessage)) {
+    openEnd--;
+  }
+  let openStart = openEnd;
+  while (openStart > 0 && messages[openStart - 1]?.role === 'assistant') {
+    openStart--;
+  }
+  return messages.flatMap((msg, index) => {
+    if ((index >= openStart && index < openEnd) || !Array.isArray(msg.content)) {
+      return [msg];
     }
-    for (const content of msg.contents) {
-      if (
-        (content.type === 'code_interpreter_tool_call' || isServerToolCall(content)) &&
-        // An empty or missing id is never answered: `answered` holds only real identities.
-        !answered.has('callId' in content && typeof content.callId === 'string' ? content.callId : '')
-      ) {
-        abandoned.add(content);
-      }
+    const content = msg.content.filter(
+      (block) => block.type !== 'server_tool_use' || (typeof block.id === 'string' && answered.has(block.id)),
+    );
+    if (content.length === msg.content.length) {
+      return [msg];
     }
+    return content.length === 0 ? [] : [{ ...msg, content }];
   });
-  return abandoned;
 }
 
 /**
@@ -669,10 +667,6 @@ function appendContent(
   ctx: ConversionContext,
 ): void {
   const content = contents[index] as Content;
-  // Ahead of the raw replay: an abandoned call's raw block draws the same refusal a rebuilt one does.
-  if (ctx.abandoned.has(content)) {
-    return;
-  }
   const providerExecuted = providerExecutedBlock(content);
   if (providerExecuted !== undefined) {
     blocks.push(providerExecuted);
@@ -943,13 +937,9 @@ export function toAnthropicMessages(messages: readonly Message[]): AnthropicMess
   const ctx: ConversionContext = {
     answered: answeredCallIds(rest),
     families,
-    abandoned: abandonedCalls(rest, families, serverCalls),
     serverCalls,
   };
-  const out: AnthropicMessage[] = [];
-  for (const msg of rest) {
-    out.push(...messageGroups(msg, ctx));
-  }
+  const out = withoutAbandonedServerCalls(rest.flatMap((msg) => messageGroups(msg, ctx)));
   const last = out[out.length - 1];
   if (last !== undefined && last.role === 'assistant' && !hasToolUse(last)) {
     out.push({ role: 'user', content: 'Continue' });

@@ -139,6 +139,28 @@ describe('web search and web fetch replay', () => {
     it.each([
       ['in memory', (msg: Message) => msg],
       ['restored', restored],
+    ])('is dropped %s once a later turn in the same message closes it', (_label, prepare) => {
+      // One framework message can carry several request turns: here the local result and the text
+      // after it close the turn the search call was on.
+      const turn = assistantTurn([
+        SEARCH_CALL,
+        { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } },
+      ]);
+      const bundled = prepare({
+        ...turn,
+        contents: [
+          ...turn.contents,
+          { type: 'function_result', callId: 'toolu_1', result: 'ok' },
+          { type: 'text', text: 'Done.' },
+        ],
+      });
+
+      expect(serverToolUses([user('go'), bundled])).toEqual([]);
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
     ])('is dropped %s once its turn has closed', (_label, prepare) => {
       const messages = [user('go'), prepare(assistantTurn([SEARCH_CALL])), user('next')];
 
