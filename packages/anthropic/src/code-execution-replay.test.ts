@@ -480,6 +480,56 @@ describe('restored provider-executed turns', () => {
         Array.isArray(msg.content) ? msg.content.filter((block) => block.type === 'server_tool_use') : [],
       );
 
+    // The receive side also reads a code-execution call spelled `tool_use` as provider-executed; in
+    // memory its raw block keeps that spelling, and after a restore it is rebuilt as `server_tool_use`.
+    const toolUseCall = { type: 'tool_use', id: 'srvtoolu_8', name: 'code_execution', input: { code: 'x' } };
+    const providerCalls = (messages: readonly Message[]) =>
+      toAnthropicMessages(messages).flatMap((msg) =>
+        Array.isArray(msg.content)
+          ? msg.content.filter((block) => block.type === 'server_tool_use' || block.name === 'code_execution')
+          : [],
+      );
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is dropped %s once its turn has closed, when spelled tool_use', (_label, prepare) => {
+      const messages = [user('go'), prepare(assistantTurn([toolUseCall])), user('next')];
+
+      expect(providerCalls(messages)).toEqual([]);
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg, [toolUseCall]],
+      ['restored', restored, [{ ...toolUseCall, type: 'server_tool_use' }]],
+    ])('is kept %s on the paused turn, when spelled tool_use', (_label, prepare, expected) => {
+      const messages = [
+        user('go'),
+        prepare(assistantTurn([{ type: 'text', text: 'Running.' }, toolUseCall])),
+      ];
+
+      expect(providerCalls(messages)).toEqual(expected);
+    });
+
+    it.each([
+      ['split across messages', 'in memory', (msg: Message) => msg, true],
+      ['split across messages', 'restored', restored, true],
+      ['bundled in one message', 'in memory', (msg: Message) => msg, false],
+      ['bundled in one message', 'restored', restored, false],
+    ])('keeps the paused turn open, %s, %s, without a closing Continue', (_shape, _label, prepare, split) => {
+      // The open turn can span several assistant messages; a synthetic user turn after the last
+      // one would close it on a call the API has not run yet.
+      const paused = [{ type: 'text', text: 'Running.' }, call];
+      const more = [{ type: 'text', text: 'Still running.' }];
+      const messages = split
+        ? [user('go'), prepare(assistantTurn(paused)), prepare(assistantTurn(more))]
+        : [user('go'), prepare(assistantTurn([...paused, ...more]))];
+      const request = toAnthropicMessages(messages);
+
+      expect(serverToolUses(messages)).toEqual([call]);
+      expect(request[request.length - 1]?.role).toBe('assistant');
+    });
+
     it.each([
       ['in memory', (msg: Message) => msg],
       ['restored', restored],
