@@ -110,6 +110,23 @@ function imageBlock(content: Content): AnthropicBlock | undefined {
   return undefined;
 }
 
+/**
+ * The `server_tool_use.input` for a server call's typed arguments.
+ *
+ * Unlike a local `tool_use.input`, the field is not required to be an object, so arguments that
+ * arrived as text go back parsed when they parse and as the string otherwise.
+ */
+function serverToolInput(args: Record<string, unknown> | string): unknown {
+  if (typeof args !== 'string') {
+    return args;
+  }
+  try {
+    return JSON.parse(args) as unknown;
+  } catch {
+    return args;
+  }
+}
+
 /** Renders a `function_result` payload into what `tool_result.content` accepts. */
 function toolResultContent(result: unknown): AnthropicBlock[] | string {
   if (result === undefined || result === null) {
@@ -149,7 +166,36 @@ const PROVIDER_EXECUTED_BLOCKS = new Set([
   'code_execution_tool_result',
   'bash_code_execution_tool_result',
   'text_editor_code_execution_tool_result',
+  'web_search_tool_result',
+  'web_fetch_tool_result',
 ]);
+
+/**
+ * The result block each server tool the receive side types as a `function_result` answers with.
+ *
+ * Web search and web fetch are reported as an informational `function_call` and a
+ * `function_result` — the shape of a local exchange — so the result's own block type is not in the
+ * typed form; the name of the call it answers says which one it was.
+ */
+const SERVER_TOOL_RESULT_TYPES: Readonly<Record<string, string>> = {
+  web_search: 'web_search_tool_result',
+  web_fetch: 'web_fetch_tool_result',
+};
+
+/**
+ * Whether a function call reports a call one of Anthropic's server tools ran.
+ *
+ * The receive side marks such a call informational; what tells it from an informational call
+ * another provider reported is the raw `server_tool_use` block while it is held, and after a
+ * restore the `srvtoolu_` prefix the API gives every server call id.
+ */
+function isServerToolCall(content: Content): boolean {
+  if (content.type !== 'function_call' || content.informationalOnly !== true) {
+    return false;
+  }
+  const raw = content.rawRepresentation;
+  return (isRecord(raw) && raw.type === 'server_tool_use') || content.callId.startsWith('srvtoolu_');
+}
 
 /**
  * The block to replay for content describing a call the provider ran itself.
@@ -214,6 +260,21 @@ interface ConversionContext {
   families: ReadonlyMap<string, CodeExecutionFamily>;
   /** The provider-executed calls to omit: unanswered, on a turn that has already closed. */
   abandoned: ReadonlySet<Content>;
+  /** Server tool call ids → the tool name, for the `function_result` contents answering them. */
+  serverCalls: ReadonlyMap<string, string>;
+}
+
+/** The server tool calls in the transcript, by call id. */
+function serverToolCalls(messages: readonly Message[]): Map<string, string> {
+  const calls = new Map<string, string>();
+  for (const msg of messages) {
+    for (const content of msg.contents) {
+      if (content.type === 'function_call' && isServerToolCall(content) && content.callId !== '') {
+        calls.set(content.callId, content.name);
+      }
+    }
+  }
+  return calls;
 }
 
 /**
@@ -252,8 +313,9 @@ function abandonedCalls(messages: readonly Message[]): Set<Content> {
     }
     for (const content of msg.contents) {
       if (
-        content.type === 'code_interpreter_tool_call' &&
-        (content.callId === undefined || content.callId === '' || !answered.has(content.callId))
+        (content.type === 'code_interpreter_tool_call' || isServerToolCall(content)) &&
+        // An empty or missing id is never answered: `answered` holds only real identities.
+        !answered.has('callId' in content && typeof content.callId === 'string' ? content.callId : '')
       ) {
         abandoned.add(content);
       }
@@ -668,6 +730,24 @@ function appendContent(
       return;
     }
     case 'function_call': {
+      if (isServerToolCall(content)) {
+        // The API ran this call itself, so it goes back as its own `server_tool_use` — the raw
+        // block while it is held, rebuilt from the typed fields after a restore — never as a
+        // `tool_use` for a tool the request does not define. Whether an unanswered one survives is
+        // the open-turn rule above, not the local filter below: a paused turn still needs it.
+        const raw = content.rawRepresentation;
+        blocks.push(
+          isRecord(raw) && raw.type === 'server_tool_use'
+            ? raw
+            : {
+                type: 'server_tool_use',
+                id: content.callId,
+                name: content.name,
+                input: serverToolInput(content.arguments),
+              },
+        );
+        return;
+      }
       // A call that no `function_result` anywhere in the transcript answers is omitted: the Messages
       // API refuses the request outright when a `tool_use` has no `tool_result` — so the choice is
       // not between sending and filtering but between a defined omission and a provider 400. A
@@ -698,6 +778,14 @@ function appendContent(
         // provider-executed call: a restored transcript rebuilds the provider's own result block,
         // since a `tool_result` would answer a `tool_use` the request no longer contains.
         blocks.push(rebuiltTextEditorResult(content));
+        return;
+      }
+      const serverResultType = SERVER_TOOL_RESULT_TYPES[ctx.serverCalls.get(content.callId) ?? ''];
+      if (serverResultType !== undefined) {
+        // A server tool's result, reached without its raw block — a restored transcript. The
+        // receive side kept the block's `content` as the result, as the wire spelled it, so the
+        // block goes back around it on the assistant turn that produced it.
+        blocks.push({ type: serverResultType, tool_use_id: content.callId, content: content.result });
         return;
       }
       blocks.push({
@@ -838,6 +926,7 @@ export function toAnthropicMessages(messages: readonly Message[]): AnthropicMess
     answered: answeredCallIds(rest),
     families: codeExecutionFamilies(rest),
     abandoned: abandonedCalls(rest),
+    serverCalls: serverToolCalls(rest),
   };
   const out: AnthropicMessage[] = [];
   for (const msg of rest) {

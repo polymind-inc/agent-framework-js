@@ -6,6 +6,17 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-anthropic`** — a turn that used the web search or web fetch
+  server tool now replays as the blocks the API sent. The receive side types such a call as an
+  informational `function_call` and its result as a `function_result`, and the conversion used to
+  send them back as a local `tool_use` / `tool_result` pair for a tool the request does not
+  define. They now go back as `server_tool_use` and `web_search_tool_result` /
+  `web_fetch_tool_result` on the assistant turn — the raw blocks in memory, and blocks rebuilt from
+  the typed contents after a restore. An unanswered server call stays on the open turn, so a
+  `pause_turn` continuation works, and is omitted once its turn has closed. An informational call
+  another provider reported keeps the local mapping. Python sends these as `tool_use` /
+  `tool_result`; this deliberately diverges.
+
 - **`@polymind-inc/agent-framework-mcp`, `@polymind-inc/agent-framework-foundry`** — the
   `@modelcontextprotocol/client` dependency now requires `^2.2.0`, the first release with the fix
   for the OAuth client advisory affecting `>=2.0.0 <2.2.0`.
