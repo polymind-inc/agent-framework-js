@@ -1,6 +1,9 @@
 import type {
   Content,
+  FunctionResultContent,
   HostedTool,
+  HostedToolCallContent,
+  HostedToolResultContent,
   Message,
   ResponseFormat,
   Role,
@@ -176,21 +179,29 @@ function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
 }
 
 /**
- * The `additionalProperties` key marking a code-execution text output as `encrypted_stdout`.
- *
- * The receive side reports encrypted and plain stdout alike as text, so without the marker a
- * restored transcript would send the ciphertext back as plain stdout.
+ * The `additionalProperties` key under which a code-execution, bash or text-editor result records
+ * the `type` of the payload it was read from.
  */
-export const ENCRYPTED_STDOUT_KEY = 'encrypted';
+export const PAYLOAD_TYPE_KEY = 'payloadType';
+
+/** The `additionalProperties` key under which a code-execution result records a non-zero `return_code`. */
+export const RETURN_CODE_KEY = 'returnCode';
 
 /**
- * The `additionalProperties` key marking a code-execution result whose payload is unmodelled.
- *
- * An unmodelled payload variant and a malformed file entry both arrive as unknown content among
- * the result's outputs. The marker sits on the result, which the framework owns, so it says which
- * one a lone unknown output is without touching any field the wire sent.
+ * The payload variant a result recorded on receive, or `undefined` for a transcript stored before
+ * the record existed — which the rebuild then reads back off the typed outputs alone.
  */
-export const UNMODELLED_PAYLOAD_KEY = 'unmodelledPayload';
+function recordedPayloadType(content: Content): string | undefined {
+  const type = content.additionalProperties?.[PAYLOAD_TYPE_KEY];
+  return typeof type === 'string' ? type : undefined;
+}
+
+/** The `code_execution_tool_result` payload variants the receive side models. */
+const MODELLED_CODE_EXECUTION_PAYLOADS = new Set([
+  'code_execution_tool_result_error',
+  'code_execution_result',
+  'encrypted_code_execution_result',
+]);
 
 /** The wire names of the code-execution tool family, as `server_tool_use.name` carries them. */
 type CodeExecutionFamily = 'code_execution' | 'bash_code_execution' | 'text_editor_code_execution';
@@ -201,6 +212,54 @@ interface ConversionContext {
   answered: ReadonlySet<string>;
   /** Provider-executed call ids → the tool family inferred from the content answering them. */
   families: ReadonlyMap<string, CodeExecutionFamily>;
+  /** The provider-executed calls to omit: unanswered, on a turn that has already closed. */
+  abandoned: ReadonlySet<Content>;
+}
+
+/**
+ * The provider-executed calls that no result answers and whose turn has closed.
+ *
+ * A server call legitimately lacks its result in one place only: the open turn — the last
+ * assistant message, with nothing after it but local tool results. A `pause_turn` response ends
+ * there on a call the API has not run yet, and a call made alongside a local tool waits there for
+ * the local results; the API runs it on the next request. Anywhere else the turn is over without
+ * the result — a stream abandoned mid-call — and the API refuses the whole request over it, so the
+ * call is omitted instead, the same defined omission an unanswered local `function_call` gets.
+ */
+function abandonedCalls(messages: readonly Message[]): Set<Content> {
+  const answered = new Set<string>();
+  for (const msg of messages) {
+    for (const content of msg.contents) {
+      if (
+        (content.type === 'code_interpreter_tool_result' ||
+          content.type === 'shell_tool_result' ||
+          content.type === 'function_result') &&
+        content.callId !== undefined &&
+        content.callId !== ''
+      ) {
+        answered.add(content.callId);
+      }
+    }
+  }
+  const lastAssistant = messages.findLastIndex((msg) => msg.role === 'assistant');
+  const turnOpen = messages
+    .slice(lastAssistant + 1)
+    .every((msg) => msg.contents.every((content) => content.type === 'function_result'));
+  const abandoned = new Set<Content>();
+  messages.forEach((msg, index) => {
+    if (turnOpen && index === lastAssistant) {
+      return;
+    }
+    for (const content of msg.contents) {
+      if (
+        content.type === 'code_interpreter_tool_call' &&
+        (content.callId === undefined || content.callId === '' || !answered.has(content.callId))
+      ) {
+        abandoned.add(content);
+      }
+    }
+  });
+  return abandoned;
 }
 
 /**
@@ -255,10 +314,7 @@ const BASH_ERROR_CODES = new Set([...CODE_EXECUTION_ERROR_CODES, 'output_file_to
 const TEXT_EDITOR_ERROR_CODES = new Set([...CODE_EXECUTION_ERROR_CODES, 'file_not_found']);
 
 /** Rebuilds the `server_tool_use` block of a provider-executed call from its typed content. */
-function rebuiltServerToolUse(content: Content, family: CodeExecutionFamily): AnthropicBlock {
-  if (content.type !== 'code_interpreter_tool_call') {
-    return {};
-  }
+function rebuiltServerToolUse(content: HostedToolCallContent, family: CodeExecutionFamily): AnthropicBlock {
   const text = content.inputs?.find((item) => item.type === 'text')?.text ?? '';
   // The receive side records an object input as its JSON and a string input as itself, so the
   // faithful inverse parses when it can and otherwise sends the text back as the string it was.
@@ -337,50 +393,61 @@ function preservedPayload(item: Content | undefined): AnthropicBlock | undefined
 /**
  * Rebuilds the payload of a `code_execution_tool_result` from the typed outputs.
  *
- * `unmodelled` is the receive side's record that the payload was a variant this build does not
- * model; any other unknown output is a malformed file entry, which goes back inside the result.
+ * The variant the result recorded on receive decides the payload shape: an unmodelled one goes
+ * back whole, and any other unknown output is a malformed file entry, which goes back inside the
+ * result. A transcript stored before the record existed is read back off the outputs alone.
  */
-function rebuiltCodeExecutionPayload(outputs: readonly Content[], unmodelled: boolean): AnthropicBlock {
+function rebuiltCodeExecutionPayload(content: HostedToolResultContent): AnthropicBlock {
+  const outputs = content.outputs ?? [];
+  const variant = recordedPayloadType(content);
   const [only] = outputs;
-  const preserved = unmodelled && outputs.length === 1 ? preservedPayload(only) : undefined;
-  if (preserved !== undefined) {
-    return preserved;
+  if (variant !== undefined && !MODELLED_CODE_EXECUTION_PAYLOADS.has(variant)) {
+    return preservedPayload(only) ?? { type: variant };
   }
-  if (outputs.length === 1 && only?.type === 'error') {
-    // A stored `errorCode` marks the error-payload variant unambiguously, so it always rebuilds
-    // an error — a code the schema does not know degrades to `unavailable`, the same way the
-    // text-editor path degrades, rather than flipping the payload into a success-shaped result.
-    // A legacy session without the stored code is recognized by its message carrying a known
-    // code, since the receive side wrote the code as the message; a prose-only lone error stays
-    // a result payload, because that is how a stderr-only success run reads back.
-    const stored = only.errorCode ?? only.message ?? '';
-    if (only.errorCode !== undefined || CODE_EXECUTION_ERROR_CODES.has(stored)) {
-      return {
-        type: 'code_execution_tool_result_error',
-        error_code: CODE_EXECUTION_ERROR_CODES.has(stored) ? stored : 'unavailable',
-      };
-    }
+  // Without the record, a stored `errorCode` marks the error variant, and a legacy session without
+  // the stored code is recognized by its message carrying a known code, since the receive side
+  // wrote the code as the message; a prose-only lone error stays a result payload, because that is
+  // how a stderr-only run reads back.
+  const isError =
+    variant === undefined
+      ? outputs.length === 1 &&
+        only?.type === 'error' &&
+        (only.errorCode !== undefined || CODE_EXECUTION_ERROR_CODES.has(only.message ?? ''))
+      : variant === 'code_execution_tool_result_error';
+  if (isError) {
+    // A code the schema does not know degrades to `unavailable`, the same way the text-editor path
+    // degrades, rather than flipping the payload into a success-shaped result.
+    const stored = only?.type === 'error' ? (only.errorCode ?? only.message ?? '') : '';
+    return {
+      type: 'code_execution_tool_result_error',
+      error_code: CODE_EXECUTION_ERROR_CODES.has(stored) ? stored : 'unavailable',
+    };
   }
-  const stdout = outputs.filter((item): item is Content & { type: 'text' } => item.type === 'text');
   // Ciphertext goes back under the key it arrived in; sent as plain stdout, the model would read
   // the encrypted blob as the program's output.
-  const encrypted = stdout.some((item) => item.additionalProperties?.[ENCRYPTED_STDOUT_KEY] === true);
-  // `return_code` is not part of the typed contents; a result that was worth reporting as outputs
-  // rather than an error reads as the shell convention for success.
+  const encrypted = variant === 'encrypted_code_execution_result';
+  const returnCode = content.additionalProperties?.[RETURN_CODE_KEY];
   return {
     type: encrypted ? 'encrypted_code_execution_result' : 'code_execution_result',
-    [encrypted ? 'encrypted_stdout' : 'stdout']: stdout.map((item) => item.text).join(''),
+    [encrypted ? 'encrypted_stdout' : 'stdout']: outputs
+      .filter((item): item is Content & { type: 'text' } => item.type === 'text')
+      .map((item) => item.text)
+      .join(''),
     stderr: outputs
       .filter((item): item is Content & { type: 'error' } => item.type === 'error')
       .map((item) => item.message ?? '')
       .join('\n'),
-    return_code: 0,
+    // Zero is the default the receive side leaves unrecorded.
+    return_code: typeof returnCode === 'number' ? returnCode : 0,
     content: rebuiltFileEntries(outputs, 'code_execution_output'),
   };
 }
 
 /** Rebuilds the payload of a `bash_code_execution_tool_result` from the shell output and files. */
-function rebuiltBashPayload(outputs: readonly Content[], files: readonly Content[]): AnthropicBlock {
+function rebuiltBashPayload(content: HostedToolResultContent, files: readonly Content[]): AnthropicBlock {
+  const outputs = content.outputs ?? [];
+  // A shell result lists its files beside itself, so an unknown output is only ever an unmodelled
+  // payload.
   const preserved = outputs.length === 1 ? preservedPayload(outputs[0]) : undefined;
   if (preserved !== undefined) {
     return preserved;
@@ -388,18 +455,24 @@ function rebuiltBashPayload(outputs: readonly Content[], files: readonly Content
   const output = outputs.find(
     (item): item is Content & { type: 'shell_command_output' } => item.type === 'shell_command_output',
   );
-  if (output?.timedOut === true) {
-    return { type: 'bash_code_execution_tool_result_error', error_code: 'execution_time_exceeded' };
-  }
-  // The receive side reports an error payload as a shell output whose stderr carries the code and
-  // nothing else; a code in that position with no other observation rebuilds the error variant.
-  if (
-    output !== undefined &&
-    output.stdout === undefined &&
-    output.exitCode === undefined &&
-    BASH_ERROR_CODES.has(output.stderr ?? '')
-  ) {
-    return { type: 'bash_code_execution_tool_result_error', error_code: output.stderr ?? '' };
+  const variant = recordedPayloadType(content);
+  // Without the record, the error variant is recognized by its shape: the receive side reports it
+  // as a shell output whose stderr carries the code and nothing else, while a result always
+  // reports its exit code.
+  const isError =
+    variant === undefined
+      ? output !== undefined &&
+        (output.timedOut === true ||
+          (output.stdout === undefined && output.exitCode === undefined && output.stderr !== undefined))
+      : variant === 'bash_code_execution_tool_result_error';
+  if (isError) {
+    // As on the code-execution path, a code the schema does not know degrades to `unavailable`
+    // rather than reading as a successful run.
+    const stored = output?.timedOut === true ? 'execution_time_exceeded' : (output?.stderr ?? '');
+    return {
+      type: 'bash_code_execution_tool_result_error',
+      error_code: BASH_ERROR_CODES.has(stored) ? stored : 'unavailable',
+    };
   }
   return {
     type: 'bash_code_execution_result',
@@ -425,15 +498,16 @@ function citedSpan(annotation: {
  * Rebuilds a `text_editor_code_execution_tool_result` block from the `function_result` the text
  * editor maps to.
  *
- * The typed form keeps the outcome but not the payload variant, so the variant is read back off
- * what each one alone produces: the fixed `File update:` text of a create, an error content, a
- * replaced/inserted line-span pair for a str_replace, and a single viewed span otherwise. The
- * fields the receive side does not model default to what a text view reports (`file_type: 'text'`),
- * and an error whose stored code is not one the schema accepts degrades to `unavailable` with the
- * message preserved, rather than an invalid request.
+ * The variant the result recorded on receive decides the payload shape. A transcript stored before
+ * the record existed has only the typed outcome, so its variant is read back off what each one
+ * alone produces: the fixed `File update:` text of a create, an error content, a replaced/inserted
+ * line-span pair for a str_replace, and a single viewed span otherwise. The fields the receive side
+ * does not model default to what a text view reports (`file_type: 'text'`), and an error whose
+ * stored code is not one the schema accepts degrades to `unavailable` with the message preserved,
+ * rather than an invalid request.
  */
-function rebuiltTextEditorResult(callId: string, result: unknown): AnthropicBlock {
-  const items = Array.isArray(result) ? (result as Content[]) : [];
+function rebuiltTextEditorResult(content: FunctionResultContent): AnthropicBlock {
+  const items = Array.isArray(content.result) ? (content.result as Content[]) : [];
   const first = items[0];
   // Deserialization does not restore `result` as content, so in a restored session an unmodelled
   // payload sits under its wire type rather than as unknown content. One trip through the content
@@ -443,50 +517,64 @@ function rebuiltTextEditorResult(callId: string, result: unknown): AnthropicBloc
       ? deserializeContent(serializeContent(first))
       : undefined,
   );
+  const text = first?.type === 'text' ? first : undefined;
+  const spans = (text?.annotations ?? []).flatMap((annotation) => {
+    const span = citedSpan(annotation);
+    return span === undefined ? [] : [{ span, snippet: 'snippet' in annotation }];
+  });
+  const variant =
+    recordedPayloadType(content) ??
+    (first?.type === 'error'
+      ? 'text_editor_code_execution_tool_result_error'
+      : text !== undefined && /^File update: (true|false)$/.test(text.text)
+        ? 'text_editor_code_execution_create_result'
+        : spans.length >= 2 || spans.some((entry) => entry.snippet)
+          ? 'text_editor_code_execution_str_replace_result'
+          : 'text_editor_code_execution_view_result');
   let payload: AnthropicBlock;
   if (preserved !== undefined) {
     payload = preserved;
-  } else if (first?.type === 'error') {
-    const stored = first.errorCode ?? '';
+  } else if (variant === 'text_editor_code_execution_tool_result_error') {
+    const error = first?.type === 'error' ? first : undefined;
+    const stored = error?.errorCode ?? '';
     payload = {
-      type: 'text_editor_code_execution_tool_result_error',
+      type: variant,
       error_code: TEXT_EDITOR_ERROR_CODES.has(stored) ? stored : 'unavailable',
-      ...(first.message === undefined || first.message === '' ? {} : { error_message: first.message }),
+      ...(error?.message === undefined || error.message === '' ? {} : { error_message: error.message }),
     };
-  } else if (first?.type === 'text' && /^File update: (true|false)$/.test(first.text)) {
+  } else if (variant === 'text_editor_code_execution_create_result') {
+    payload = { type: variant, is_file_update: text?.text === 'File update: true' };
+  } else if (variant === 'text_editor_code_execution_str_replace_result') {
+    // Two spans are the replaced and the inserted one, in that order. A lone span is the inserted
+    // one when it quotes the new lines — the receive side attaches the snippet to that span only,
+    // whenever there are lines to quote — and the replaced one otherwise; with no lines to tell
+    // them apart, it reads as the inserted one.
+    const lines = text?.text ?? '';
+    const [only] = spans;
+    const [oldSpan, newSpan] =
+      spans.length >= 2
+        ? [spans[0], spans[1]]
+        : only !== undefined && !only.snippet && lines !== ''
+          ? [only, undefined]
+          : [undefined, only];
     payload = {
-      type: 'text_editor_code_execution_create_result',
-      is_file_update: first.text === 'File update: true',
+      type: variant,
+      ...(lines === '' ? {} : { lines: lines.split('\n') }),
+      ...(oldSpan === undefined ? {} : { old_start: oldSpan.span.start, old_lines: oldSpan.span.lines }),
+      ...(newSpan === undefined ? {} : { new_start: newSpan.span.start, new_lines: newSpan.span.lines }),
     };
-  } else if (first?.type === 'text') {
-    const spans = (first.annotations ?? []).flatMap((annotation) => {
-      const span = citedSpan(annotation);
-      return span === undefined ? [] : [{ span, snippet: 'snippet' in annotation }];
-    });
-    const isStrReplace = spans.length >= 2 || spans.some((entry) => entry.snippet);
-    if (isStrReplace) {
-      const [oldSpan, newSpan] = spans.length >= 2 ? [spans[0], spans[1]] : [undefined, spans[0]];
-      payload = {
-        type: 'text_editor_code_execution_str_replace_result',
-        ...(first.text === '' ? {} : { lines: first.text.split('\n') }),
-        ...(oldSpan === undefined ? {} : { old_start: oldSpan.span.start, old_lines: oldSpan.span.lines }),
-        ...(newSpan === undefined ? {} : { new_start: newSpan.span.start, new_lines: newSpan.span.lines }),
-      };
-    } else {
-      const viewed = spans[0]?.span;
-      payload = {
-        type: 'text_editor_code_execution_view_result',
-        content: first.text,
-        file_type: 'text',
-        ...(viewed === undefined ? {} : { start_line: viewed.start, num_lines: viewed.lines }),
-      };
-    }
   } else {
-    // Nothing typed to rebuild from — an empty view says "the editor reported nothing" without
-    // inventing an outcome.
-    payload = { type: 'text_editor_code_execution_view_result', content: '', file_type: 'text' };
+    // A view — or, with nothing typed to rebuild from, an empty view, which says "the editor
+    // reported nothing" without inventing an outcome.
+    const viewed = spans[0]?.span;
+    payload = {
+      type: 'text_editor_code_execution_view_result',
+      content: text?.text ?? '',
+      file_type: 'text',
+      ...(viewed === undefined ? {} : { start_line: viewed.start, num_lines: viewed.lines }),
+    };
   }
-  return { type: 'text_editor_code_execution_tool_result', tool_use_id: callId, content: payload };
+  return { type: 'text_editor_code_execution_tool_result', tool_use_id: content.callId, content: payload };
 }
 
 /**
@@ -503,6 +591,10 @@ function appendContent(
   ctx: ConversionContext,
 ): void {
   const content = contents[index] as Content;
+  // Ahead of the raw replay: an abandoned call's raw block draws the same refusal a rebuilt one does.
+  if (ctx.abandoned.has(content)) {
+    return;
+  }
   const providerExecuted = providerExecutedBlock(content);
   if (providerExecuted !== undefined) {
     blocks.push(providerExecuted);
@@ -519,10 +611,7 @@ function appendContent(
       blocks.push({
         type: 'code_execution_tool_result',
         tool_use_id: content.callId ?? '',
-        content: rebuiltCodeExecutionPayload(
-          content.outputs ?? [],
-          content.additionalProperties?.[UNMODELLED_PAYLOAD_KEY] === true,
-        ),
+        content: rebuiltCodeExecutionPayload(content),
       });
       return;
     }
@@ -541,7 +630,7 @@ function appendContent(
       blocks.push({
         type: 'bash_code_execution_tool_result',
         tool_use_id: content.callId ?? '',
-        content: rebuiltBashPayload(content.outputs ?? [], files),
+        content: rebuiltBashPayload(content, files),
       });
       return;
     }
@@ -608,7 +697,7 @@ function appendContent(
         // The text editor's outcome is typed as an ordinary function result, but it answers a
         // provider-executed call: a restored transcript rebuilds the provider's own result block,
         // since a `tool_result` would answer a `tool_use` the request no longer contains.
-        blocks.push(rebuiltTextEditorResult(content.callId, content.result));
+        blocks.push(rebuiltTextEditorResult(content));
         return;
       }
       blocks.push({
@@ -745,7 +834,11 @@ export function toAnthropicMessages(messages: readonly Message[]): AnthropicMess
   const rest = messages[0]?.role === 'system' ? messages.slice(1) : messages;
   // Both collected across the whole transcript, so a call answered in a later message stays a
   // call and a provider-executed exchange is recognized wherever its halves sit.
-  const ctx: ConversionContext = { answered: answeredCallIds(rest), families: codeExecutionFamilies(rest) };
+  const ctx: ConversionContext = {
+    answered: answeredCallIds(rest),
+    families: codeExecutionFamilies(rest),
+    abandoned: abandonedCalls(rest),
+  };
   const out: AnthropicMessage[] = [];
   for (const msg of rest) {
     out.push(...messageGroups(msg, ctx));

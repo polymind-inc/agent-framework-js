@@ -22,14 +22,16 @@ contain breaking changes**; patch releases are fixes only.
   the exact bytes, unchanged, and `rawRepresentation` is still never serialized. Error outputs
   parsed from code-execution and text-editor failures now also carry the wire's code under
   `ErrorContent.errorCode` (additive), which is what makes a restored error turn rebuild faithfully.
-  A result payload variant this build does not model goes back exactly as it arrived rather than
-  as an invented success payload, and the text output of an `encrypted_code_execution_result` now
-  carries `additionalProperties.encrypted: true` (additive), so a restored turn sends the
-  ciphertext back as `encrypted_stdout` instead of as plain stdout. A
-  `code_interpreter_tool_result` whose payload is unmodelled now carries
-  `additionalProperties.unmodelledPayload: true` (additive): an unmodelled payload and a malformed
-  file entry both surface as unknown outputs, and the marker is what keeps a lone malformed entry
-  rebuilt inside its result, its own fields untouched, rather than mistaken for the payload.
+  The code-execution, bash and text-editor results now also record the payload they were read
+  from on `additionalProperties` (additive): `payloadType`, the wire variant, and for a
+  code-execution run a non-zero `returnCode`. With them a restored turn sends back what the wire
+  said rather than a reading of the typed outputs: an unmodelled payload goes back as it arrived
+  (a malformed file entry stays inside its result), encrypted stdout goes back as
+  `encrypted_stdout`, a failed run keeps its exit code, an error with a code the schema does not
+  know degrades to `unavailable` instead of a successful run, and a text-editor view or
+  str_replace is no longer mistaken for another variant. A provider-executed call that no result
+  answers is omitted once its turn has closed — the API refuses such a request — and kept on the
+  open turn, where a `pause_turn` continuation or a pending local tool result still needs it.
 
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryToolbox` now normalizes the tool
   declarations it exposes by the same shared rules the MCP client applies, instead of passing them

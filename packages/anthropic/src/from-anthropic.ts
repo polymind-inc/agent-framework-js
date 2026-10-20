@@ -8,7 +8,7 @@ import type {
 } from '@polymind-inc/agent-framework-core';
 import { chatResponse, chatResponseUpdate, unknownContent } from '@polymind-inc/agent-framework-core';
 import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
-import { type AnthropicBlock, ENCRYPTED_STDOUT_KEY, UNMODELLED_PAYLOAD_KEY } from './to-anthropic.js';
+import { type AnthropicBlock, PAYLOAD_TYPE_KEY, RETURN_CODE_KEY } from './to-anthropic.js';
 
 /**
  * Stop-reason mapping, matching Python `FINISH_REASON_MAP`.
@@ -277,12 +277,30 @@ function hostedFiles(result: AnthropicBlock): Content[] {
   return files;
 }
 
-/** The `code_execution_tool_result` payload variants {@link codeExecutionOutputs} models. */
-const MODELLED_CODE_EXECUTION_PAYLOADS = new Set([
-  'code_execution_tool_result_error',
-  'code_execution_result',
-  'encrypted_code_execution_result',
-]);
+/**
+ * The `additionalProperties` a code-execution result records about the payload it was read from.
+ *
+ * The typed outputs keep the outcome but not everything the wire said: which payload variant it
+ * was (an encrypted stdout reads as plain text, an unmodelled payload as unknown content just like
+ * a malformed file entry, a viewed file can read like a create result) and a code-execution run's
+ * `return_code`. A restored transcript, which has lost the raw block, needs both to send the block
+ * back as it was. They sit on the result content, which the framework owns, so no field the wire
+ * sent can collide with them; a zero `return_code` is the default and is left out.
+ */
+function payloadRecord(result: AnthropicBlock | undefined): {
+  additionalProperties?: Record<string, unknown>;
+} {
+  if (result === undefined || typeof result.type !== 'string') {
+    return {};
+  }
+  const returnCode = asNumber(result.return_code);
+  return {
+    additionalProperties: {
+      [PAYLOAD_TYPE_KEY]: result.type,
+      ...(returnCode === undefined || returnCode === 0 ? {} : { [RETURN_CODE_KEY]: returnCode }),
+    },
+  };
+}
 
 /** The outputs of a `code_execution_tool_result` payload. */
 function codeExecutionOutputs(result: AnthropicBlock): Content[] {
@@ -304,17 +322,11 @@ function codeExecutionOutputs(result: AnthropicBlock): Content[] {
     case 'encrypted_code_execution_result': {
       const outputs: Content[] = [];
       // The encrypted variant reports its stdout under a different key and never a plain one.
-      const encrypted = result.type === 'encrypted_code_execution_result';
-      const stdout = nonEmptyString(encrypted ? result.encrypted_stdout : result.stdout);
+      const stdout = nonEmptyString(
+        result.type === 'code_execution_result' ? result.stdout : result.encrypted_stdout,
+      );
       if (stdout !== undefined) {
-        outputs.push({
-          type: 'text',
-          text: stdout,
-          // The text alone cannot say it is ciphertext. The marker survives serialization, so a
-          // restored transcript sends it back as `encrypted_stdout` rather than as plain stdout.
-          ...(encrypted ? { additionalProperties: { [ENCRYPTED_STDOUT_KEY]: true } } : {}),
-          rawRepresentation: result,
-        });
+        outputs.push({ type: 'text', text: stdout, rawRepresentation: result });
       }
       const stderr = nonEmptyString(result.stderr);
       if (stderr !== undefined) {
@@ -579,15 +591,11 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
       }
       case 'code_execution_tool_result': {
         const result = asBlock(block.content);
-        // An unmodelled payload and a malformed file entry both surface as unknown outputs. The
-        // result itself records which one it holds — on content the framework owns, so no wire
-        // field can collide with it — and a restored transcript replays the payload whole.
-        const unmodelled = result !== undefined && !MODELLED_CODE_EXECUTION_PAYLOADS.has(String(result.type));
         contents.push({
           type: 'code_interpreter_tool_result',
           callId: String(block.tool_use_id ?? ''),
           outputs: result === undefined ? [] : codeExecutionOutputs(result),
-          ...(unmodelled ? { additionalProperties: { [UNMODELLED_PAYLOAD_KEY]: true } } : {}),
+          ...payloadRecord(result),
           rawRepresentation: block,
         });
         break;
@@ -602,6 +610,8 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
           type: 'shell_tool_result',
           callId: String(block.tool_use_id ?? ''),
           outputs: parsed.outputs,
+          // The exit code already travels on the shell output; only the variant is recorded.
+          ...payloadRecord(result === undefined ? undefined : { type: result.type }),
           rawRepresentation: block,
         });
         break;
@@ -614,6 +624,7 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
           type: 'function_result',
           callId: String(block.tool_use_id ?? ''),
           result: result === undefined ? [] : textEditorOutputs(result),
+          ...payloadRecord(result),
           rawRepresentation: block,
         });
         break;

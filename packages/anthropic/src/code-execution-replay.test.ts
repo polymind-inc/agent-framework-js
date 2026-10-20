@@ -203,6 +203,85 @@ const CODE_ENCRYPTED_TURN = [
   },
 ];
 
+const CODE_ENCRYPTED_EMPTY_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'pass' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'encrypted_code_execution_result',
+      encrypted_stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [],
+    },
+  },
+];
+
+const CODE_FAILED_RUN_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'boom()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: 'Traceback (most recent call last)',
+      return_code: 1,
+      content: [],
+    },
+  },
+];
+
+const BASH_ERROR_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
+  {
+    type: 'bash_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_2',
+    content: { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' },
+  },
+];
+
+// A viewed file whose content happens to read like a create result's typed text.
+const EDITOR_VIEW_CREATE_LOOKALIKE_TURN = [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'view', path: '/tmp/flag.txt' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: {
+      type: 'text_editor_code_execution_view_result',
+      content: 'File update: false',
+      file_type: 'text',
+      start_line: 1,
+      num_lines: 1,
+    },
+  },
+];
+
+const EDITOR_STR_REPLACE_OLD_SPAN_ONLY_TURN = [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'str_replace', path: '/tmp/a.txt', old_str: 'x', new_str: 'y' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: {
+      type: 'text_editor_code_execution_str_replace_result',
+      lines: ['y'],
+      old_start: 3,
+      old_lines: 1,
+    },
+  },
+];
+
 // Payload variants this build does not model: the receive side keeps each as unknown content,
 // and a restored replay must send it back as it arrived rather than invent an outcome.
 const CODE_UNMODELLED_TURN = [
@@ -313,6 +392,11 @@ describe('restored provider-executed turns', () => {
     ],
     ['bash with an unmodelled payload', BASH_UNMODELLED_TURN],
     ['text editor with an unmodelled payload', EDITOR_UNMODELLED_TURN],
+    ['encrypted code execution with empty stdout', CODE_ENCRYPTED_EMPTY_TURN],
+    ['failed code execution run', CODE_FAILED_RUN_TURN],
+    ['bash error', BASH_ERROR_TURN],
+    ['text editor view that reads like a create result', EDITOR_VIEW_CREATE_LOOKALIKE_TURN],
+    ['text editor str_replace with only the replaced span', EDITOR_STR_REPLACE_OLD_SPAN_ONLY_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
     const turn = assistantTurn(blocks);
 
@@ -345,6 +429,81 @@ describe('restored provider-executed turns', () => {
       type: 'code_execution_tool_result',
       tool_use_id: 'srvtoolu_1',
       content: { type: 'code_execution_tool_result_error', error_code: 'unavailable' },
+    });
+  });
+
+  it('degrades an unrecognized bash error code to unavailable, never to a successful run', () => {
+    const turn = assistantTurn([
+      { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
+      {
+        type: 'bash_code_execution_tool_result',
+        tool_use_id: 'srvtoolu_2',
+        content: { type: 'bash_code_execution_tool_result_error', error_code: 'container_expired' },
+      },
+    ]);
+
+    const [message] = toAnthropicMessages([restored(turn)]);
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+
+    expect(blocks[1]).toEqual({
+      type: 'bash_code_execution_tool_result',
+      tool_use_id: 'srvtoolu_2',
+      content: { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' },
+    });
+  });
+
+  describe('a provider-executed call no result answers', () => {
+    const call = { type: 'server_tool_use', id: 'srvtoolu_9', name: 'code_execution', input: { code: 'x' } };
+    const user = (text: string): Message => ({ role: 'user', contents: [{ type: 'text', text }] });
+    const serverToolUses = (messages: readonly Message[]) =>
+      toAnthropicMessages(messages).flatMap((msg) =>
+        Array.isArray(msg.content) ? msg.content.filter((block) => block.type === 'server_tool_use') : [],
+      );
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is dropped %s once its turn has closed', (_label, prepare) => {
+      // The API refuses a request whose closed assistant turn holds a server call without its
+      // result, so a call abandoned mid-stream is omitted rather than turned into a 400.
+      const messages = [
+        user('go'),
+        prepare(assistantTurn([{ type: 'text', text: 'Running.' }, call])),
+        user('next'),
+      ];
+
+      expect(serverToolUses(messages)).toEqual([]);
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is kept %s on the paused turn the request continues', (_label, prepare) => {
+      // A `pause_turn` response ends on the call it has not run yet; re-sending it as-is is how
+      // the turn continues.
+      const messages = [user('go'), prepare(assistantTurn([{ type: 'text', text: 'Running.' }, call]))];
+
+      expect(serverToolUses(messages)).toEqual([call]);
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is kept %s while only local tool results follow it', (_label, prepare) => {
+      // Called alongside a local tool, the server call waits for the local results; the API runs it
+      // when they arrive, so it must still be on the open turn.
+      const messages: Message[] = [
+        user('go'),
+        prepare(
+          assistantTurn([
+            call,
+            { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } },
+          ]),
+        ),
+        { role: 'tool', contents: [{ type: 'function_result', callId: 'toolu_1', result: 'ok' }] },
+      ];
+
+      expect(serverToolUses(messages)).toEqual([call]);
     });
   });
 
