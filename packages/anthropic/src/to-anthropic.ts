@@ -8,6 +8,7 @@ import type {
   ToolChoice,
 } from '@polymind-inc/agent-framework-core';
 import {
+  deserializeContent,
   isFunctionTool,
   resolveResponseFormat,
   serializeContent,
@@ -174,6 +175,14 @@ function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
   return raw;
 }
 
+/**
+ * The `additionalProperties` key marking a code-execution text output as `encrypted_stdout`.
+ *
+ * The receive side reports encrypted and plain stdout alike as text, so without the marker a
+ * restored transcript would send the ciphertext back as plain stdout.
+ */
+export const ENCRYPTED_STDOUT_KEY = 'encrypted';
+
 /** The wire names of the code-execution tool family, as `server_tool_use.name` carries them. */
 type CodeExecutionFamily = 'code_execution' | 'bash_code_execution' | 'text_editor_code_execution';
 
@@ -302,9 +311,29 @@ function foldsIntoFollowingShellResult(contents: readonly Content[], index: numb
   return false;
 }
 
+/**
+ * The payload a result block carried, when the receive side kept it as unknown content.
+ *
+ * A payload variant this build does not model is preserved whole rather than read for fields it
+ * may not have. It goes back exactly as it arrived — the forward-compatible rule unknown content
+ * follows everywhere — rather than as a modelled variant invented from fields it never had.
+ * `entryType` names the file-entry type the payload lists, whose malformed entries are unknown
+ * content too but belong inside a rebuilt payload rather than standing in for one.
+ */
+function preservedPayload(item: Content | undefined, entryType?: string): AnthropicBlock | undefined {
+  if (item?.type !== 'unknown' || item.unknownType === '' || item.unknownType === entryType) {
+    return undefined;
+  }
+  return serializeContent(item) as AnthropicBlock;
+}
+
 /** Rebuilds the payload of a `code_execution_tool_result` from the typed outputs. */
 function rebuiltCodeExecutionPayload(outputs: readonly Content[]): AnthropicBlock {
   const [only] = outputs;
+  const preserved = outputs.length === 1 ? preservedPayload(only, 'code_execution_output') : undefined;
+  if (preserved !== undefined) {
+    return preserved;
+  }
   if (outputs.length === 1 && only?.type === 'error') {
     // A stored `errorCode` marks the error-payload variant unambiguously, so it always rebuilds
     // an error — a code the schema does not know degrades to `unavailable`, the same way the
@@ -320,14 +349,15 @@ function rebuiltCodeExecutionPayload(outputs: readonly Content[]): AnthropicBloc
       };
     }
   }
+  const stdout = outputs.filter((item): item is Content & { type: 'text' } => item.type === 'text');
+  // Ciphertext goes back under the key it arrived in; sent as plain stdout, the model would read
+  // the encrypted blob as the program's output.
+  const encrypted = stdout.some((item) => item.additionalProperties?.[ENCRYPTED_STDOUT_KEY] === true);
   // `return_code` is not part of the typed contents; a result that was worth reporting as outputs
   // rather than an error reads as the shell convention for success.
   return {
-    type: 'code_execution_result',
-    stdout: outputs
-      .filter((item): item is Content & { type: 'text' } => item.type === 'text')
-      .map((item) => item.text)
-      .join(''),
+    type: encrypted ? 'encrypted_code_execution_result' : 'code_execution_result',
+    [encrypted ? 'encrypted_stdout' : 'stdout']: stdout.map((item) => item.text).join(''),
     stderr: outputs
       .filter((item): item is Content & { type: 'error' } => item.type === 'error')
       .map((item) => item.message ?? '')
@@ -339,6 +369,10 @@ function rebuiltCodeExecutionPayload(outputs: readonly Content[]): AnthropicBloc
 
 /** Rebuilds the payload of a `bash_code_execution_tool_result` from the shell output and files. */
 function rebuiltBashPayload(outputs: readonly Content[], files: readonly Content[]): AnthropicBlock {
+  const preserved = outputs.length === 1 ? preservedPayload(outputs[0]) : undefined;
+  if (preserved !== undefined) {
+    return preserved;
+  }
   const output = outputs.find(
     (item): item is Content & { type: 'shell_command_output' } => item.type === 'shell_command_output',
   );
@@ -389,8 +423,18 @@ function citedSpan(annotation: {
 function rebuiltTextEditorResult(callId: string, result: unknown): AnthropicBlock {
   const items = Array.isArray(result) ? (result as Content[]) : [];
   const first = items[0];
+  // Deserialization does not restore `result` as content, so in a restored session an unmodelled
+  // payload sits under its wire type rather than as unknown content. One trip through the content
+  // codec reads the restored and the in-memory spellings alike.
+  const preserved = preservedPayload(
+    isRecord(first) && typeof first.type === 'string'
+      ? deserializeContent(serializeContent(first))
+      : undefined,
+  );
   let payload: AnthropicBlock;
-  if (first?.type === 'error') {
+  if (preserved !== undefined) {
+    payload = preserved;
+  } else if (first?.type === 'error') {
     const stored = first.errorCode ?? '';
     payload = {
       type: 'text_editor_code_execution_tool_result_error',

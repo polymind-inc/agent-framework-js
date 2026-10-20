@@ -8,7 +8,7 @@ import type {
 } from '@polymind-inc/agent-framework-core';
 import { chatResponse, chatResponseUpdate, unknownContent } from '@polymind-inc/agent-framework-core';
 import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
-import type { AnthropicBlock } from './to-anthropic.js';
+import { type AnthropicBlock, ENCRYPTED_STDOUT_KEY } from './to-anthropic.js';
 
 /**
  * Stop-reason mapping, matching Python `FINISH_REASON_MAP`.
@@ -297,11 +297,17 @@ function codeExecutionOutputs(result: AnthropicBlock): Content[] {
     case 'encrypted_code_execution_result': {
       const outputs: Content[] = [];
       // The encrypted variant reports its stdout under a different key and never a plain one.
-      const stdout = nonEmptyString(
-        result.type === 'code_execution_result' ? result.stdout : result.encrypted_stdout,
-      );
+      const encrypted = result.type === 'encrypted_code_execution_result';
+      const stdout = nonEmptyString(encrypted ? result.encrypted_stdout : result.stdout);
       if (stdout !== undefined) {
-        outputs.push({ type: 'text', text: stdout, rawRepresentation: result });
+        outputs.push({
+          type: 'text',
+          text: stdout,
+          // The text alone cannot say it is ciphertext. The marker survives serialization, so a
+          // restored transcript sends it back as `encrypted_stdout` rather than as plain stdout.
+          ...(encrypted ? { additionalProperties: { [ENCRYPTED_STDOUT_KEY]: true } } : {}),
+          rawRepresentation: result,
+        });
       }
       const stderr = nonEmptyString(result.stderr);
       if (stderr !== undefined) {

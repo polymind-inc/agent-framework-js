@@ -188,6 +188,55 @@ const EDITOR_ERROR_TURN = [
   },
 ];
 
+const CODE_ENCRYPTED_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'print(1)' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'encrypted_code_execution_result',
+      encrypted_stdout: 'ENCRYPTED',
+      stderr: '',
+      return_code: 0,
+      content: [],
+    },
+  },
+];
+
+// Payload variants this build does not model: the receive side keeps each as unknown content,
+// and a restored replay must send it back as it arrived rather than invent an outcome.
+const CODE_UNMODELLED_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'x' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: { type: 'code_execution_future_result', detail: 'new' },
+  },
+];
+
+const BASH_UNMODELLED_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
+  {
+    type: 'bash_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_2',
+    content: { type: 'bash_code_execution_future_result', detail: 'new' },
+  },
+];
+
+const EDITOR_UNMODELLED_TURN = [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'view', path: '/tmp/a.txt' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: { type: 'text_editor_code_execution_future_result', detail: 'new' },
+  },
+];
+
 describe('restored provider-executed turns', () => {
   it.each([
     ['code execution', CODE_TURN],
@@ -201,6 +250,10 @@ describe('restored provider-executed turns', () => {
     ['text editor str_replace', EDITOR_STR_REPLACE_TURN],
     ['text editor create', EDITOR_CREATE_TURN],
     ['text editor error', EDITOR_ERROR_TURN],
+    ['encrypted code execution', CODE_ENCRYPTED_TURN],
+    ['code execution with an unmodelled payload', CODE_UNMODELLED_TURN],
+    ['bash with an unmodelled payload', BASH_UNMODELLED_TURN],
+    ['text editor with an unmodelled payload', EDITOR_UNMODELLED_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
     const turn = assistantTurn(blocks);
 

@@ -22,6 +22,10 @@ contain breaking changes**; patch releases are fixes only.
   the exact bytes, unchanged, and `rawRepresentation` is still never serialized. Error outputs
   parsed from code-execution and text-editor failures now also carry the wire's code under
   `ErrorContent.errorCode` (additive), which is what makes a restored error turn rebuild faithfully.
+  A result payload variant this build does not model goes back exactly as it arrived rather than
+  as an invented success payload, and the text output of an `encrypted_code_execution_result` now
+  carries `additionalProperties.encrypted: true` (additive), so a restored turn sends the
+  ciphertext back as `encrypted_stdout` instead of as plain stdout.
 
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryToolbox` now normalizes the tool
   declarations it exposes by the same shared rules the MCP client applies, instead of passing them

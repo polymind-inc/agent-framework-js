@@ -156,7 +156,15 @@ describe('code_execution_tool_result variants', () => {
       content: inner,
     });
 
-    expect(outputsOf(content)).toEqual([{ type: 'text', text: 'ENCRYPTED', rawRepresentation: inner }]);
+    expect(outputsOf(content)).toEqual([
+      {
+        type: 'text',
+        text: 'ENCRYPTED',
+        // Marks the text as ciphertext, so a restored transcript replays it as `encrypted_stdout`.
+        additionalProperties: { encrypted: true },
+        rawRepresentation: inner,
+      },
+    ]);
   });
 
   it('reports empty stdout and stderr as no output at all', () => {
