@@ -6,6 +6,10 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-mcp`, `@polymind-inc/agent-framework-foundry`** — the
+  `@modelcontextprotocol/client` dependency now requires `^2.2.0`, the first release with the fix
+  for the OAuth client advisory affecting `>=2.0.0 <2.2.0`.
+
 - **`@polymind-inc/agent-framework-anthropic`** — a session restored from persistence can replay a
   turn that used the code-execution beta. The blocks describing a provider-executed call — code
   execution, bash, the text editor — used to be replayed only from `rawRepresentation`, which

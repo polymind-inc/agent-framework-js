@@ -12,7 +12,7 @@ export function definePackageBuild({ entry, platform, neverBundle }: PackageBuil
     entry,
     format: ['esm'],
     platform,
-    dts: { oxc: true, sourcemap: false },
+    dts: { generator: 'oxc', sourcemap: false },
     clean: true,
     treeshake: true,
     target: 'es2024',
