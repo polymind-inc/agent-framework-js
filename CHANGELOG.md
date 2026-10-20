@@ -6,6 +6,17 @@ contain breaking changes**; patch releases are fixes only.
 
 ## Unreleased
 
+- **`@polymind-inc/agent-framework-anthropic`** — a turn that used the web search or web fetch
+  server tool now replays as the blocks the API sent. The receive side types such a call as an
+  informational `function_call` and its result as a `function_result`, and the conversion used to
+  send them back as a local `tool_use` / `tool_result` pair for a tool the request does not
+  define. They now go back as `server_tool_use` and `web_search_tool_result` /
+  `web_fetch_tool_result` on the assistant turn — the raw blocks in memory, and blocks rebuilt from
+  the typed contents after a restore. An unanswered server call stays on the open turn, so a
+  `pause_turn` continuation works, and is omitted once its turn has closed. An informational call
+  another provider reported keeps the local mapping. Python sends these as `tool_use` /
+  `tool_result`; this deliberately diverges.
+
 - **`@polymind-inc/agent-framework-agentserver`** — the optional OTLP/gRPC exporter peers now
   also accept the `0.223` release line (`^0.221.0 || ^0.222.0 || ^0.223.0`), so a host that
   installs the latest exporters passes strict peer validation.
