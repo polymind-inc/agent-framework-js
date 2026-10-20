@@ -8,7 +8,7 @@ import type {
 } from '@polymind-inc/agent-framework-core';
 import { chatResponse, chatResponseUpdate, unknownContent } from '@polymind-inc/agent-framework-core';
 import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
-import { type AnthropicBlock, ENCRYPTED_STDOUT_KEY } from './to-anthropic.js';
+import { type AnthropicBlock, ENCRYPTED_STDOUT_KEY, FILE_ENTRY_KEY } from './to-anthropic.js';
 
 /**
  * Stop-reason mapping, matching Python `FINISH_REASON_MAP`.
@@ -260,7 +260,7 @@ function codeInterpreterInputs(block: AnthropicBlock): Content[] {
  * stays visible for whoever has to explain it. Python reads these off a typed SDK model whose
  * `file_id` is required, so it never meets the case; this reads the wire.
  */
-function hostedFiles(result: AnthropicBlock): Content[] {
+function hostedFiles(result: AnthropicBlock, markEntries = false): Content[] {
   const files: Content[] = [];
   for (const candidate of Array.isArray(result.content) ? result.content : []) {
     const file = asBlock(candidate);
@@ -268,11 +268,15 @@ function hostedFiles(result: AnthropicBlock): Content[] {
       continue;
     }
     const fileId = file.file_id;
-    files.push(
-      typeof fileId === 'string' && fileId !== ''
-        ? { type: 'hosted_file', fileId, rawRepresentation: file }
-        : unknownContent(file),
-    );
+    if (typeof fileId === 'string' && fileId !== '') {
+      files.push({ type: 'hosted_file', fileId, rawRepresentation: file });
+      continue;
+    }
+    const entry = unknownContent(file);
+    // `markEntries` says the entries share a list with an unmodelled payload, which is unknown
+    // content as well. The marker survives serialization, so a restored transcript can tell a
+    // lone malformed entry from a whole payload and rebuild the result around it.
+    files.push(markEntries ? { ...entry, additionalProperties: { [FILE_ENTRY_KEY]: true } } : entry);
   }
   return files;
 }
@@ -313,7 +317,7 @@ function codeExecutionOutputs(result: AnthropicBlock): Content[] {
       if (stderr !== undefined) {
         outputs.push({ type: 'error', message: stderr, rawRepresentation: result });
       }
-      outputs.push(...hostedFiles(result));
+      outputs.push(...hostedFiles(result, true));
       return outputs;
     }
     default:

@@ -214,6 +214,23 @@ const CODE_UNMODELLED_TURN = [
   },
 ];
 
+// A lone malformed file entry is unknown content too, but it sits inside a modelled payload: the
+// restored replay must keep the result envelope around it rather than mistake it for the payload.
+const CODE_LONE_UNKNOWN_FILE_ENTRY_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [{ type: 'future_file_entry', file_id: 7 }],
+    },
+  },
+];
+
 const BASH_UNMODELLED_TURN = [
   { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
   {
@@ -252,6 +269,7 @@ describe('restored provider-executed turns', () => {
     ['text editor error', EDITOR_ERROR_TURN],
     ['encrypted code execution', CODE_ENCRYPTED_TURN],
     ['code execution with an unmodelled payload', CODE_UNMODELLED_TURN],
+    ['code execution with a lone unknown file entry', CODE_LONE_UNKNOWN_FILE_ENTRY_TURN],
     ['bash with an unmodelled payload', BASH_UNMODELLED_TURN],
     ['text editor with an unmodelled payload', EDITOR_UNMODELLED_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
