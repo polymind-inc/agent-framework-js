@@ -528,6 +528,49 @@ describe('restored provider-executed turns', () => {
 
       expect(serverToolUses(messages)).toEqual([call]);
     });
+
+    it.each([
+      ['in memory', 'assistant' as const, (msg: Message) => msg],
+      ['restored', 'assistant' as const, restored],
+      ['in memory', 'tool' as const, (msg: Message) => msg],
+      ['restored', 'tool' as const, restored],
+    ])('is kept %s on the paused turn when a %s message sends nothing after it', (_label, role, prepare) => {
+      // A message that emits no blocks — usage metadata only — is not a turn, so it cannot close one.
+      const messages: Message[] = [
+        user('go'),
+        prepare(assistantTurn([{ type: 'text', text: 'Running.' }, call])),
+        { role, contents: [{ type: 'usage', usageDetails: { inputTokenCount: 1, outputTokenCount: 1 } }] },
+      ];
+
+      expect(serverToolUses(messages)).toEqual([call]);
+    });
+
+    // The same exchange, stored as one message or split across several: the local result and the
+    // final text after it close the turn the server call was on either way.
+    const local = { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } };
+    const result: Message['contents'][number] = { type: 'function_result', callId: 'toolu_1', result: 'ok' };
+    const bundled = (prepare: (msg: Message) => Message): Message[] => {
+      const turn = assistantTurn([call, local]);
+      return [
+        user('go'),
+        prepare({ ...turn, contents: [...turn.contents, result, { type: 'text', text: 'Done.' }] }),
+      ];
+    };
+    const split = (prepare: (msg: Message) => Message): Message[] => [
+      user('go'),
+      prepare(assistantTurn([call, local])),
+      { role: 'tool', contents: [result] },
+      prepare(assistantTurn([{ type: 'text', text: 'Done.' }])),
+    ];
+
+    it.each([
+      ['bundled in one message', 'in memory', bundled, (msg: Message) => msg],
+      ['bundled in one message', 'restored', bundled, restored],
+      ['split across messages', 'in memory', split, (msg: Message) => msg],
+      ['split across messages', 'restored', split, restored],
+    ])('is dropped once a later turn closes it, %s, %s', (_shape, _label, build, prepare) => {
+      expect(serverToolUses(build(prepare))).toEqual([]);
+    });
   });
 
   it('does not let keyless contents correlate when inferring the call family', () => {
