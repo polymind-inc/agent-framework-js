@@ -8,7 +8,7 @@ import type {
 } from '@polymind-inc/agent-framework-core';
 import { chatResponse, chatResponseUpdate, unknownContent } from '@polymind-inc/agent-framework-core';
 import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
-import { type AnthropicBlock, ENCRYPTED_STDOUT_KEY, FILE_ENTRY_KEY } from './to-anthropic.js';
+import { type AnthropicBlock, ENCRYPTED_STDOUT_KEY, UNMODELLED_PAYLOAD_KEY } from './to-anthropic.js';
 
 /**
  * Stop-reason mapping, matching Python `FINISH_REASON_MAP`.
@@ -260,7 +260,7 @@ function codeInterpreterInputs(block: AnthropicBlock): Content[] {
  * stays visible for whoever has to explain it. Python reads these off a typed SDK model whose
  * `file_id` is required, so it never meets the case; this reads the wire.
  */
-function hostedFiles(result: AnthropicBlock, markEntries = false): Content[] {
+function hostedFiles(result: AnthropicBlock): Content[] {
   const files: Content[] = [];
   for (const candidate of Array.isArray(result.content) ? result.content : []) {
     const file = asBlock(candidate);
@@ -268,37 +268,21 @@ function hostedFiles(result: AnthropicBlock, markEntries = false): Content[] {
       continue;
     }
     const fileId = file.file_id;
-    if (typeof fileId === 'string' && fileId !== '') {
-      files.push({ type: 'hosted_file', fileId, rawRepresentation: file });
-      continue;
-    }
-    // `markEntries` says the entries share a list with an unmodelled payload, which is unknown
-    // content as well. The marker survives serialization, so a restored transcript can tell a
-    // lone malformed entry from a whole payload and rebuild the result around it.
-    files.push(markEntries ? markedFileEntry(file) : unknownContent(file));
+    files.push(
+      typeof fileId === 'string' && fileId !== ''
+        ? { type: 'hosted_file', fileId, rawRepresentation: file }
+        : unknownContent(file),
+    );
   }
   return files;
 }
 
-/**
- * A malformed file entry as unknown content, marked as an entry.
- *
- * Unknown content carries the entry's own fields, `additionalProperties` included, so the marker
- * joins a record already there rather than replacing it. An entry whose `additionalProperties` is
- * not a non-empty record stays unmarked: merging could not be undone exactly on the way back, and
- * an unmarked entry of the usual `code_execution_output` type is still recognized as one.
- */
-function markedFileEntry(file: AnthropicBlock): Content {
-  const entry = unknownContent(file);
-  const existing = file.additionalProperties;
-  if (existing === undefined) {
-    return { ...entry, additionalProperties: { [FILE_ENTRY_KEY]: true } };
-  }
-  if (!isRecord(existing) || Object.keys(existing).length === 0 || FILE_ENTRY_KEY in existing) {
-    return entry;
-  }
-  return { ...entry, additionalProperties: { ...existing, [FILE_ENTRY_KEY]: true } };
-}
+/** The `code_execution_tool_result` payload variants {@link codeExecutionOutputs} models. */
+const MODELLED_CODE_EXECUTION_PAYLOADS = new Set([
+  'code_execution_tool_result_error',
+  'code_execution_result',
+  'encrypted_code_execution_result',
+]);
 
 /** The outputs of a `code_execution_tool_result` payload. */
 function codeExecutionOutputs(result: AnthropicBlock): Content[] {
@@ -336,7 +320,7 @@ function codeExecutionOutputs(result: AnthropicBlock): Content[] {
       if (stderr !== undefined) {
         outputs.push({ type: 'error', message: stderr, rawRepresentation: result });
       }
-      outputs.push(...hostedFiles(result, true));
+      outputs.push(...hostedFiles(result));
       return outputs;
     }
     default:
@@ -595,10 +579,15 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
       }
       case 'code_execution_tool_result': {
         const result = asBlock(block.content);
+        // An unmodelled payload and a malformed file entry both surface as unknown outputs. The
+        // result itself records which one it holds — on content the framework owns, so no wire
+        // field can collide with it — and a restored transcript replays the payload whole.
+        const unmodelled = result !== undefined && !MODELLED_CODE_EXECUTION_PAYLOADS.has(String(result.type));
         contents.push({
           type: 'code_interpreter_tool_result',
           callId: String(block.tool_use_id ?? ''),
           outputs: result === undefined ? [] : codeExecutionOutputs(result),
+          ...(unmodelled ? { additionalProperties: { [UNMODELLED_PAYLOAD_KEY]: true } } : {}),
           rawRepresentation: block,
         });
         break;

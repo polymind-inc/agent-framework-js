@@ -190,6 +190,8 @@ describe('code_execution_tool_result variants', () => {
     expect(outputsOf(content)).toEqual([
       { type: 'unknown', unknownType: 'future_execution_result', payload: 1, rawRepresentation: inner },
     ]);
+    // The result records that its lone unknown output is the payload, not a malformed file entry.
+    expect(content).toMatchObject({ additionalProperties: { unmodelledPayload: true } });
   });
 
   it('keeps a file entry that names no file as unknown content', () => {
@@ -209,19 +211,13 @@ describe('code_execution_tool_result variants', () => {
       },
     });
 
-    // The marker tells a restored transcript these are entries, not an unmodelled payload.
-    const marker = { additionalProperties: { fileEntry: true } };
     expect(outputsOf(content)).toEqual([
-      { type: 'unknown', unknownType: 'code_execution_output', ...marker, rawRepresentation: missing },
-      {
-        type: 'unknown',
-        unknownType: 'code_execution_output',
-        file_id: 7,
-        ...marker,
-        rawRepresentation: numeric,
-      },
+      { type: 'unknown', unknownType: 'code_execution_output', rawRepresentation: missing },
+      { type: 'unknown', unknownType: 'code_execution_output', file_id: 7, rawRepresentation: numeric },
       expect.objectContaining({ type: 'hosted_file', fileId: 'file_1' }),
     ]);
+    // A modelled payload: its unknown outputs are entries, so the result carries no marker.
+    expect(content).not.toHaveProperty('additionalProperties');
   });
 });
 

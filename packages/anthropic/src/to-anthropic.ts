@@ -184,28 +184,13 @@ function providerExecutedBlock(content: Content): AnthropicBlock | undefined {
 export const ENCRYPTED_STDOUT_KEY = 'encrypted';
 
 /**
- * The `additionalProperties` key marking unknown content as a malformed code-execution file entry.
+ * The `additionalProperties` key marking a code-execution result whose payload is unmodelled.
  *
- * A malformed entry and an unmodelled payload variant both arrive as unknown content among a
- * code-execution result's outputs; without the marker a lone entry would read as the payload.
+ * An unmodelled payload variant and a malformed file entry both arrive as unknown content among
+ * the result's outputs. The marker sits on the result, which the framework owns, so it says which
+ * one a lone unknown output is without touching any field the wire sent.
  */
-export const FILE_ENTRY_KEY = 'fileEntry';
-
-/** Whether the receive side marked this content as a malformed file entry. */
-function isMarkedFileEntry(item: Content | undefined): boolean {
-  return item?.type === 'unknown' && item.additionalProperties?.[FILE_ENTRY_KEY] === true;
-}
-
-/** The wire block a preserved unknown content stands for, without the file-entry marker. */
-function preservedBlock(item: Content): AnthropicBlock {
-  const block = serializeContent(item) as AnthropicBlock;
-  if (!isMarkedFileEntry(item)) {
-    return block;
-  }
-  const { [FILE_ENTRY_KEY]: _marker, ...props } = item.additionalProperties ?? {};
-  const { additionalProperties: _props, ...rest } = block;
-  return Object.keys(props).length === 0 ? rest : { ...rest, additionalProperties: props };
-}
+export const UNMODELLED_PAYLOAD_KEY = 'unmodelledPayload';
 
 /** The wire names of the code-execution tool family, as `server_tool_use.name` carries them. */
 type CodeExecutionFamily = 'code_execution' | 'bash_code_execution' | 'text_editor_code_execution';
@@ -296,10 +281,10 @@ function rebuiltFileEntries(items: readonly Content[], entryType: string): Anthr
   for (const item of items) {
     if (item.type === 'hosted_file' && item.fileId !== undefined && item.fileId !== '') {
       entries.push({ type: entryType, file_id: item.fileId });
-    } else if (item.type === 'unknown' && (item.unknownType === entryType || isMarkedFileEntry(item))) {
+    } else if (item.type === 'unknown' && item.unknownType !== '') {
       // A malformed entry — one naming no fetchable file — is preserved verbatim by the receive
       // side; it goes back where it sat, so a restored replay carries the same list the wire did.
-      entries.push(preservedBlock(item));
+      entries.push(serializeContent(item) as AnthropicBlock);
     }
   }
   return entries;
@@ -341,26 +326,23 @@ function foldsIntoFollowingShellResult(contents: readonly Content[], index: numb
  * A payload variant this build does not model is preserved whole rather than read for fields it
  * may not have. It goes back exactly as it arrived — the forward-compatible rule unknown content
  * follows everywhere — rather than as a modelled variant invented from fields it never had.
- * Malformed file entries are unknown content too but belong inside a rebuilt payload rather than
- * standing in for one: the receive side marks them, and `entryType` recognizes the entries of a
- * transcript stored before the marker existed.
  */
-function preservedPayload(item: Content | undefined, entryType?: string): AnthropicBlock | undefined {
-  if (
-    item?.type !== 'unknown' ||
-    item.unknownType === '' ||
-    item.unknownType === entryType ||
-    isMarkedFileEntry(item)
-  ) {
+function preservedPayload(item: Content | undefined): AnthropicBlock | undefined {
+  if (item?.type !== 'unknown' || item.unknownType === '') {
     return undefined;
   }
-  return preservedBlock(item);
+  return serializeContent(item) as AnthropicBlock;
 }
 
-/** Rebuilds the payload of a `code_execution_tool_result` from the typed outputs. */
-function rebuiltCodeExecutionPayload(outputs: readonly Content[]): AnthropicBlock {
+/**
+ * Rebuilds the payload of a `code_execution_tool_result` from the typed outputs.
+ *
+ * `unmodelled` is the receive side's record that the payload was a variant this build does not
+ * model; any other unknown output is a malformed file entry, which goes back inside the result.
+ */
+function rebuiltCodeExecutionPayload(outputs: readonly Content[], unmodelled: boolean): AnthropicBlock {
   const [only] = outputs;
-  const preserved = outputs.length === 1 ? preservedPayload(only, 'code_execution_output') : undefined;
+  const preserved = unmodelled && outputs.length === 1 ? preservedPayload(only) : undefined;
   if (preserved !== undefined) {
     return preserved;
   }
@@ -537,7 +519,10 @@ function appendContent(
       blocks.push({
         type: 'code_execution_tool_result',
         tool_use_id: content.callId ?? '',
-        content: rebuiltCodeExecutionPayload(content.outputs ?? []),
+        content: rebuiltCodeExecutionPayload(
+          content.outputs ?? [],
+          content.additionalProperties?.[UNMODELLED_PAYLOAD_KEY] === true,
+        ),
       });
       return;
     }

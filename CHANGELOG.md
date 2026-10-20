@@ -25,10 +25,11 @@ contain breaking changes**; patch releases are fixes only.
   A result payload variant this build does not model goes back exactly as it arrived rather than
   as an invented success payload, and the text output of an `encrypted_code_execution_result` now
   carries `additionalProperties.encrypted: true` (additive), so a restored turn sends the
-  ciphertext back as `encrypted_stdout` instead of as plain stdout. A malformed file entry listed
-  by a code-execution result — kept as unknown content — now carries
-  `additionalProperties.fileEntry: true` (additive), so a lone one is rebuilt inside its result
-  rather than mistaken for an unmodelled payload.
+  ciphertext back as `encrypted_stdout` instead of as plain stdout. A
+  `code_interpreter_tool_result` whose payload is unmodelled now carries
+  `additionalProperties.unmodelledPayload: true` (additive): an unmodelled payload and a malformed
+  file entry both surface as unknown outputs, and the marker is what keeps a lone malformed entry
+  rebuilt inside its result, its own fields untouched, rather than mistaken for the payload.
 
 - **`@polymind-inc/agent-framework-foundry`** — `FoundryToolbox` now normalizes the tool
   declarations it exposes by the same shared rules the MCP client applies, instead of passing them

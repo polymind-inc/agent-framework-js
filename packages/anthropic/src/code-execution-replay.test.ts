@@ -248,6 +248,25 @@ const CODE_FILE_ENTRY_WITH_METADATA_TURN = [
   },
 ];
 
+// The entry's metadata happens to use a key the framework could have picked for itself: the
+// restored replay must still carry the entry's fields untouched.
+const CODE_FILE_ENTRY_WITH_COLLIDING_METADATA_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [
+        { type: 'code_execution_output', file_id: 7, additionalProperties: { fileEntry: true, tag: 'keep' } },
+      ],
+    },
+  },
+];
+
 const BASH_UNMODELLED_TURN = [
   { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
   {
@@ -288,6 +307,10 @@ describe('restored provider-executed turns', () => {
     ['code execution with an unmodelled payload', CODE_UNMODELLED_TURN],
     ['code execution with a lone unknown file entry', CODE_LONE_UNKNOWN_FILE_ENTRY_TURN],
     ['code execution with a file entry carrying metadata', CODE_FILE_ENTRY_WITH_METADATA_TURN],
+    [
+      'code execution with a file entry carrying colliding metadata',
+      CODE_FILE_ENTRY_WITH_COLLIDING_METADATA_TURN,
+    ],
     ['bash with an unmodelled payload', BASH_UNMODELLED_TURN],
     ['text editor with an unmodelled payload', EDITOR_UNMODELLED_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
