@@ -272,13 +272,32 @@ function hostedFiles(result: AnthropicBlock, markEntries = false): Content[] {
       files.push({ type: 'hosted_file', fileId, rawRepresentation: file });
       continue;
     }
-    const entry = unknownContent(file);
     // `markEntries` says the entries share a list with an unmodelled payload, which is unknown
     // content as well. The marker survives serialization, so a restored transcript can tell a
     // lone malformed entry from a whole payload and rebuild the result around it.
-    files.push(markEntries ? { ...entry, additionalProperties: { [FILE_ENTRY_KEY]: true } } : entry);
+    files.push(markEntries ? markedFileEntry(file) : unknownContent(file));
   }
   return files;
+}
+
+/**
+ * A malformed file entry as unknown content, marked as an entry.
+ *
+ * Unknown content carries the entry's own fields, `additionalProperties` included, so the marker
+ * joins a record already there rather than replacing it. An entry whose `additionalProperties` is
+ * not a non-empty record stays unmarked: merging could not be undone exactly on the way back, and
+ * an unmarked entry of the usual `code_execution_output` type is still recognized as one.
+ */
+function markedFileEntry(file: AnthropicBlock): Content {
+  const entry = unknownContent(file);
+  const existing = file.additionalProperties;
+  if (existing === undefined) {
+    return { ...entry, additionalProperties: { [FILE_ENTRY_KEY]: true } };
+  }
+  if (!isRecord(existing) || Object.keys(existing).length === 0 || FILE_ENTRY_KEY in existing) {
+    return entry;
+  }
+  return { ...entry, additionalProperties: { ...existing, [FILE_ENTRY_KEY]: true } };
 }
 
 /** The outputs of a `code_execution_tool_result` payload. */

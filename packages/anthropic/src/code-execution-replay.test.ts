@@ -231,6 +231,23 @@ const CODE_LONE_UNKNOWN_FILE_ENTRY_TURN = [
   },
 ];
 
+// A malformed entry whose wire form already carries `additionalProperties`: marking it as an entry
+// must not cost the restored replay the entry's own metadata.
+const CODE_FILE_ENTRY_WITH_METADATA_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [{ type: 'future_file_entry', file_id: 7, additionalProperties: { tag: 'keep' } }],
+    },
+  },
+];
+
 const BASH_UNMODELLED_TURN = [
   { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
   {
@@ -270,6 +287,7 @@ describe('restored provider-executed turns', () => {
     ['encrypted code execution', CODE_ENCRYPTED_TURN],
     ['code execution with an unmodelled payload', CODE_UNMODELLED_TURN],
     ['code execution with a lone unknown file entry', CODE_LONE_UNKNOWN_FILE_ENTRY_TURN],
+    ['code execution with a file entry carrying metadata', CODE_FILE_ENTRY_WITH_METADATA_TURN],
     ['bash with an unmodelled payload', BASH_UNMODELLED_TURN],
     ['text editor with an unmodelled payload', EDITOR_UNMODELLED_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
