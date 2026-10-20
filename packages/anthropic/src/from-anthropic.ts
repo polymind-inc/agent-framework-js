@@ -8,7 +8,7 @@ import type {
 } from '@polymind-inc/agent-framework-core';
 import { chatResponse, chatResponseUpdate, unknownContent } from '@polymind-inc/agent-framework-core';
 import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
-import type { AnthropicBlock } from './to-anthropic.js';
+import { type AnthropicBlock, LINE_SPAN_KEY, PAYLOAD_TYPE_KEY, RETURN_CODE_KEY } from './to-anthropic.js';
 
 /**
  * Stop-reason mapping, matching Python `FINISH_REASON_MAP`.
@@ -277,6 +277,31 @@ function hostedFiles(result: AnthropicBlock): Content[] {
   return files;
 }
 
+/**
+ * The `additionalProperties` a code-execution result records about the payload it was read from.
+ *
+ * The typed outputs keep the outcome but not everything the wire said: which payload variant it
+ * was (an encrypted stdout reads as plain text, an unmodelled payload as unknown content just like
+ * a malformed file entry, a viewed file can read like a create result) and a code-execution run's
+ * `return_code`. A restored transcript, which has lost the raw block, needs both to send the block
+ * back as it was. They sit on the result content, which the framework owns, so no field the wire
+ * sent can collide with them; a zero `return_code` is the default and is left out.
+ */
+function payloadRecord(result: AnthropicBlock | undefined): {
+  additionalProperties?: Record<string, unknown>;
+} {
+  if (result === undefined || typeof result.type !== 'string') {
+    return {};
+  }
+  const returnCode = asNumber(result.return_code);
+  return {
+    additionalProperties: {
+      [PAYLOAD_TYPE_KEY]: result.type,
+      ...(returnCode === undefined || returnCode === 0 ? {} : { [RETURN_CODE_KEY]: returnCode }),
+    },
+  };
+}
+
 /** The outputs of a `code_execution_tool_result` payload. */
 function codeExecutionOutputs(result: AnthropicBlock): Content[] {
   switch (result.type) {
@@ -359,7 +384,12 @@ function bashExecutionOutputs(result: AnthropicBlock): { outputs: Content[]; fil
 }
 
 /** A citation covering `[start, start + lines)`, or `undefined` when the wire reported neither. */
-function lineSpanAnnotation(start: unknown, lines: unknown, result: AnthropicBlock): Annotation | undefined {
+function lineSpanAnnotation(
+  start: unknown,
+  lines: unknown,
+  result: AnthropicBlock,
+  span?: 'replaced' | 'inserted',
+): Annotation | undefined {
   const startIndex = asNumber(start);
   const lineCount = asNumber(lines);
   if (startIndex === undefined || lineCount === undefined) {
@@ -368,6 +398,9 @@ function lineSpanAnnotation(start: unknown, lines: unknown, result: AnthropicBlo
   return {
     type: 'citation',
     annotatedRegions: [{ type: 'text_span', startIndex, endIndex: startIndex + lineCount }],
+    // Which of a str_replace's two spans this is. With no replacement lines to quote, the two
+    // read alike, and a restored transcript needs to know which one it rebuilds.
+    ...(span === undefined ? {} : { additionalProperties: { [LINE_SPAN_KEY]: span } }),
     rawRepresentation: result,
   };
 }
@@ -406,11 +439,11 @@ function textEditorOutputs(result: AnthropicBlock): Content[] {
       const lines = Array.isArray(result.lines) ? result.lines.map(String) : [];
       const text = lines.join('\n');
       const annotations: Annotation[] = [];
-      const replaced = lineSpanAnnotation(result.old_start, result.old_lines, result);
+      const replaced = lineSpanAnnotation(result.old_start, result.old_lines, result, 'replaced');
       if (replaced !== undefined) {
         annotations.push(replaced);
       }
-      const inserted = lineSpanAnnotation(result.new_start, result.new_lines, result);
+      const inserted = lineSpanAnnotation(result.new_start, result.new_lines, result, 'inserted');
       if (inserted !== undefined) {
         // Only the new span quotes what is now there; the old one points at lines that are gone.
         annotations.push(text === '' ? inserted : { ...inserted, snippet: text });
@@ -570,6 +603,7 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
           type: 'code_interpreter_tool_result',
           callId: String(block.tool_use_id ?? ''),
           outputs: result === undefined ? [] : codeExecutionOutputs(result),
+          ...payloadRecord(result),
           rawRepresentation: block,
         });
         break;
@@ -584,6 +618,8 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
           type: 'shell_tool_result',
           callId: String(block.tool_use_id ?? ''),
           outputs: parsed.outputs,
+          // The exit code already travels on the shell output; only the variant is recorded.
+          ...payloadRecord(result === undefined ? undefined : { type: result.type }),
           rawRepresentation: block,
         });
         break;
@@ -596,6 +632,7 @@ export function parseContentBlocks(blocks: readonly unknown[], state?: StreamPar
           type: 'function_result',
           callId: String(block.tool_use_id ?? ''),
           result: result === undefined ? [] : textEditorOutputs(result),
+          ...payloadRecord(result),
           rawRepresentation: block,
         });
         break;

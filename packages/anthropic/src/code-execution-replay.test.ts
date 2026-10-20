@@ -188,6 +188,205 @@ const EDITOR_ERROR_TURN = [
   },
 ];
 
+const CODE_ENCRYPTED_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'print(1)' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'encrypted_code_execution_result',
+      encrypted_stdout: 'ENCRYPTED',
+      stderr: '',
+      return_code: 0,
+      content: [],
+    },
+  },
+];
+
+const CODE_ENCRYPTED_EMPTY_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'pass' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'encrypted_code_execution_result',
+      encrypted_stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [],
+    },
+  },
+];
+
+const CODE_FAILED_RUN_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'boom()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: 'Traceback (most recent call last)',
+      return_code: 1,
+      content: [],
+    },
+  },
+];
+
+const BASH_ERROR_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
+  {
+    type: 'bash_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_2',
+    content: { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' },
+  },
+];
+
+// A viewed file whose content happens to read like a create result's typed text.
+const EDITOR_VIEW_CREATE_LOOKALIKE_TURN = [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'view', path: '/tmp/flag.txt' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: {
+      type: 'text_editor_code_execution_view_result',
+      content: 'File update: false',
+      file_type: 'text',
+      start_line: 1,
+      num_lines: 1,
+    },
+  },
+];
+
+// With no replacement lines to quote, neither span carries a snippet: the replaced and the
+// inserted span read alike unless the receive side records which one each is.
+const editorStrReplaceTurn = (payload: Record<string, unknown>) => [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'str_replace', path: '/tmp/a.txt', old_str: 'x', new_str: '' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: { type: 'text_editor_code_execution_str_replace_result', ...payload },
+  },
+];
+const EDITOR_STR_REPLACE_REMOVAL_TURN = editorStrReplaceTurn({ old_start: 3, old_lines: 1 });
+const EDITOR_STR_REPLACE_EMPTY_NEW_SPAN_TURN = editorStrReplaceTurn({ new_start: 3, new_lines: 0 });
+
+const EDITOR_STR_REPLACE_OLD_SPAN_ONLY_TURN = [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'str_replace', path: '/tmp/a.txt', old_str: 'x', new_str: 'y' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: {
+      type: 'text_editor_code_execution_str_replace_result',
+      lines: ['y'],
+      old_start: 3,
+      old_lines: 1,
+    },
+  },
+];
+
+// Payload variants this build does not model: the receive side keeps each as unknown content,
+// and a restored replay must send it back as it arrived rather than invent an outcome.
+const CODE_UNMODELLED_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'x' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: { type: 'code_execution_future_result', detail: 'new' },
+  },
+];
+
+// A lone malformed file entry is unknown content too, but it sits inside a modelled payload: the
+// restored replay must keep the result envelope around it rather than mistake it for the payload.
+const CODE_LONE_UNKNOWN_FILE_ENTRY_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [{ type: 'future_file_entry', file_id: 7 }],
+    },
+  },
+];
+
+// A malformed entry whose wire form already carries `additionalProperties`: marking it as an entry
+// must not cost the restored replay the entry's own metadata.
+const CODE_FILE_ENTRY_WITH_METADATA_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [{ type: 'future_file_entry', file_id: 7, additionalProperties: { tag: 'keep' } }],
+    },
+  },
+];
+
+// The entry's metadata happens to use a key the framework could have picked for itself: the
+// restored replay must still carry the entry's fields untouched.
+const CODE_FILE_ENTRY_WITH_COLLIDING_METADATA_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'code_execution', input: { code: 'save()' } },
+  {
+    type: 'code_execution_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: {
+      type: 'code_execution_result',
+      stdout: '',
+      stderr: '',
+      return_code: 0,
+      content: [
+        { type: 'code_execution_output', file_id: 7, additionalProperties: { fileEntry: true, tag: 'keep' } },
+      ],
+    },
+  },
+];
+
+const BASH_UNMODELLED_TURN = [
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
+  {
+    type: 'bash_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_2',
+    content: { type: 'bash_code_execution_future_result', detail: 'new' },
+  },
+];
+
+const EDITOR_UNMODELLED_TURN = [
+  {
+    type: 'server_tool_use',
+    id: 'srvtoolu_3',
+    name: 'text_editor_code_execution',
+    input: { command: 'view', path: '/tmp/a.txt' },
+  },
+  {
+    type: 'text_editor_code_execution_tool_result',
+    tool_use_id: 'srvtoolu_3',
+    content: { type: 'text_editor_code_execution_future_result', detail: 'new' },
+  },
+];
+
 describe('restored provider-executed turns', () => {
   it.each([
     ['code execution', CODE_TURN],
@@ -201,6 +400,23 @@ describe('restored provider-executed turns', () => {
     ['text editor str_replace', EDITOR_STR_REPLACE_TURN],
     ['text editor create', EDITOR_CREATE_TURN],
     ['text editor error', EDITOR_ERROR_TURN],
+    ['encrypted code execution', CODE_ENCRYPTED_TURN],
+    ['code execution with an unmodelled payload', CODE_UNMODELLED_TURN],
+    ['code execution with a lone unknown file entry', CODE_LONE_UNKNOWN_FILE_ENTRY_TURN],
+    ['code execution with a file entry carrying metadata', CODE_FILE_ENTRY_WITH_METADATA_TURN],
+    [
+      'code execution with a file entry carrying colliding metadata',
+      CODE_FILE_ENTRY_WITH_COLLIDING_METADATA_TURN,
+    ],
+    ['bash with an unmodelled payload', BASH_UNMODELLED_TURN],
+    ['text editor with an unmodelled payload', EDITOR_UNMODELLED_TURN],
+    ['encrypted code execution with empty stdout', CODE_ENCRYPTED_EMPTY_TURN],
+    ['failed code execution run', CODE_FAILED_RUN_TURN],
+    ['bash error', BASH_ERROR_TURN],
+    ['text editor view that reads like a create result', EDITOR_VIEW_CREATE_LOOKALIKE_TURN],
+    ['text editor str_replace with only the replaced span', EDITOR_STR_REPLACE_OLD_SPAN_ONLY_TURN],
+    ['text editor str_replace removing lines', EDITOR_STR_REPLACE_REMOVAL_TURN],
+    ['text editor str_replace with only an empty inserted span', EDITOR_STR_REPLACE_EMPTY_NEW_SPAN_TURN],
   ])('replays a restored %s turn identically to the in-memory one', (_label, blocks) => {
     const turn = assistantTurn(blocks);
 
@@ -233,6 +449,177 @@ describe('restored provider-executed turns', () => {
       type: 'code_execution_tool_result',
       tool_use_id: 'srvtoolu_1',
       content: { type: 'code_execution_tool_result_error', error_code: 'unavailable' },
+    });
+  });
+
+  it('degrades an unrecognized bash error code to unavailable, never to a successful run', () => {
+    const turn = assistantTurn([
+      { type: 'server_tool_use', id: 'srvtoolu_2', name: 'bash_code_execution', input: { command: 'ls' } },
+      {
+        type: 'bash_code_execution_tool_result',
+        tool_use_id: 'srvtoolu_2',
+        content: { type: 'bash_code_execution_tool_result_error', error_code: 'container_expired' },
+      },
+    ]);
+
+    const [message] = toAnthropicMessages([restored(turn)]);
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+
+    expect(blocks[1]).toEqual({
+      type: 'bash_code_execution_tool_result',
+      tool_use_id: 'srvtoolu_2',
+      content: { type: 'bash_code_execution_tool_result_error', error_code: 'unavailable' },
+    });
+  });
+
+  describe('a provider-executed call no result answers', () => {
+    const call = { type: 'server_tool_use', id: 'srvtoolu_9', name: 'code_execution', input: { code: 'x' } };
+    const user = (text: string): Message => ({ role: 'user', contents: [{ type: 'text', text }] });
+    const serverToolUses = (messages: readonly Message[]) =>
+      toAnthropicMessages(messages).flatMap((msg) =>
+        Array.isArray(msg.content) ? msg.content.filter((block) => block.type === 'server_tool_use') : [],
+      );
+
+    // The receive side also reads a code-execution call spelled `tool_use` as provider-executed; in
+    // memory its raw block keeps that spelling, and after a restore it is rebuilt as `server_tool_use`.
+    const toolUseCall = { type: 'tool_use', id: 'srvtoolu_8', name: 'code_execution', input: { code: 'x' } };
+    const providerCalls = (messages: readonly Message[]) =>
+      toAnthropicMessages(messages).flatMap((msg) =>
+        Array.isArray(msg.content)
+          ? msg.content.filter((block) => block.type === 'server_tool_use' || block.name === 'code_execution')
+          : [],
+      );
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is dropped %s once its turn has closed, when spelled tool_use', (_label, prepare) => {
+      const messages = [user('go'), prepare(assistantTurn([toolUseCall])), user('next')];
+
+      expect(providerCalls(messages)).toEqual([]);
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg, [toolUseCall]],
+      ['restored', restored, [{ ...toolUseCall, type: 'server_tool_use' }]],
+    ])('is kept %s on the paused turn, when spelled tool_use', (_label, prepare, expected) => {
+      const messages = [
+        user('go'),
+        prepare(assistantTurn([{ type: 'text', text: 'Running.' }, toolUseCall])),
+      ];
+
+      expect(providerCalls(messages)).toEqual(expected);
+    });
+
+    it.each([
+      ['split across messages', 'in memory', (msg: Message) => msg, true],
+      ['split across messages', 'restored', restored, true],
+      ['bundled in one message', 'in memory', (msg: Message) => msg, false],
+      ['bundled in one message', 'restored', restored, false],
+    ])('keeps the paused turn open, %s, %s, without a closing Continue', (_shape, _label, prepare, split) => {
+      // The open turn can span several assistant messages; a synthetic user turn after the last
+      // one would close it on a call the API has not run yet.
+      const paused = [{ type: 'text', text: 'Running.' }, call];
+      const more = [{ type: 'text', text: 'Still running.' }];
+      const messages = split
+        ? [user('go'), prepare(assistantTurn(paused)), prepare(assistantTurn(more))]
+        : [user('go'), prepare(assistantTurn([...paused, ...more]))];
+      const request = toAnthropicMessages(messages);
+
+      expect(serverToolUses(messages)).toEqual([call]);
+      expect(request[request.length - 1]?.role).toBe('assistant');
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is dropped %s once its turn has closed', (_label, prepare) => {
+      // The API refuses a request whose closed assistant turn holds a server call without its
+      // result, so a call abandoned mid-stream is omitted rather than turned into a 400.
+      const messages = [
+        user('go'),
+        prepare(assistantTurn([{ type: 'text', text: 'Running.' }, call])),
+        user('next'),
+      ];
+
+      expect(serverToolUses(messages)).toEqual([]);
+    });
+
+    it.each([
+      ['in memory', (msg: Message) => msg],
+      ['restored', restored],
+    ])('is kept %s on the paused turn the request continues', (_label, prepare) => {
+      // A `pause_turn` response ends on the call it has not run yet; re-sending it as-is is how
+      // the turn continues.
+      const messages = [user('go'), prepare(assistantTurn([{ type: 'text', text: 'Running.' }, call]))];
+
+      expect(serverToolUses(messages)).toEqual([call]);
+    });
+
+    it.each([
+      ['in memory', 'tool' as const, (msg: Message) => msg],
+      ['restored', 'tool' as const, restored],
+      ['in memory', 'assistant' as const, (msg: Message) => msg],
+      ['restored', 'assistant' as const, restored],
+    ])('is kept %s while only local tool results follow it, in a %s envelope', (_label, role, prepare) => {
+      // Called alongside a local tool, the server call waits for the local results; the API runs it
+      // when they arrive, so it must still be on the open turn. The results go to the user side
+      // whatever role the message carrying them has.
+      const messages: Message[] = [
+        user('go'),
+        prepare(
+          assistantTurn([
+            call,
+            { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } },
+          ]),
+        ),
+        { role, contents: [{ type: 'function_result', callId: 'toolu_1', result: 'ok' }] },
+      ];
+
+      expect(serverToolUses(messages)).toEqual([call]);
+    });
+
+    it.each([
+      ['in memory', 'assistant' as const, (msg: Message) => msg],
+      ['restored', 'assistant' as const, restored],
+      ['in memory', 'tool' as const, (msg: Message) => msg],
+      ['restored', 'tool' as const, restored],
+    ])('is kept %s on the paused turn when a %s message sends nothing after it', (_label, role, prepare) => {
+      // A message that emits no blocks — usage metadata only — is not a turn, so it cannot close one.
+      const messages: Message[] = [
+        user('go'),
+        prepare(assistantTurn([{ type: 'text', text: 'Running.' }, call])),
+        { role, contents: [{ type: 'usage', usageDetails: { inputTokenCount: 1, outputTokenCount: 1 } }] },
+      ];
+
+      expect(serverToolUses(messages)).toEqual([call]);
+    });
+
+    // The same exchange, stored as one message or split across several: the local result and the
+    // final text after it close the turn the server call was on either way.
+    const local = { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } };
+    const result: Message['contents'][number] = { type: 'function_result', callId: 'toolu_1', result: 'ok' };
+    const bundled = (prepare: (msg: Message) => Message): Message[] => {
+      const turn = assistantTurn([call, local]);
+      return [
+        user('go'),
+        prepare({ ...turn, contents: [...turn.contents, result, { type: 'text', text: 'Done.' }] }),
+      ];
+    };
+    const split = (prepare: (msg: Message) => Message): Message[] => [
+      user('go'),
+      prepare(assistantTurn([call, local])),
+      { role: 'tool', contents: [result] },
+      prepare(assistantTurn([{ type: 'text', text: 'Done.' }])),
+    ];
+
+    it.each([
+      ['bundled in one message', 'in memory', bundled, (msg: Message) => msg],
+      ['bundled in one message', 'restored', bundled, restored],
+      ['split across messages', 'in memory', split, (msg: Message) => msg],
+      ['split across messages', 'restored', split, restored],
+    ])('is dropped once a later turn closes it, %s, %s', (_shape, _label, build, prepare) => {
+      expect(serverToolUses(build(prepare))).toEqual([]);
     });
   });
 

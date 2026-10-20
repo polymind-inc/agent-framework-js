@@ -116,6 +116,8 @@ describe('code_execution_tool_result variants', () => {
           rawRepresentation: inner,
         },
       ],
+      // The payload variant, which a restored transcript needs to rebuild the block it came from.
+      additionalProperties: { payloadType: 'code_execution_tool_result_error' },
       rawRepresentation: block,
     });
   });
@@ -157,6 +159,10 @@ describe('code_execution_tool_result variants', () => {
     });
 
     expect(outputsOf(content)).toEqual([{ type: 'text', text: 'ENCRYPTED', rawRepresentation: inner }]);
+    // The text alone cannot say it is ciphertext; the recorded variant does.
+    expect(content).toMatchObject({
+      additionalProperties: { payloadType: 'encrypted_code_execution_result' },
+    });
   });
 
   it('reports empty stdout and stderr as no output at all', () => {
@@ -182,6 +188,8 @@ describe('code_execution_tool_result variants', () => {
     expect(outputsOf(content)).toEqual([
       { type: 'unknown', unknownType: 'future_execution_result', payload: 1, rawRepresentation: inner },
     ]);
+    // The recorded variant says the lone unknown output is the payload, not a malformed file entry.
+    expect(content).toMatchObject({ additionalProperties: { payloadType: 'future_execution_result' } });
   });
 
   it('keeps a file entry that names no file as unknown content', () => {
@@ -206,6 +214,8 @@ describe('code_execution_tool_result variants', () => {
       { type: 'unknown', unknownType: 'code_execution_output', file_id: 7, rawRepresentation: numeric },
       expect.objectContaining({ type: 'hosted_file', fileId: 'file_1' }),
     ]);
+    // A modelled payload: its unknown outputs are entries.
+    expect(content).toMatchObject({ additionalProperties: { payloadType: 'code_execution_result' } });
   });
 });
 
@@ -233,6 +243,7 @@ describe('bash_code_execution_tool_result variants', () => {
           rawRepresentation: inner,
         },
       ],
+      additionalProperties: { payloadType: 'bash_code_execution_result' },
       rawRepresentation: block,
     });
   });
@@ -332,6 +343,7 @@ describe('text_editor_code_execution_tool_result variants', () => {
       result: [
         { type: 'error', message: 'File not found', errorCode: 'file_not_found', rawRepresentation: inner },
       ],
+      additionalProperties: { payloadType: 'text_editor_code_execution_tool_result_error' },
       rawRepresentation: block,
     });
   });
@@ -400,12 +412,15 @@ describe('text_editor_code_execution_tool_result variants', () => {
           {
             type: 'citation',
             annotatedRegions: [{ type: 'text_span', startIndex: 5, endIndex: 8 }],
+            // Which span each one is, which the two cannot say by themselves once no lines are quoted.
+            additionalProperties: { lineSpan: 'replaced' },
             rawRepresentation: inner,
           },
           {
             type: 'citation',
             snippet: 'one\ntwo',
             annotatedRegions: [{ type: 'text_span', startIndex: 5, endIndex: 7 }],
+            additionalProperties: { lineSpan: 'inserted' },
             rawRepresentation: inner,
           },
         ],
