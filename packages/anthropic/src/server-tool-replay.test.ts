@@ -117,9 +117,11 @@ describe('web search and web fetch replay', () => {
     });
 
     it.each([
-      ['in memory', (msg: Message) => msg],
-      ['restored', restored],
-    ])('is kept %s while only local tool results follow it', (_label, prepare) => {
+      ['in memory', 'tool' as const, (msg: Message) => msg],
+      ['restored', 'tool' as const, restored],
+      ['in memory', 'assistant' as const, (msg: Message) => msg],
+      ['restored', 'assistant' as const, restored],
+    ])('is kept %s while only local tool results follow it, in a %s envelope', (_label, role, prepare) => {
       const messages: Message[] = [
         user('go'),
         prepare(
@@ -128,7 +130,7 @@ describe('web search and web fetch replay', () => {
             { type: 'tool_use', id: 'toolu_1', name: 'run_command', input: { command: 'ls' } },
           ]),
         ),
-        { role: 'tool', contents: [{ type: 'function_result', callId: 'toolu_1', result: 'ok' }] },
+        { role, contents: [{ type: 'function_result', callId: 'toolu_1', result: 'ok' }] },
       ];
 
       expect(serverToolUses(messages)).toEqual([SEARCH_CALL]);

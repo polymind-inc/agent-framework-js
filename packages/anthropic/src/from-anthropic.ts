@@ -8,7 +8,7 @@ import type {
 } from '@polymind-inc/agent-framework-core';
 import { chatResponse, chatResponseUpdate, unknownContent } from '@polymind-inc/agent-framework-core';
 import { isRecord, safeStringify } from '@polymind-inc/agent-framework-core/internal';
-import { type AnthropicBlock, PAYLOAD_TYPE_KEY, RETURN_CODE_KEY } from './to-anthropic.js';
+import { type AnthropicBlock, LINE_SPAN_KEY, PAYLOAD_TYPE_KEY, RETURN_CODE_KEY } from './to-anthropic.js';
 
 /**
  * Stop-reason mapping, matching Python `FINISH_REASON_MAP`.
@@ -384,7 +384,12 @@ function bashExecutionOutputs(result: AnthropicBlock): { outputs: Content[]; fil
 }
 
 /** A citation covering `[start, start + lines)`, or `undefined` when the wire reported neither. */
-function lineSpanAnnotation(start: unknown, lines: unknown, result: AnthropicBlock): Annotation | undefined {
+function lineSpanAnnotation(
+  start: unknown,
+  lines: unknown,
+  result: AnthropicBlock,
+  span?: 'replaced' | 'inserted',
+): Annotation | undefined {
   const startIndex = asNumber(start);
   const lineCount = asNumber(lines);
   if (startIndex === undefined || lineCount === undefined) {
@@ -393,6 +398,9 @@ function lineSpanAnnotation(start: unknown, lines: unknown, result: AnthropicBlo
   return {
     type: 'citation',
     annotatedRegions: [{ type: 'text_span', startIndex, endIndex: startIndex + lineCount }],
+    // Which of a str_replace's two spans this is. With no replacement lines to quote, the two
+    // read alike, and a restored transcript needs to know which one it rebuilds.
+    ...(span === undefined ? {} : { additionalProperties: { [LINE_SPAN_KEY]: span } }),
     rawRepresentation: result,
   };
 }
@@ -431,11 +439,11 @@ function textEditorOutputs(result: AnthropicBlock): Content[] {
       const lines = Array.isArray(result.lines) ? result.lines.map(String) : [];
       const text = lines.join('\n');
       const annotations: Annotation[] = [];
-      const replaced = lineSpanAnnotation(result.old_start, result.old_lines, result);
+      const replaced = lineSpanAnnotation(result.old_start, result.old_lines, result, 'replaced');
       if (replaced !== undefined) {
         annotations.push(replaced);
       }
-      const inserted = lineSpanAnnotation(result.new_start, result.new_lines, result);
+      const inserted = lineSpanAnnotation(result.new_start, result.new_lines, result, 'inserted');
       if (inserted !== undefined) {
         // Only the new span quotes what is now there; the old one points at lines that are gone.
         annotations.push(text === '' ? inserted : { ...inserted, snippet: text });
