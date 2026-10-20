@@ -57,7 +57,7 @@
     "@polymind-inc/agent-framework-mcp": "workspace:^",
     "@polymind-inc/agent-framework-openai": "workspace:^",
     "@azure/identity": "^4.13.3",
-    "@modelcontextprotocol/client": "^2.1.0",
+    "@modelcontextprotocol/client": "^2.2.0",
     "openai": "catalog:"
   },
   "peerDependencies": {

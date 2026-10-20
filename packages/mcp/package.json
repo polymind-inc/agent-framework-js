@@ -53,7 +53,7 @@
   },
   "dependencies": {
     "@polymind-inc/agent-framework-core": "workspace:^",
-    "@modelcontextprotocol/client": "^2.1.0"
+    "@modelcontextprotocol/client": "^2.2.0"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.1",
