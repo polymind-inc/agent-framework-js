@@ -84,8 +84,8 @@
     }
   },
   "devDependencies": {
-    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.222.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "^0.222.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.300.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.300.0",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
